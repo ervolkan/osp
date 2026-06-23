@@ -26,7 +26,7 @@ use crate::persistence::{
     DeltaRecord, PersistenceError, SNAPSHOT_FORMAT_VERSION, SpaceSnapshot, SnapshotStore,
 };
 use crate::rule::{Rule, RuleViolation};
-use crate::space::{NodeId, Space};
+use crate::space::{EdgeKind, NodeId, Space};
 use crate::time::{TimeFSM, TimeMachine};
 use crate::vision::{compute_derived, CosineDeviation, DeviationMetric, VisionVector};
 use crate::vision_config::VisionConfig;
@@ -178,6 +178,29 @@ impl SpaceEngine {
         }
     }
 
+    /// Q6 Rule Gate için kural ekle (God Mode / trusted operator).
+    ///
+    /// Kurallar `check_claim_rules()` içinde sırayla evaluate edilir.
+    /// İlk ihlalde claim reddedilir (short-circuit).
+    pub fn register_rule(&mut self, rule: Box<dyn crate::rule::Rule>) {
+        self.rules.push(rule);
+    }
+
+    /// Q6 için varsayılan yapısal kural seti ile engine kur (no_self_import,
+    /// no_duplicate_node, edge_target_exists).
+    pub fn with_default_rules(
+        space: Space,
+        coord_system: crate::coords::CoordinateSystem,
+        vision: VisionVector,
+        config: EngineConfig,
+    ) -> Self {
+        let mut engine = Self::new(space, coord_system, vision, config);
+        for rule in crate::rule::default_rules() {
+            engine.register_rule(rule);
+        }
+        engine
+    }
+
     /// `VisionConfig`'ten kurulum (TOML → engine).
     pub fn from_vision_config(
         space: Space,
@@ -277,14 +300,81 @@ impl SpaceEngine {
 
     // ── Claim-based gates (Q4-Q6, Phase 0 — witness öncesi, deterministik) ───
 
-    /// Q4 Syntax Gate — DeltaProposal OutputContract'a uyuyor mu? (inv #12)
+    /// Q4 Syntax Gate — Claim'in ΔS yapısı geçerli mi? (inv #12)
     ///
-    /// Stub: Claim henüz DeltaProposal'dan compute edilmiş computed_raw taşıyor
-    /// (Faz 2). Faz 5'te gerçek syntax validation (DeltaProposal şema doğrulaması)
-    /// gelir. Şu an her zaman Ok (claim varsayılan olarak well-formed).
-    fn check_claim_syntax(&self, _claim: &Claim) -> Result<(), EngineCommitError> {
-        // Faz 5 stub: OutputContract::default().validate(&delta_proposal)
-        // Şu an Claim yapısı zaten typed — syntax hatası olamaz.
+    /// Kontroller:
+    /// 1. delta_nodes: geçerli NodeKind, finite/non-negative mass, non-negative id
+    /// 2. delta_edges: Imports self-loop reddi, geçerli EdgeKind, from/to ≥ 0
+    /// 3. delta_nodes içinde duplicate ID yok
+    /// 4. computed_raw: tüm core eksen değerleri finite
+    fn check_claim_syntax(&self, claim: &Claim) -> Result<(), EngineCommitError> {
+        // 1. Node validation
+        for node in &claim.delta_nodes {
+            if node.id == 0 && !claim.delta_nodes.is_empty() {
+                // id=0 is valid for first node; check mass/kind instead
+            }
+            if !node.mass.is_finite() || node.mass < 0.0 {
+                return Err(EngineCommitError::SyntaxViolation {
+                    violation: SyntaxViolation {
+                        claim_id: claim.id,
+                        detail: format!(
+                            "node {} has invalid mass: {} (must be finite, non-negative)",
+                            node.id, node.mass
+                        ),
+                    },
+                });
+            }
+        }
+
+        // 2. Duplicate node IDs within delta
+        let mut seen_ids: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for node in &claim.delta_nodes {
+            if !seen_ids.insert(node.id) {
+                return Err(EngineCommitError::SyntaxViolation {
+                    violation: SyntaxViolation {
+                        claim_id: claim.id,
+                        detail: format!("duplicate node id {} in delta_nodes", node.id),
+                    },
+                });
+            }
+        }
+
+        // 3. Edge validation
+        for edge in &claim.delta_edges {
+            // Imports self-loop: module cannot import itself (semantic rule)
+            if edge.kind == EdgeKind::Imports && edge.from == edge.to {
+                return Err(EngineCommitError::SyntaxViolation {
+                    violation: SyntaxViolation {
+                        claim_id: claim.id,
+                        detail: format!(
+                            "self-import edge: node {} imports itself",
+                            edge.from
+                        ),
+                    },
+                });
+            }
+        }
+
+        // 4. computed_raw finite check (flat RawPosition: x,y,z,w,v)
+        let raw = &claim.computed_raw;
+        let axes = [
+            ("x", raw.x),
+            ("y", raw.y),
+            ("z", raw.z),
+            ("w", raw.w),
+            ("v", raw.v),
+        ];
+        for (name, val) in &axes {
+            if !val.is_finite() {
+                return Err(EngineCommitError::SyntaxViolation {
+                    violation: SyntaxViolation {
+                        claim_id: claim.id,
+                        detail: format!("computed_raw.{} is not finite: {}", name, val),
+                    },
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -437,6 +527,13 @@ impl SpaceEngine {
     pub fn space(&self) -> &Space {
         &self.space
     }
+
+    /// Mutable space reference (test/setup için — production'da commit() kullan).
+    #[cfg(test)]
+    pub fn space_mut(&mut self) -> &mut Space {
+        &mut self.space
+    }
+
     pub fn t_c(&self) -> u64 {
         self.t_c
     }
@@ -754,5 +851,247 @@ v = 0.5
         let mut engine = make_engine(); // no persistence
         let result = engine.restore(1);
         assert!(matches!(result, Err(EngineCommitError::NoPersistence)));
+    }
+
+    // --- Q4 Syntax Gate (real implementation) ---
+
+    fn claim_with_delta(author: u64, nodes: Vec<Node>, edges: Vec<Edge>) -> Claim {
+        Claim {
+            id: 1,
+            intent: Intent::new(author, RawPosition::default()),
+            author,
+            computed_raw: RawPosition::default(),
+            delta_nodes: nodes,
+            delta_edges: edges,
+        }
+    }
+
+    #[test]
+    fn q4_rejects_nan_mass() {
+        let mut engine = make_engine();
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Module,
+                mass: f64::NAN,
+                ..Default::default()
+            }],
+            vec![],
+        );
+        let result = engine.commit(&claim, &two_witnesses());
+        assert!(
+            matches!(result, Err(EngineCommitError::SyntaxViolation { .. })),
+            "NaN mass should be rejected by Q4"
+        );
+    }
+
+    #[test]
+    fn q4_rejects_negative_mass() {
+        let mut engine = make_engine();
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Module,
+                mass: -5.0,
+                ..Default::default()
+            }],
+            vec![],
+        );
+        let result = engine.commit(&claim, &two_witnesses());
+        assert!(
+            matches!(result, Err(EngineCommitError::SyntaxViolation { .. })),
+            "negative mass should be rejected by Q4"
+        );
+    }
+
+    #[test]
+    fn q4_rejects_duplicate_node_ids() {
+        let mut engine = make_engine();
+        let claim = claim_with_delta(
+            100,
+            vec![
+                Node {
+                    id: 42,
+                    kind: NodeKind::Module,
+                    mass: 1.0,
+                    ..Default::default()
+                },
+                Node {
+                    id: 42,
+                    kind: NodeKind::Module,
+                    mass: 2.0,
+                    ..Default::default()
+                },
+            ],
+            vec![],
+        );
+        let result = engine.commit(&claim, &two_witnesses());
+        assert!(
+            matches!(result, Err(EngineCommitError::SyntaxViolation { .. })),
+            "duplicate node IDs should be rejected by Q4"
+        );
+    }
+
+    #[test]
+    fn q4_rejects_imports_self_loop() {
+        let mut engine = make_engine();
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: 10,
+                to: 10,
+                kind: EdgeKind::Imports,
+            }],
+        );
+        let result = engine.commit(&claim, &two_witnesses());
+        assert!(
+            matches!(result, Err(EngineCommitError::SyntaxViolation { .. })),
+            "self-import should be rejected by Q4"
+        );
+    }
+
+    #[test]
+    fn q4_allows_calls_self_loop() {
+        // Calls self-loop (recursion) is valid — not Imports
+        let mut engine = make_engine();
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: 10,
+                to: 10,
+                kind: EdgeKind::Calls,
+            }],
+        );
+        // Should pass Q4 (might fail Q5 if vision not aligned, but not Q4)
+        let result = engine.check_claim_syntax(&claim);
+        assert!(result.is_ok(), "Calls self-loop should pass Q4: {:?}", result);
+    }
+
+    #[test]
+    fn q4_rejects_nan_computed_raw() {
+        let mut engine = make_engine();
+        let mut claim = claim_with(100, CENTER);
+        claim.computed_raw.x = f64::NAN;
+        let result = engine.check_claim_syntax(&claim);
+        assert!(result.is_err(), "NaN computed_raw should fail Q4");
+    }
+
+    // --- Q6 Rule Gate (default rules) ---
+
+    fn make_engine_with_rules() -> SpaceEngine {
+        let cs = CoordinateSystem::default_raw_three(
+            EntropyAxis::from_commit_entropy(6.0),
+            WitnessDepthAxis::from_witness(0.3, 5),
+        );
+        let vision = VisionVector::new(RawPosition {
+            x: 0.5,
+            y: 0.5,
+            z: 0.5,
+            w: 0.5,
+            v: 0.5,
+        });
+        SpaceEngine::with_default_rules(
+            Space::new(),
+            cs,
+            vision,
+            EngineConfig::default_calibrated(),
+        )
+    }
+
+    #[test]
+    fn q6_rejects_self_import_via_default_rule() {
+        let mut engine = make_engine_with_rules();
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: 10,
+                to: 10,
+                kind: EdgeKind::Imports,
+            }],
+        );
+        // Q4 catches this first, but if we bypass Q4, Q6 catches it too
+        // Verify Q6 directly
+        let result = engine.check_claim_rules(&claim);
+        assert!(
+            matches!(result, Err(EngineCommitError::RuleViolation { .. })),
+            "self-import should be caught by Q6 default rule"
+        );
+    }
+
+    #[test]
+    fn q6_rejects_duplicate_node_via_default_rule() {
+        let mut engine = make_engine_with_rules();
+        // Pre-insert node 5
+        engine.space_mut().insert_node(Node {
+            id: 5,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        // Claim tries to add node 5 again
+        let claim = claim_with_delta(
+            100,
+            vec![Node {
+                id: 5,
+                kind: NodeKind::Module,
+                mass: 2.0,
+                ..Default::default()
+            }],
+            vec![],
+        );
+        let result = engine.check_claim_rules(&claim);
+        assert!(
+            matches!(result, Err(EngineCommitError::RuleViolation { .. })),
+            "duplicate node should be caught by Q6 default rule"
+        );
+    }
+
+    #[test]
+    fn q6_allows_valid_claim_with_default_rules() {
+        let mut engine = make_engine_with_rules();
+        let claim = claim_with_delta(
+            100,
+            vec![
+                Node {
+                    id: 10,
+                    kind: NodeKind::Module,
+                    mass: 1.0,
+                    ..Default::default()
+                },
+                Node {
+                    id: 11,
+                    kind: NodeKind::Module,
+                    mass: 1.0,
+                    ..Default::default()
+                },
+            ],
+            vec![Edge {
+                from: 10,
+                to: 11,
+                kind: EdgeKind::Imports,
+            }],
+        );
+        let result = engine.check_claim_rules(&claim);
+        assert!(result.is_ok(), "valid claim should pass Q6: {:?}", result);
     }
 }
