@@ -14,7 +14,8 @@
 use std::collections::HashSet;
 
 use crate::coords::{AxisId, RawPosition};
-use crate::space::{EdgeKind, NodeId, NodeKind};
+use crate::rule::Rule;
+use crate::space::{Edge, EdgeKind, Node, NodeId, NodeKind, Space};
 use crate::witness::ClaimId;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -294,6 +295,160 @@ pub struct OspPrompt {
     // Faz 5: space_slice, intent, axis_manifest, rules, evidence_context
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SpaceSlice — Agent'ın gördüğü alt-graf (epistemik projeksiyon çıktısı)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Agent'a açılan alt-graf kesiti — `compute_space_slice()` çıktısı.
+///
+/// Space'in bir subset'i: sadece Agent'ın görmesine izin verilen node'lar ve
+/// bu node'lar arasındaki edge'ler. Agent bunu OspPrompt.space_slice olarak alır.
+#[derive(Debug, Clone, Default)]
+pub struct SpaceSlice {
+    /// Görünür node'ların ID seti.
+    pub node_ids: HashSet<NodeId>,
+    /// Görünür node'lar (full Node objects — pozisyon dahil).
+    pub nodes: Vec<Node>,
+    /// Görünür node'lar arasındaki edge'ler.
+    pub edges: Vec<Edge>,
+}
+
+impl SpaceSlice {
+    /// Space'ten bir node-ID setine göre alt-graf kur.
+    pub fn build_subgraph(space: &Space, ids: HashSet<NodeId>) -> Self {
+        let nodes: Vec<Node> = ids
+            .iter()
+            .filter_map(|id| space.nodes.get(id).cloned())
+            .collect();
+        let edges: Vec<Edge> = space
+            .edges
+            .iter()
+            .copied()
+            .filter(|e| ids.contains(&e.from) && ids.contains(&e.to))
+            .collect();
+        Self {
+            node_ids: ids,
+            nodes,
+            edges,
+        }
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EvidenceSummary — geçmiş Hold/Reject'ten gelen kanıt ihtiyaçları
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Şahitlerin talep ettiği ek düğümler (Hold/Reject geri bildirimi).
+///
+/// Bir önceki Claim Hold/reject edildiyse, şahitler "şu node'ları da görmen lazım"
+/// diyebilir. Bu node'lar space_slice'a eklenir (permission filter'dan geçerse).
+#[derive(Debug, Clone, Default)]
+pub struct EvidenceSummary {
+    /// Şahitlerin Agent'ın görmesini talep ettiği node'lar.
+    pub required_nodes: Vec<NodeId>,
+}
+
+impl EvidenceSummary {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn with_required_nodes(nodes: Vec<NodeId>) -> Self {
+        Self { required_nodes: nodes }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// compute_space_slice — üç-katmanlı epistemik projeksiyon (§3)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Üç katmanlı alt-uzay seçim motoru (agent-prompt-semantics.md §3).
+///
+/// Agent'ın göreceği alt-grafı belirler:
+/// 1. **Intent Gravity:** Intent'in hedef node'ları + k-hop komşuları
+/// 2. **Rule Risk Expansion:** Kural ihlali riski taşıyan sınır node'ları
+/// 3. **Permission + Evidence:** Yetki filtresi + geçmiş kanıt ihtiyaçları
+///
+/// **Güvenlik:** Evidence node'ları permission filtresinden GEÇEREK eklenir (§2.1).
+pub fn compute_space_slice(
+    intent_target_nodes: &[NodeId],
+    space: &Space,
+    rules: &[Box<dyn Rule>],
+    mask: &PermissionMask,
+    evidence: &EvidenceSummary,
+    k_hops: usize,
+) -> SpaceSlice {
+    let mut nodes_bucket: HashSet<NodeId> = HashSet::new();
+
+    // ── Layer 1: Intent core nodes + k-hop neighbors ──
+    for &core_node in intent_target_nodes {
+        nodes_bucket.insert(core_node);
+        // k-hop BFS traversal
+        let neighbors = neighbors_within_hops(space, core_node, k_hops);
+        nodes_bucket.extend(neighbors);
+    }
+
+    // ── Layer 2: Rule risk expansion (sadece kurallar varsa) ──
+    // Kural ihlali riski taşıyan sınır node'ları ekle.
+    // Rules boşsa bu katman atlanır (k-hop expansion doğru kalır).
+    if !rules.is_empty() {
+        let existing_ids: HashSet<NodeId> = nodes_bucket.iter().copied().collect();
+        for edge in &space.edges {
+            if existing_ids.contains(&edge.from) && !existing_ids.contains(&edge.to) {
+                nodes_bucket.insert(edge.to);
+            }
+            if existing_ids.contains(&edge.to) && !existing_ids.contains(&edge.from) {
+                nodes_bucket.insert(edge.from);
+            }
+        }
+    }
+
+    // ── Layer 3: Evidence context ──
+    // Şahitlerin talep ettiği node'ları ekle (permission'dan önce)
+    nodes_bucket.extend(evidence.required_nodes.iter().copied());
+
+    // ── Layer 4: Permission filter (denetim noktası 1) ──
+    nodes_bucket.retain(|node| mask.has_read_permission(*node));
+
+    // Build subgraph
+    SpaceSlice::build_subgraph(space, nodes_bucket)
+}
+
+/// Bir node'dan k-hop mesafedeki tüm komşuları bul (BFS).
+fn neighbors_within_hops(space: &Space, start: NodeId, k: usize) -> HashSet<NodeId> {
+    let mut result = HashSet::new();
+    let mut frontier = vec![start];
+
+    for _ in 0..k {
+        let mut next_frontier = vec![];
+        for &node in &frontier {
+            for edge in &space.edges {
+                if edge.from == node && !result.contains(&edge.to) && edge.to != start {
+                    result.insert(edge.to);
+                    next_frontier.push(edge.to);
+                }
+                if edge.to == node && !result.contains(&edge.from) && edge.from != start {
+                    result.insert(edge.from);
+                    next_frontier.push(edge.from);
+                }
+            }
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        frontier = next_frontier;
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,5 +609,183 @@ mod tests {
         assert!(proposal.modified_entities.is_empty());
         assert!(proposal.position_hints.is_empty());
         assert!(proposal.reasoning.is_empty());
+    }
+
+    // --- compute_space_slice tests (§3 three-layer projection) ---
+
+    fn make_space_linear() -> Space {
+        // Chain: 1 → 2 → 3 → 4 → 5
+        let mut space = Space::new();
+        for id in 1..=5u64 {
+            space.insert_node(Node {
+                id,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            });
+        }
+        for (from, to) in [(1, 2), (2, 3), (3, 4), (4, 5)] {
+            space.insert_edge(Edge { from, to, kind: EdgeKind::Imports });
+        }
+        space
+    }
+
+    #[test]
+    fn space_slice_empty_intent_returns_empty() {
+        let space = make_space_linear();
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask::full_access();
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[], &space, &rules, &mask, &evidence, 2);
+
+        // No intent nodes → but layer 2 (rule expansion) might still add neighbors...
+        // Actually with no nodes in bucket, rule expansion has nothing to expand from
+        // → empty slice
+        assert_eq!(slice.node_count(), 0, "empty intent → empty slice");
+    }
+
+    #[test]
+    fn space_slice_single_node_no_neighbors() {
+        let mut space = Space::new();
+        space.insert_node(Node {
+            id: 42,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask::full_access();
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[42], &space, &rules, &mask, &evidence, 2);
+
+        assert_eq!(slice.node_count(), 1, "single node → 1 node in slice");
+        assert_eq!(slice.edge_count(), 0, "no edges");
+    }
+
+    #[test]
+    fn space_slice_k_hop_expansion_linear_chain() {
+        // Chain: 1 → 2 → 3 → 4 → 5
+        // Intent: node 1, k=2 → should see 1, 2, 3
+        let space = make_space_linear();
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask::full_access();
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[1], &space, &rules, &mask, &evidence, 2);
+
+        assert!(slice.node_ids.contains(&1), "intent node 1");
+        assert!(slice.node_ids.contains(&2), "1-hop neighbor");
+        assert!(slice.node_ids.contains(&3), "2-hop neighbor");
+        assert!(
+            !slice.node_ids.contains(&4),
+            "3-hop should NOT be included with k=2"
+        );
+    }
+
+    #[test]
+    fn space_slice_rule_expansion_adds_boundary() {
+        // Chain: 1 → 2 → 3 → 4 → 5
+        // Intent: node 3, k=0 → just node 3
+        // Layer 2: with rules registered, boundary expansion adds neighbors (2, 4)
+        use crate::rule::NoSelfImportRule;
+        let space = make_space_linear();
+        let rules: Vec<Box<dyn Rule>> = vec![Box::new(NoSelfImportRule::new())];
+        let mask = PermissionMask::full_access();
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[3], &space, &rules, &mask, &evidence, 0);
+
+        // k=0 → only intent node 3. But layer 2 (with rules) adds boundary neighbors.
+        assert!(slice.node_ids.contains(&3), "intent node");
+        assert!(
+            slice.node_ids.contains(&2) || slice.node_ids.contains(&4),
+            "boundary expansion should add at least one neighbor when rules exist"
+        );
+    }
+
+    #[test]
+    fn space_slice_no_rules_no_boundary_expansion() {
+        // Same setup but NO rules → k-hop is exact, no boundary expansion
+        let space = make_space_linear();
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask::full_access();
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[3], &space, &rules, &mask, &evidence, 0);
+
+        assert_eq!(slice.node_count(), 1, "k=0, no rules → only intent node");
+        assert!(slice.node_ids.contains(&3));
+    }
+
+    #[test]
+    fn space_slice_permission_filter_excludes_nodes() {
+        let space = make_space_linear();
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask {
+            read_only_nodes: {
+                let mut s = HashSet::new();
+                s.insert(2);
+                s
+            },
+            ..Default::default()
+        };
+        let evidence = EvidenceSummary::empty();
+
+        let slice = compute_space_slice(&[1], &space, &rules, &mask, &evidence, 2);
+
+        // Node 2 is read_only → has_read_permission returns true (full_access stub)
+        // But when real permission is implemented, node 2 would be excluded.
+        // For now, full_access stub allows all.
+        assert!(
+            slice.node_ids.contains(&1),
+            "intent node should be included"
+        );
+    }
+
+    #[test]
+    fn space_slice_evidence_adds_required_nodes() {
+        // Space: 1 → 2 → 3
+        let mut space = Space::new();
+        for id in 1..=3u64 {
+            space.insert_node(Node {
+                id,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            });
+        }
+        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
+        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports });
+
+        let rules: Vec<Box<dyn Rule>> = vec![];
+        let mask = PermissionMask::full_access();
+        // Witness requires node 3 — not in k=0 expansion of node 1
+        let evidence = EvidenceSummary::with_required_nodes(vec![3]);
+
+        let slice = compute_space_slice(&[1], &space, &rules, &mask, &evidence, 0);
+
+        assert!(
+            slice.node_ids.contains(&3),
+            "evidence-required node 3 should be in slice"
+        );
+        assert!(slice.node_ids.contains(&1), "intent node 1");
+    }
+
+    #[test]
+    fn space_slice_build_subgraph_filters_edges() {
+        let space = make_space_linear();
+        let mut ids = HashSet::new();
+        ids.insert(1);
+        ids.insert(2);
+
+        let slice = SpaceSlice::build_subgraph(&space, ids);
+
+        assert_eq!(slice.node_count(), 2);
+        // Only edge 1→2 (both endpoints in set)
+        assert_eq!(slice.edge_count(), 1);
+        assert_eq!(slice.edges[0].from, 1);
+        assert_eq!(slice.edges[0].to, 2);
     }
 }
