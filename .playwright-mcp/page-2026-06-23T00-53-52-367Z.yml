@@ -1,0 +1,82 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - heading "OSP Space Browser" [level=1] [ref=e3]
+    - paragraph [ref=e4]: 15 repositories positioned in conceptual space — Abstractness (A) vs Instability (I), colored by y. Data from SCIP semantic analysis (13,031 classes).
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]: X axis
+      - combobox [ref=e8]:
+        - option "Coupling (edges/nodes)"
+        - option "Abstractness (A)" [selected]
+        - option "Instability (I)"
+        - option "Main-seq distance (D)"
+        - option "Cohesion (y)"
+        - option "Node count"
+        - option "SCIP classes"
+    - generic [ref=e9]:
+      - generic [ref=e10]: Y axis
+      - combobox [ref=e11]:
+        - option "Coupling (edges/nodes)"
+        - option "Abstractness (A)"
+        - option "Instability (I)" [selected]
+        - option "Main-seq distance (D)"
+        - option "Cohesion (y)"
+        - option "Node count"
+        - option "SCIP classes"
+    - generic [ref=e12]:
+      - generic [ref=e13]: Color
+      - combobox [ref=e14]:
+        - option "Cohesion (y)" [selected]
+        - option "Main-seq dist (D)"
+        - option "Witness status"
+        - option "Language"
+    - generic [ref=e15]:
+      - generic [ref=e16]: Size
+      - combobox [ref=e17]:
+        - option "Node count" [selected]
+        - option "Class count"
+        - option "Uniform"
+  - generic [ref=e18]:
+    - generic [ref=e19]: Witnessed
+    - generic [ref=e21]: Unobservable-locally
+    - generic [ref=e23]: Unwitnessed
+    - generic [ref=e25]: Placeholder y*
+  - img [ref=e28]:
+    - generic [ref=e29]:
+      - generic [ref=e35]: Martin Main Sequence (A + I = 1)
+      - generic [ref=e36]:
+        - generic [ref=e39]: "0.0"
+        - generic [ref=e41]: "0.1"
+        - generic [ref=e43]: "0.2"
+        - generic [ref=e45]: "0.3"
+        - generic [ref=e47]: "0.4"
+        - generic [ref=e49]: "0.5"
+      - generic [ref=e50]:
+        - generic [ref=e53]: "0.0"
+        - generic [ref=e55]: "0.2"
+        - generic [ref=e57]: "0.4"
+        - generic [ref=e59]: "0.6"
+        - generic [ref=e61]: "0.8"
+        - generic [ref=e63]: "1.0"
+      - generic [ref=e64]: Abstractness (A)
+      - generic [ref=e65]: Instability (I)
+      - generic [ref=e81]: click
+      - generic [ref=e82]: django
+      - generic [ref=e83]: flask
+      - generic [ref=e84]: fastapi
+      - generic [ref=e85]: httpx
+      - generic [ref=e86]: rich
+      - generic [ref=e87]: pydantic
+      - generic [ref=e88]: requests
+      - generic [ref=e89]: worms-supabase
+      - generic [ref=e90]: date-fns
+      - generic [ref=e91]: svelte
+      - generic [ref=e92]: vitest
+      - generic [ref=e93]: chalk
+      - generic [ref=e94]: commander.js
+      - generic [ref=e95]: lodash
+  - generic [ref=e96]:
+    - text: OSP — Ontological Space Protocol ·
+    - link "github.com/ervolkan/osp" [ref=e97] [cursor=pointer]:
+      - /url: https://github.com/ervolkan/osp
+    - text: · Paper v2.3 · A = abstractness, I = instability (Martin), D = |A+I−1|, y = LCOM4 cohesion

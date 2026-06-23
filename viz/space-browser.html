@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OSP Space Browser — Conceptual Space of 15 Open-Source Repositories</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; }
+  .header { padding: 20px 30px; border-bottom: 1px solid #30363d; }
+  .header h1 { font-size: 20px; color: #58a6ff; }
+  .header p { font-size: 13px; color: #8b949e; margin-top: 4px; }
+  .controls { display: flex; gap: 20px; padding: 15px 30px; flex-wrap: wrap; align-items: center; }
+  .control-group { display: flex; align-items: center; gap: 6px; }
+  .control-group label { font-size: 12px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+  select { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; font-size: 13px; }
+  .chart-container { display: flex; justify-content: center; padding: 10px; }
+  .tooltip { position: absolute; background: #161b22; border: 1px solid #58a6ff; padding: 10px 14px;
+             border-radius: 6px; font-size: 12px; pointer-events: none; opacity: 0;
+             transition: opacity 0.15s; box-shadow: 0 4px 12px rgba(0,0,0,0.4); max-width: 280px; }
+  .tooltip .repo-name { font-weight: 700; color: #58a6ff; font-size: 14px; margin-bottom: 6px; }
+  .tooltip .metric { display: flex; justify-content: space-between; gap: 12px; }
+  .tooltip .metric .label { color: #8b949e; }
+  .tooltip .metric .value { color: #c9d1d9; font-family: monospace; }
+  .legend { display: flex; gap: 16px; padding: 0 30px 20px; font-size: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .footer { padding: 15px 30px; border-top: 1px solid #30363d; font-size: 11px; color: #484f58; }
+  .main-seq { stroke: #58a6ff; stroke-width: 1.5; stroke-dasharray: 5 5; opacity: 0.4; fill: none; }
+  .axis-label { fill: #8b949e; font-size: 13px; font-weight: 600; }
+  .grid line { stroke: #21262d; }
+  .ref-link { color: #58a6ff; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>OSP Space Browser</h1>
+  <p>15 repositories positioned in conceptual space — <span id="axis-desc"></span>. Data from SCIP semantic analysis (13,031 classes).</p>
+</div>
+
+<div class="controls">
+  <div class="control-group">
+    <label>X axis</label>
+    <select id="xAxis"></select>
+  </div>
+  <div class="control-group">
+    <label>Y axis</label>
+    <select id="yAxis"></select>
+  </div>
+  <div class="control-group">
+    <label>Color</label>
+    <select id="colorBy">
+      <option value="y">Cohesion (y)</option>
+      <option value="D">Main-seq dist (D)</option>
+      <option value="status">Witness status</option>
+      <option value="lang">Language</option>
+    </select>
+  </div>
+  <div class="control-group">
+    <label>Size</label>
+    <select id="sizeBy">
+      <option value="nodes">Node count</option>
+      <option value="classes">Class count</option>
+      <option value="none">Uniform</option>
+    </select>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:#3fb950"></span> Witnessed</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#d29922"></span> Unobservable-locally</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#8b949e"></span> Unwitnessed</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#f85149"></span> Placeholder y*</div>
+</div>
+
+<div class="chart-container">
+  <svg id="chart" width="900" height="600"></svg>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<div class="footer">
+  OSP — Ontological Space Protocol · <a class="ref-link" href="https://github.com/ervolkan/osp">github.com/ervolkan/osp</a>
+  · Paper v2.3 · A = abstractness, I = instability (Martin), D = |A+I−1|, y = LCOM4 cohesion
+</div>
+
+<script>
+// ═══ Data: 15-repo corpus (from SCIP deployment, docs/scip-cohesion-results.md) ═══
+const repos = [
+  {name:"click",        lang:"Py",  nodes:63,   edges:61,   classes:133,   A:0.02, I:0.63, D:0.36, y:0.67, cov:1.00, status:"Witnessed"},
+  {name:"django",       lang:"Py",  nodes:2966, edges:4659, classes:10054, A:0.00, I:0.66, D:0.18, y:0.66, cov:0.98, status:"Unobservable"},
+  {name:"flask",        lang:"Py",  nodes:83,   edges:131,  classes:115,   A:0.01, I:0.71, D:0.34, y:0.63, cov:1.00, status:"Witnessed"},
+  {name:"fastapi",      lang:"Py",  nodes:1133, edges:831,  classes:673,   A:0.01, I:0.70, D:0.13, y:0.62, cov:1.00, status:"Unobservable"},
+  {name:"httpx",        lang:"Py",  nodes:60,   edges:4,    classes:81,    A:0.07, I:0.50, D:0.45, y:0.62, cov:1.00, status:"Unobservable"},
+  {name:"rich",         lang:"Py",  nodes:213,  edges:404,  classes:213,   A:0.04, I:0.71, D:0.36, y:0.60, cov:1.00, status:"Witnessed"},
+  {name:"pydantic",     lang:"Py",  nodes:534,  edges:1016, classes:323,   A:0.02, I:0.70, D:0.22, y:0.52, cov:0.19, status:"Unobservable"},
+  {name:"requests",     lang:"Py",  nodes:37,   edges:21,   classes:25,    A:0.05, I:0.43, D:0.49, y:0.49, cov:0.51, status:"Witnessed"},
+  {name:"worms-supabase",lang:"Py", nodes:26,   edges:17,   classes:0,     A:0.00, I:0.45, D:0.35, y:0.50, cov:0,    status:"Unwitnessed", placeholder:true},
+  {name:"date-fns",     lang:"TS",  nodes:1550, edges:3579, classes:105,   A:0.05, I:0.93, D:0.02, y:0.51, cov:0.96, status:"Unobservable"},
+  {name:"svelte",       lang:"TS",  nodes:3450, edges:4232, classes:376,   A:0.00, I:0.92, D:0.21, y:0.51, cov:0.02, status:"Witnessed"},
+  {name:"vitest",       lang:"TS",  nodes:2236, edges:1881, classes:705,   A:0.02, I:0.57, D:0.35, y:0.54, cov:0.91, status:"Unobservable"},
+  {name:"chalk",        lang:"JS",  nodes:13,   edges:11,   classes:10,    A:0.00, I:0.81, D:0.35, y:0.54, cov:0.38, status:"Unobservable"},
+  {name:"commander.js", lang:"JS",  nodes:159,  edges:135,  classes:23,    A:0.00, I:0.81, D:0.16, y:0.52, cov:0.08, status:"Witnessed"},
+  {name:"lodash",       lang:"JS",  nodes:27,   edges:0,    classes:0,     A:0.50, I:0.50, D:0.00, y:0.50, cov:0,    status:"Unobservable", placeholder:true},
+];
+
+// ═══ Axis definitions ═══
+const axes = {
+  A:       {key:"A",       label:"Abstractness (A)",     range:[0,0.55]},
+  I:       {key:"I",       label:"Instability (I)",      range:[0,1]},
+  D:       {key:"D",       label:"Main-seq distance (D)",range:[0,0.55]},
+  y:       {key:"y",       label:"Cohesion (y, LCOM4)",  range:[0.45,0.70]},
+  nodes:   {key:"nodes",   label:"Node count",            range:[0,3600]},
+  classes: {key:"classes", label:"SCIP classes",          range:[0,11000]},
+  coupling:{key:null,      label:"Coupling (edges/nodes)",range:[0,2.5]}, // computed
+};
+
+// Compute coupling
+repos.forEach(r => r.coupling = r.nodes > 0 ? r.edges / r.nodes : 0);
+
+// ═══ Color scales ═══
+const colorScales = {
+  y: d3.scaleSequential(d3.interpolateRdYlGn).domain([0.45, 0.70]),
+  D: d3.scaleSequential(d3.interpolateRdYlGn).domain([0.5, 0.0]),
+  status: val => {
+    if (val === "Witnessed") return "#3fb950";
+    if (val === "Unobservable") return "#d29922";
+    return "#8b949e";
+  },
+  lang: val => val === "Py" ? "#3776ab" : val === "TS" ? "#3178c6" : "#f7df1e",
+};
+
+// ═══ Render ═══
+const margin = {top:30, right:60, bottom:60, left:70};
+const width = 900 - margin.left - margin.right;
+const height = 600 - margin.top - margin.bottom;
+
+const svg = d3.select("#chart")
+  .append("g")
+  .attr("transform", `translate(${margin.left},${margin.top})`);
+
+const tooltip = d3.select("#tooltip");
+
+function getAxisValue(d, axisKey) {
+  if (axisKey === "coupling") return d.coupling;
+  return d[axisKey];
+}
+
+function render() {
+  const xKey = document.getElementById("xAxis").value;
+  const yKey = document.getElementById("yAxis").value;
+  const colorKey = document.getElementById("colorBy").value;
+  const sizeKey = document.getElementById("sizeBy").value;
+
+  const xAxis = axes[xKey];
+  const yAxis = axes[yKey];
+
+  document.getElementById("axis-desc").textContent =
+    `${xAxis.label} vs ${yAxis.label}, colored by ${colorKey}`;
+
+  // Scales
+  const x = d3.scaleLinear().domain(xAxis.range).range([0, width]);
+  const y = d3.scaleLinear().domain(yAxis.range).range([height, 0]);
+
+  const sizeScale = sizeKey === "none"
+    ? null
+    : d3.scaleSqrt().domain([0, d3.max(repos, d => d[sizeKey])]).range([4, 25]);
+
+  const getRadius = d => sizeScale ? sizeScale(d[sizeKey]) : 8;
+
+  const colorFn = d => colorScales[colorKey](d[colorKey]);
+
+  // Clear
+  svg.selectAll("*").remove();
+
+  // Grid
+  svg.append("g")
+    .attr("class", "grid")
+    .attr("transform", `translate(0,${height})`)
+    .call(d3.axisBottom(x).tickSize(-height).tickFormat(""));
+  svg.append("g")
+    .attr("class", "grid")
+    .call(d3.axisLeft(y).tickSize(-width).tickFormat(""));
+
+  // Main sequence overlay (A+I=1 line when x=A, y=I)
+  if (xKey === "A" && yKey === "I") {
+    const lineData = [[0, 1], [1, 0]].map(([a, i]) => [x(a), y(i)]);
+    svg.append("line")
+      .attr("class", "main-seq")
+      .attr("x1", lineData[0][0]).attr("y1", lineData[0][1])
+      .attr("x2", lineData[1][0]).attr("y2", lineData[1][1]);
+    svg.append("text")
+      .attr("class", "axis-label")
+      .attr("x", x(0.35)).attr("y", y(0.62))
+      .attr("fill", "#58a6ff").attr("opacity", 0.5)
+      .text("Martin Main Sequence (A + I = 1)");
+  }
+
+  // Axes
+  svg.append("g")
+    .attr("transform", `translate(0,${height})`)
+    .call(d3.axisBottom(x).ticks(6));
+  svg.append("g").call(d3.axisLeft(y).ticks(6));
+
+  // Axis labels
+  svg.append("text")
+    .attr("class", "axis-label")
+    .attr("x", width / 2).attr("y", height + 45)
+    .attr("text-anchor", "middle").text(xAxis.label);
+  svg.append("text")
+    .attr("class", "axis-label")
+    .attr("transform", "rotate(-90)")
+    .attr("x", -height / 2).attr("y", -50)
+    .attr("text-anchor", "middle").text(yAxis.label);
+
+  // Circles
+  svg.selectAll(".repo-dot")
+    .data(repos)
+    .enter()
+    .append("circle")
+    .attr("class", "repo-dot")
+    .attr("cx", d => x(getAxisValue(d, xKey)))
+    .attr("cy", d => y(getAxisValue(d, yKey)))
+    .attr("r", d => getRadius(d))
+    .attr("fill", d => d.placeholder ? "#f85149" : colorFn(d))
+    .attr("stroke", "#30363d")
+    .attr("stroke-width", 1)
+    .attr("opacity", 0.85)
+    .style("cursor", "pointer")
+    .on("mouseover", (event, d) => {
+      tooltip.style("opacity", 1)
+        .html(`
+          <div class="repo-name">${d.name}</div>
+          <div class="metric"><span class="label">Language</span><span class="value">${d.lang}</span></div>
+          <div class="metric"><span class="label">Nodes / Edges</span><span class="value">${d.nodes} / ${d.edges}</span></div>
+          <div class="metric"><span class="label">SCIP classes</span><span class="value">${d.classes}</span></div>
+          <div class="metric"><span class="label">A (abstractness)</span><span class="value">${d.A.toFixed(3)}</span></div>
+          <div class="metric"><span class="label">I (instability)</span><span class="value">${d.I.toFixed(3)}</span></div>
+          <div class="metric"><span class="label">D (main-seq dist)</span><span class="value">${d.D.toFixed(3)}</span></div>
+          <div class="metric"><span class="label">y (cohesion)</span><span class="value">${d.placeholder ? d.y.toFixed(2) + " *" : d.y.toFixed(3)}</span></div>
+          <div class="metric"><span class="label">SCIP coverage</span><span class="value">${(d.cov * 100).toFixed(0)}%</span></div>
+          <div class="metric"><span class="label">Witness status</span><span class="value">${d.status}</span></div>
+          ${d.placeholder ? '<div style="margin-top:6px;color:#f85149;">* placeholder (no classes)</div>' : ''}
+        `)
+        .style("left", (event.pageX + 14) + "px")
+        .style("top", (event.pageY - 10) + "px");
+    })
+    .on("mouseout", () => tooltip.style("opacity", 0));
+
+  // Labels on circles
+  svg.selectAll(".repo-label")
+    .data(repos)
+    .enter()
+    .append("text")
+    .attr("class", "repo-label")
+    .attr("x", d => x(getAxisValue(d, xKey)) + getRadius(d) + 4)
+    .attr("y", d => y(getAxisValue(d, yKey)) + 3)
+    .attr("font-size", "10px")
+    .attr("fill", "#8b949e")
+    .text(d => d.name);
+}
+
+// ═══ Populate selectors ═══
+const axisOptions = [
+  {key:"coupling", label:"Coupling (edges/nodes)"},
+  {key:"A", label:"Abstractness (A)"},
+  {key:"I", label:"Instability (I)"},
+  {key:"D", label:"Main-seq distance (D)"},
+  {key:"y", label:"Cohesion (y)"},
+  {key:"nodes", label:"Node count"},
+  {key:"classes", label:"SCIP classes"},
+];
+
+["xAxis", "yAxis"].forEach(id => {
+  const sel = document.getElementById(id);
+  axisOptions.forEach(opt => {
+    const o = document.createElement("option");
+    o.value = opt.key; o.textContent = opt.label;
+    sel.appendChild(o);
+  });
+});
+document.getElementById("xAxis").value = "A";
+document.getElementById("yAxis").value = "I";
+
+["xAxis", "yAxis", "colorBy", "sizeBy"].forEach(id => {
+  document.getElementById(id).addEventListener("change", render);
+});
+
+render();
+</script>
+</body>
+</html>
