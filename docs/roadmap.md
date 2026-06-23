@@ -112,6 +112,17 @@ konuşan yerel (local/God-Mode) bir motor.
 ### Faz 3.5 — Language Adapter System (1–2 hafta, Faz 3 ile örtüşür) 🌐
 - Tree-sitter gramerlerini tak-çalıştır adapter yapısı. Dile özel "kavram düğümü" eşleştirme kuralları (ör. C# `namespace/class`, Python `module/class`, Rust `mod/struct`).
 
+### Faz 3.6 — Space Browser Visualization (1–2 gün, erken başlatma) 📊
+> **Amaç:** "Conceptual space" tezini görsel olarak kanıtla. Paper için interaktif figür.
+> Tek dosya statik HTML + D3.js — backend gerektirmez.
+
+- **2D scatter plot:** 15 repo'yu ℝ⁵ uzayda göster. Kullanıcı 5 eksenden 2'sini seçer (x/y/color/size dropdown).
+- **Martin main-sequence overlay:** A+I=1 doğrusu.
+- **Tri-state witness renk kodlaması:** Witnessed (yeşil) / Unobservable (sarı) / Solo (gri).
+- **Click → detail:** Modül/repo detayları (cohesion, coverage, class count).
+- **JSON input:** `osp-analyze --json` çıktısını okur.
+- Çıktı: `viz/space-browser.html` — tek dosya, GitHub Pages'e deploy edilebilir, paper supplement link.
+
 ### Faz 4 — Karşılaştırma & Rezonans + Güvenlik (2–3 hafta) ⚖️
 - `S_projem × S_kütüphane` merge simülasyonu + rezonans skoru + karar matrisi.
 - **[YENİ — Güvenlik]** (geri bildirimden):
@@ -138,6 +149,15 @@ konuşan yerel (local/God-Mode) bir motor.
   - **Deterministic OSP Output zorunluluğu:** LLM serbest metin değil, parse-edilebilir
     `DeltaProposal` dönmeli (inv #12, #14).
   - **LLM durumsuz, durum Agent kabuğunda** (inv #11).
+
+### Faz 5.5 — Commit Pipeline Visualization (1–2 gün, Faz 5 sonrası) 📊
+> **Amaç:** Agent claim'inin Q4-Q6 → Q1-Q3 akışını canlı göster. "God Mode filter"
+> görsel olarak kanıtla.
+- **Pipeline flowchart:** Claim → Q4 Syntax → Q5 Vision → Q6 Rule → Q1-Q3 Witness → Commit/Reject
+- **Real-time gate status:** Hangi gate'te takıldı, hangi değer (θ, rule_id, witness count)
+- **Hallucination classification overlay:** 5 tür (Structural/Vision/Rule/Witness/Undersupported)
+- **Vision deviation gauge:** θ açısı görsel (vision vector vs claim position)
+- Web tabanlı (Faz 3.6 space browser ile aynı frontend stack)
 
 ### Faz 6 — Görselleştirme & Observability (Faz 2'den PARALEL) 📊
 - **[YENİ — Erken başlatma]** (geri bildirimden): Faz 2-3 ile paralel. Feedback loop görselleştirme olmadan çok yavaş.
