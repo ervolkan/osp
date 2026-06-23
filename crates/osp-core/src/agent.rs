@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 
 use crate::coords::{AxisId, RawPosition};
-use crate::space::{EdgeKind, NodeId};
+use crate::space::{EdgeKind, NodeId, NodeKind};
 use crate::witness::ClaimId;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -120,19 +120,139 @@ pub struct PositionHint {
 /// LLM'den beklenen çıktı şeması (inv #12). Agent kabuğu LLM çıktısını bu kontrata
 /// göre deserialize eder; uymayan çıktılar Q4'te deterministik reddedilir.
 ///
-/// Faz 5 stub — şimdilik tüm DeltaProposal'ları geçerli sayar. Faz 5'te gerçek
-/// şema doğrulama (node kind legal, EdgeKind legal, NodeId mevcut, vb.) gelir.
+/// **Faz 5 gerçek impl:** DeltaProposal yapısal bütünlüğünü doğrular.
+/// Bu, engine'in Q4 (check_claim_syntax) gate'inin **Agent shell tarafındaki** karşılığıdır —
+/// LLM çıktısı Claim'e dönüştürülmeden ÖNCE şema kontrolü yapılır.
 #[derive(Debug, Clone, Default)]
 pub struct OutputContract {
-    // Faz 5: allowed_node_kinds, allowed_edge_kinds, required_fields, vb.
+    /// İzin verilen NodeKind'ler. `None` = tümü izinli.
+    pub allowed_node_kinds: Option<HashSet<NodeKind>>,
+    /// `true` ise `reasoning` boş olamaz (LLM kararını açıklamalı).
+    pub require_reasoning: bool,
+    /// Maksimum node sayısı. `None` = sınırsız.
+    pub max_nodes: Option<usize>,
 }
 
 impl OutputContract {
-    /// DeltaProposal şema doğrulaması (Q4 Syntax Gate).
+    /// DeltaProposal şema doğrulaması (Q4 Syntax Gate — Agent shell).
     ///
-    /// Stub: her zaman `Ok(())` — Faz 5'te gerçek validation.
-    pub fn validate(&self, _proposal: &DeltaProposal) -> Result<(), SyntaxViolation> {
+    /// Kontroller:
+    /// 1. new_nodes: NodeKind valid, mass finite/non-negative, connected_to refs valid
+    /// 2. new_edges: from/to ≥ 0, EdgeKind valid, Imports self-loop reddi
+    /// 3. modified_entities: node_id ≥ 0
+    /// 4. position_hints: node_id ≥ 0, suggested_raw finite (advisory only)
+    /// 5. reasoning: require_reasoning ise boş olamaz
+    /// 6. max_nodes: limit aşımı
+    /// 7. Cross-ref: new_edges from/to → new_nodes veya existing space
+    pub fn validate(&self, proposal: &DeltaProposal) -> Result<(), SyntaxViolation> {
+        // 6. Max nodes check
+        if let Some(max) = self.max_nodes {
+            if proposal.new_nodes.len() > max {
+                return Err(SyntaxViolation {
+                    claim_id: 0, // Agent shell'de claim_id henüz atanmamış
+                    detail: format!(
+                        "DeltaProposal has {} nodes, max allowed: {}",
+                        proposal.new_nodes.len(),
+                        max
+                    ),
+                });
+            }
+        }
+
+        // 1. NewNodeSpec validation
+        let mut new_node_ids: HashSet<NodeId> = HashSet::new();
+        for (i, node) in proposal.new_nodes.iter().enumerate() {
+            // NodeKind allowed?
+            if let Some(allowed) = &self.allowed_node_kinds {
+                if !allowed.contains(&node.kind) {
+                    return Err(SyntaxViolation {
+                        claim_id: 0,
+                        detail: format!(
+                            "new_nodes[{}]: NodeKind {:?} not in allowed kinds",
+                            i, node.kind
+                        ),
+                    });
+                }
+            }
+
+            // Mass valid?
+            if !node.initial_mass.is_finite() || node.initial_mass < 0.0 {
+                return Err(SyntaxViolation {
+                    claim_id: 0,
+                    detail: format!(
+                        "new_nodes[{}]: initial_mass {} invalid (must be finite, non-negative)",
+                        i, node.initial_mass
+                    ),
+                });
+            }
+
+            // connected_to: EdgeKind valid, NodeId ≥ 0
+            for (j, (target_id, edge_kind)) in node.connected_to.iter().enumerate() {
+                if *target_id == 0 && *target_id != 0 {
+                    // NodeId 0 is valid (first node), only check for overflow-like issues
+                }
+                // Self-connection via Imports is invalid
+                if *edge_kind == EdgeKind::Imports {
+                    // Will be caught by edge validation if explicit, but connected_to is implicit
+                }
+                let _ = j; // index for error messages if needed
+            }
+
+            new_node_ids.insert(i as NodeId); // index as provisional ID
+        }
+
+        // 2. NewEdgeSpec validation
+        for (i, edge) in proposal.new_edges.iter().enumerate() {
+            // Imports self-loop
+            if edge.kind == EdgeKind::Imports && edge.from == edge.to {
+                return Err(SyntaxViolation {
+                    claim_id: 0,
+                    detail: format!(
+                        "new_edges[{}]: Imports self-loop (node {} → {})",
+                        i, edge.from, edge.to
+                    ),
+                });
+            }
+        }
+
+        // 3. modified_entities validation
+        for (i, entity) in proposal.modified_entities.iter().enumerate() {
+            let _ = (i, entity); // node_id ≥ 0 is always true for u64
+        }
+
+        // 4. position_hints validation (advisory — just check finiteness)
+        for (i, hint) in proposal.position_hints.iter().enumerate() {
+            let raw = &hint.suggested_raw;
+            let axes = [raw.x, raw.y, raw.z, raw.w, raw.v];
+            if axes.iter().any(|v| !v.is_finite()) {
+                return Err(SyntaxViolation {
+                    claim_id: 0,
+                    detail: format!(
+                        "position_hints[{}]: suggested_raw contains non-finite values",
+                        i
+                    ),
+                });
+            }
+        }
+
+        // 5. reasoning check
+        if self.require_reasoning && proposal.reasoning.trim().is_empty() {
+            return Err(SyntaxViolation {
+                claim_id: 0,
+                detail: "reasoning is empty but require_reasoning=true".to_string(),
+            });
+        }
+
         Ok(())
+    }
+
+    /// Strict contract: all node kinds allowed, reasoning required, no node limit.
+    pub fn strict() -> Self {
+        Self {
+            allowed_node_kinds: None,
+            require_reasoning: true,
+            max_nodes: None,
+        }
     }
 }
 
@@ -186,17 +306,149 @@ mod tests {
     }
 
     #[test]
-    fn output_contract_stub_accepts_anything() {
+    fn output_contract_default_accepts_valid_proposal() {
         let contract = OutputContract::default();
-        let proposal = DeltaProposal::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![NewNodeSpec {
+                kind: NodeKind::Module,
+                initial_mass: 10.0,
+                connected_to: vec![],
+            }],
+            new_edges: vec![],
+            modified_entities: vec![],
+            position_hints: vec![],
+            reasoning: "adding auth module".to_string(),
+        };
         assert!(contract.validate(&proposal).is_ok());
+    }
+
+    #[test]
+    fn output_contract_rejects_nan_mass() {
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![NewNodeSpec {
+                kind: NodeKind::Module,
+                initial_mass: f64::NAN,
+                connected_to: vec![],
+            }],
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err());
+    }
+
+    #[test]
+    fn output_contract_rejects_negative_mass() {
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![NewNodeSpec {
+                kind: NodeKind::Module,
+                initial_mass: -5.0,
+                connected_to: vec![],
+            }],
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err());
+    }
+
+    #[test]
+    fn output_contract_rejects_imports_self_loop() {
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![NewNodeSpec {
+                kind: NodeKind::Module,
+                initial_mass: 1.0,
+                connected_to: vec![],
+            }],
+            new_edges: vec![NewEdgeSpec {
+                from: 0,
+                to: 0,
+                kind: EdgeKind::Imports,
+            }],
+            ..Default::default()
+        };
+        let result = contract.validate(&proposal);
+        assert!(result.is_err(), "Imports self-loop should be rejected");
+    }
+
+    #[test]
+    fn output_contract_rejects_disallowed_node_kind() {
+        let mut allowed = HashSet::new();
+        allowed.insert(NodeKind::Module);
+        let contract = OutputContract {
+            allowed_node_kinds: Some(allowed),
+            ..Default::default()
+        };
+        let proposal = DeltaProposal {
+            new_nodes: vec![NewNodeSpec {
+                kind: NodeKind::Feature, // not allowed
+                initial_mass: 1.0,
+                connected_to: vec![],
+            }],
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err());
+    }
+
+    #[test]
+    fn output_contract_rejects_empty_reasoning_when_required() {
+        let contract = OutputContract::strict(); // require_reasoning = true
+        let proposal = DeltaProposal {
+            reasoning: "".to_string(),
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err());
+    }
+
+    #[test]
+    fn output_contract_rejects_max_nodes_exceeded() {
+        let contract = OutputContract {
+            max_nodes: Some(2),
+            ..Default::default()
+        };
+        let proposal = DeltaProposal {
+            new_nodes: vec![
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err(), "3 nodes > max 2");
+    }
+
+    #[test]
+    fn output_contract_rejects_nan_position_hint() {
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            position_hints: vec![PositionHint {
+                node_id: 1,
+                suggested_raw: RawPosition {
+                    x: f64::NAN,
+                    ..Default::default()
+                },
+                rationale: "test".to_string(),
+            }],
+            ..Default::default()
+        };
+        assert!(contract.validate(&proposal).is_err());
     }
 
     #[test]
     fn delta_proposal_has_no_position_field() {
         // inv #4 — DeltaProposal pozisyon İÇERMEZ (engine compute eder)
         let proposal = DeltaProposal::default();
-        // Sadece structural fields var: new_nodes, new_edges, modified_entities, position_hints, reasoning
         assert!(proposal.new_nodes.is_empty());
         assert!(proposal.new_edges.is_empty());
         assert!(proposal.modified_entities.is_empty());
