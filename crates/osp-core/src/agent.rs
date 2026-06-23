@@ -33,7 +33,9 @@ use crate::witness::ClaimId;
 /// 3. `SpaceEngine::commit()` — nihai zorunlu kontrol (atlanamaz)
 #[derive(Debug, Clone, Default)]
 pub struct PermissionMask {
-    /// Agent'ın değiştiremeyeceği, sadece okuyabileceği düğümler.
+    /// Agent'ın tamamen GÖREMEYECEĞİ düğümler (hidden — space_slice'tan çıkarılır).
+    pub hidden_nodes: HashSet<NodeId>,
+    /// Agent'ın okuyabileceği ama DEĞİŞTİREMEYECEĞİ düğümler (read-only).
     pub read_only_nodes: HashSet<NodeId>,
     /// Agent'ın yeni düğüm ekleyebileceği veya koordinat güncelleyebileceği eksenler.
     pub writable_axes: HashSet<AxisId>,
@@ -45,9 +47,9 @@ pub struct PermissionMask {
 
 impl PermissionMask {
     /// Default: tüm node'lar read-write, tüm axis'ler writable, sınırsız deviation.
-    /// Faz 2'de no-op/full-access; Faz 5'te God Mode config'ten yüklenir.
     pub fn full_access() -> Self {
         Self {
+            hidden_nodes: HashSet::new(),
             read_only_nodes: HashSet::new(),
             writable_axes: HashSet::new(),
             forbidden_edge_kinds: HashSet::new(),
@@ -55,10 +57,34 @@ impl PermissionMask {
         }
     }
 
-    /// Node'a okuma izni var mı? (compute_space_slice denetim noktası 1)
-    pub fn has_read_permission(&self, _node: NodeId) -> bool {
-        // Stub: full access — Faz 5'te read_only_nodes kontrolü gelir
-        true
+    /// Node'u Agent görebilir mi? (compute_space_slice denetim noktası 1)
+    ///
+    /// `hidden_nodes` içinde DEĞİL ise görünür. `read_only_nodes` görünür
+    /// ama yazılamaz (has_write_permission ayrı kontrol).
+    pub fn has_read_permission(&self, node: NodeId) -> bool {
+        !self.hidden_nodes.contains(&node)
+    }
+
+    /// Node'u Agent değiştirebilir mi? (Agent kabuğu denetim noktası 2)
+    ///
+    /// `hidden_nodes` VE `read_only_nodes` içinde DEĞİL ise yazılabilir.
+    pub fn has_write_permission(&self, node: NodeId) -> bool {
+        !self.hidden_nodes.contains(&node) && !self.read_only_nodes.contains(&node)
+    }
+
+    /// EdgeKind oluşturabilir mi? (forbidden_edge_kinds kontrolü)
+    pub fn can_create_edge(&self, kind: EdgeKind) -> bool {
+        !self.forbidden_edge_kinds.contains(&kind)
+    }
+
+    /// Belirli bir node'u hidden yap (God Mode API).
+    pub fn hide_node(&mut self, node: NodeId) {
+        self.hidden_nodes.insert(node);
+    }
+
+    /// Belirli bir node'u read-only yap (God Mode API).
+    pub fn set_read_only(&mut self, node: NodeId) {
+        self.read_only_nodes.insert(node);
     }
 }
 
@@ -275,6 +301,119 @@ impl std::fmt::Display for SyntaxViolation {
             "Q4 syntax violation (claim {}): {}",
             self.claim_id, self.detail
         )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Hallucination Classification (agent-prompt-semantics.md §4.1)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Agent üretiminin neden reddedildiğini sınıflandırır — her tür farklı
+/// kalibrasyon geri bildirimi gerektirir.
+///
+/// 5 tür (agent-prompt-semantics.md §4.1):
+/// - Structural: Q4 Syntax Gate ihlali (OutputContract'e uymayan format)
+/// - Vision: Q5 Vision Gate ihlali (θ > θ_bound)
+/// - Rule: Q6 Rule Gate ihlali (mimari kural ihlali)
+/// - Witness: Q3 honest-reject (şahit reddetti)
+/// - Undersupported: Q1/Q2 yetersiz (şahit sayısı/quorum eksik)
+#[derive(Debug, Clone, PartialEq)]
+pub enum HallucinationType {
+    /// Q4: DeltaProposal OutputContract'a uymuyor (inv #12).
+    Structural { detail: String },
+    /// Q5: θ > θ_bound — claim vision'dan çok saptı.
+    Vision { theta: f64, bound: f64 },
+    /// Q6: Bir Rule ihlal edildi.
+    Rule { rule_id: String, detail: String },
+    /// Q3: Honest witness reddetti (explicit reject).
+    Witness { witness: u64 },
+    /// Q1/Q2: Yeterli şahit yok — bekle veya ek şahit talep et.
+    Undersupported { support: f64, threshold: f64 },
+}
+
+impl HallucinationType {
+    /// EngineCommitError'dan hallucination türünü çıkarır.
+    /// `None` = hatasız (PermissionDenied, NoPersistence vb. — hallucination değil).
+    pub fn from_engine_error(err: &crate::engine::EngineCommitError) -> Option<Self> {
+        match err {
+            crate::engine::EngineCommitError::SyntaxViolation { violation, .. } => {
+                Some(Self::Structural {
+                    detail: violation.detail.clone(),
+                })
+            }
+            crate::engine::EngineCommitError::VisionViolation {
+                violation,
+                bound,
+                ..
+            } => Some(Self::Vision {
+                theta: violation.theta,
+                bound: *bound,
+            }),
+            crate::engine::EngineCommitError::RuleViolation { violation, .. } => {
+                Some(Self::Rule {
+                    rule_id: violation.rule_id.clone(),
+                    detail: violation.detail.clone(),
+                })
+            }
+            crate::engine::EngineCommitError::Witness(reason) => match reason {
+                crate::witness::Reason::HonestReject { witness } => {
+                    Some(Self::Witness { witness: *witness })
+                }
+                crate::witness::Reason::QuorumInsufficient { support, threshold } => {
+                    Some(Self::Undersupported {
+                        support: *support,
+                        threshold: *threshold,
+                    })
+                }
+                crate::witness::Reason::MinApproversNotMet { .. } => Some(Self::Undersupported {
+                    support: 0.0,
+                    threshold: 1.5,
+                }),
+                crate::witness::Reason::UnobservableLocally { .. } => Some(Self::Undersupported {
+                    support: 0.0,
+                    threshold: 1.5,
+                }),
+            },
+            _ => None, // PermissionDenied, NoPersistence, etc. — not hallucination
+        }
+    }
+
+    /// İnsan-okunabilir kalibrasyon mesajı (Agent'a geri bildirim için).
+    pub fn calibration_message(&self) -> String {
+        match self {
+            Self::Structural { detail } => {
+                format!("Structural hallucination: output format is invalid — {detail}. Fix the DeltaProposal schema and retry.")
+            }
+            Self::Vision { theta, bound } => {
+                format!("Vision hallucination: θ={theta:.3} > bound={bound:.3}. The proposed change deviates too far from the architectural vision. Adjust the approach to align with vision targets.")
+            }
+            Self::Rule { rule_id, detail } => {
+                format!("Rule hallucination: rule '{rule_id}' violated — {detail}. Find an alternative path that respects this constraint.")
+            }
+            Self::Witness { witness } => {
+                format!("Witness hallucination: honest witness #{witness} rejected this claim. Review the rejection feedback and revise.")
+            }
+            Self::Undersupported { support, threshold } => {
+                format!("Undersupported claim: support={support:.2} < threshold={threshold:.2}. Wait for additional witnesses or request more review.")
+            }
+        }
+    }
+
+    /// Gate seviyesi (Q4/Q5/Q6/Q1-Q3) — hangi gate'te takıldı.
+    pub fn gate(&self) -> &'static str {
+        match self {
+            Self::Structural { .. } => "Q4 Syntax",
+            Self::Vision { .. } => "Q5 Vision",
+            Self::Rule { .. } => "Q6 Rule",
+            Self::Witness { .. } => "Q3 Witness",
+            Self::Undersupported { .. } => "Q1-Q2 Quorum",
+        }
+    }
+}
+
+impl std::fmt::Display for HallucinationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.gate(), self.calibration_message())
     }
 }
 
@@ -787,5 +926,165 @@ mod tests {
         assert_eq!(slice.edge_count(), 1);
         assert_eq!(slice.edges[0].from, 1);
         assert_eq!(slice.edges[0].to, 2);
+    }
+
+    // --- PermissionMask real logic (inv #13) ---
+
+    #[test]
+    fn permission_mask_hidden_node_not_readable() {
+        let mut mask = PermissionMask::full_access();
+        mask.hide_node(42);
+        assert!(!mask.has_read_permission(42), "hidden node should not be readable");
+        assert!(mask.has_read_permission(1), "non-hidden node should be readable");
+    }
+
+    #[test]
+    fn permission_mask_read_only_node_readable_but_not_writable() {
+        let mut mask = PermissionMask::full_access();
+        mask.set_read_only(10);
+        assert!(mask.has_read_permission(10), "read-only node IS readable");
+        assert!(!mask.has_write_permission(10), "read-only node is NOT writable");
+        assert!(mask.has_write_permission(1), "normal node is writable");
+    }
+
+    #[test]
+    fn permission_mask_hidden_node_not_writable() {
+        let mut mask = PermissionMask::full_access();
+        mask.hide_node(99);
+        assert!(!mask.has_write_permission(99), "hidden node is not writable");
+    }
+
+    #[test]
+    fn permission_mask_full_access_allows_everything() {
+        let mask = PermissionMask::full_access();
+        for id in 0..100 {
+            assert!(mask.has_read_permission(id));
+            assert!(mask.has_write_permission(id));
+        }
+    }
+
+    #[test]
+    fn permission_mask_forbidden_edge_blocked() {
+        let mut mask = PermissionMask::full_access();
+        mask.forbidden_edge_kinds.insert(EdgeKind::Approves);
+        assert!(!mask.can_create_edge(EdgeKind::Approves), "forbidden edge blocked");
+        assert!(mask.can_create_edge(EdgeKind::Imports), "allowed edge ok");
+    }
+
+    #[test]
+    fn space_slice_filters_hidden_nodes() {
+        // Chain: 1 → 2 → 3
+        let mut space = Space::new();
+        for id in 1..=3u64 {
+            space.insert_node(Node {
+                id,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            });
+        }
+        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
+        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports });
+
+        let mut mask = PermissionMask::full_access();
+        mask.hide_node(2); // hide middle node
+
+        let slice = compute_space_slice(&[1], &space, &[], &mask, &EvidenceSummary::empty(), 2);
+
+        assert!(!slice.node_ids.contains(&2), "hidden node 2 should be filtered from slice");
+        assert!(slice.node_ids.contains(&1), "node 1 should be visible");
+    }
+
+    // --- Hallucination classification (§4.1) ---
+
+    #[test]
+    fn hallucination_from_syntax_violation() {
+        let err = crate::engine::EngineCommitError::SyntaxViolation {
+            violation: SyntaxViolation {
+                claim_id: 1,
+                detail: "NaN mass".to_string(),
+            },
+        };
+        let h = HallucinationType::from_engine_error(&err);
+        assert!(matches!(h, Some(HallucinationType::Structural { .. })));
+        assert_eq!(h.unwrap().gate(), "Q4 Syntax");
+    }
+
+    #[test]
+    fn hallucination_from_vision_violation() {
+        let err = crate::engine::EngineCommitError::VisionViolation {
+            violation: crate::engine::VisionViolation {
+                claim_id: 1,
+                theta: 0.35,
+                raw: RawPosition::default(),
+            },
+            bound: 0.25,
+        };
+        let h = HallucinationType::from_engine_error(&err);
+        match h {
+            Some(HallucinationType::Vision { theta, bound }) => {
+                assert!((theta - 0.35).abs() < 1e-9);
+                assert!((bound - 0.25).abs() < 1e-9);
+            }
+            _ => panic!("expected Vision hallucination"),
+        }
+    }
+
+    #[test]
+    fn hallucination_from_rule_violation() {
+        use crate::rule::{RuleSeverity, RuleViolation};
+        let err = crate::engine::EngineCommitError::RuleViolation {
+            violation: RuleViolation {
+                rule_id: "structural.no_self_import".to_string(),
+                detail: "node 5 imports itself".to_string(),
+                severity: RuleSeverity::Hard,
+            },
+        };
+        let h = HallucinationType::from_engine_error(&err);
+        assert!(matches!(h, Some(HallucinationType::Rule { .. })));
+        assert_eq!(h.unwrap().gate(), "Q6 Rule");
+    }
+
+    #[test]
+    fn hallucination_from_witness_reject() {
+        use crate::witness::Reason;
+        let err = crate::engine::EngineCommitError::Witness(Reason::HonestReject { witness: 42 });
+        let h = HallucinationType::from_engine_error(&err);
+        match h {
+            Some(HallucinationType::Witness { witness }) => assert_eq!(witness, 42),
+            _ => panic!("expected Witness hallucination"),
+        }
+    }
+
+    #[test]
+    fn hallucination_from_undersupported() {
+        use crate::witness::Reason;
+        let err = crate::engine::EngineCommitError::Witness(Reason::QuorumInsufficient {
+            support: 0.8,
+            threshold: 1.5,
+        });
+        let h = HallucinationType::from_engine_error(&err);
+        match h {
+            Some(HallucinationType::Undersupported { support, threshold }) => {
+                assert!((support - 0.8).abs() < 1e-9);
+                assert!((threshold - 1.5).abs() < 1e-9);
+            }
+            _ => panic!("expected Undersupported"),
+        }
+    }
+
+    #[test]
+    fn hallucination_calibration_message_is_readable() {
+        let h = HallucinationType::Vision { theta: 0.35, bound: 0.25 };
+        let msg = h.calibration_message();
+        assert!(msg.contains("0.350"), "message should include theta value");
+        assert!(msg.contains("0.250"), "message should include bound value");
+        assert!(msg.contains("Vision"), "message should mention hallucination type");
+    }
+
+    #[test]
+    fn hallucination_non_error_returns_none() {
+        let err = crate::engine::EngineCommitError::NoPersistence;
+        assert!(HallucinationType::from_engine_error(&err).is_none());
     }
 }
