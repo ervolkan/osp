@@ -6,15 +6,14 @@
 //! Tauri'ye migration: bu server'ı `tauri::Builder` ile değiştir,
 //! command handler'lar (`lib.rs`) aynı kalır.
 
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::path::PathBuf;
 
 use serde_json::Value;
 use tiny_http::{Header, Method, Response, Server};
 
 const PORT: u16 = 7878;
-const FRONTEND_DIR: &str = "frontend";
+/// Frontend dizini — crate köküne göre absolute (CWD'den bağımsız).
+const FRONTEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/frontend");
 
 fn main() {
     let addr = format!("127.0.0.1:{PORT}");
