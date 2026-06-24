@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-06-24T20:24:37.1407333+03:00",
+  "ratio": 2.2,
+  "raw": {
+    "prompt_tokens": 1238,
+    "total_tokens": 1738,
+    "completion_tokens": 500,
+    "input_chars": 4276
+  },
+  "osp": {
+    "prompt_tokens": 570,
+    "total_tokens": 818,
+    "completion_tokens": 248,
+    "input_chars": 1538
+  },
+  "model": "gpt-4o-mini",
+  "savings_pct": 54.0
+}
