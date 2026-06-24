@@ -89,6 +89,43 @@ fn handle_request(mut request: tiny_http::Request) {
             }
         }
 
+        (Method::Post, "/api/graveyard") => {
+            let mut content = String::new();
+            request.as_reader().read_to_string(&mut content).ok();
+            let req: Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+            };
+            let repo = req["repo_path"].as_str().unwrap_or("");
+            if repo.is_empty() {
+                respond_error(request, 400, "repo_path is required");
+            } else {
+                match osp_desktop::cmd_get_graveyard(repo) {
+                    Ok(result) => respond_json(request, &result),
+                    Err(e) => respond_error(request, 500, &e),
+                }
+            }
+        }
+
+        (Method::Post, "/api/whatif") => {
+            let mut content = String::new();
+            request.as_reader().read_to_string(&mut content).ok();
+            let req: Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+            };
+            let repo = req["repo_path"].as_str().unwrap_or("");
+            let scenario = req["scenario"].as_str().unwrap_or("vision_fail");
+            if repo.is_empty() {
+                respond_error(request, 400, "repo_path is required");
+            } else {
+                match osp_desktop::cmd_compute_whatif(repo, scenario) {
+                    Ok(result) => respond_json(request, &result),
+                    Err(e) => respond_error(request, 500, &e),
+                }
+            }
+        }
+
         (Method::Post, "/api/analyze") => {
             let mut content = String::new();
             request.as_reader().read_to_string(&mut content).ok();

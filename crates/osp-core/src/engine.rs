@@ -633,6 +633,11 @@ impl SpaceEngine {
         &self.vision
     }
 
+    /// Coordinate system accessor (for what-if simulations and position computation).
+    pub fn coord_system(&self) -> &crate::coords::CoordinateSystem {
+        &self.coord_system
+    }
+
     /// **Position computation from DeltaProposal** (inv #4 — epistemological integrity).
     ///
     /// Agent/LLM pozisyon **declare edemez** — engine structural ΔS'i hypothetical

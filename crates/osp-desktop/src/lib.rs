@@ -259,6 +259,191 @@ pub fn cmd_health() -> &'static str {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Command: graveyard (rejected claims — epistemic negative-space data)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GraveyardEntryJson {
+    pub scenario: String,
+    pub gate_failed: String,
+    pub hallucination_type: String,
+    pub detail: String,
+    pub computed_position: Vec<f64>,
+    pub would_be_dangerous: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GraveyardJson {
+    pub entries: Vec<GraveyardEntryJson>,
+    pub total: usize,
+}
+
+/// Graveyard — reddedilmiş claim'lerin listesi.
+///
+/// Mevcut implementasyonda, `cmd_simulate_claim`'in failure senaryolarını
+/// kullanarak graveyard oluştururur. Her entry: hangi senaryo, hangi gate,
+/// hangi hallucination türü, ve "kabul edilseydi tehlikeli olur muydu?".
+///
+/// Gerçek kullanımda: engine'in commit history'sinden EngineCommitError'ları toplar.
+pub fn cmd_get_graveyard(repo_path: &str) -> Result<GraveyardJson, String> {
+    let scenarios = ["syntax_fail", "vision_fail", "rule_fail"];
+
+    let mut entries = vec![];
+    for scenario in &scenarios {
+        match cmd_simulate_claim(repo_path, scenario) {
+            Ok(result) => {
+                if result.outcome != "Commit" {
+                    let failed = result.gates.iter().find(|g| !g.passed);
+                    let failed_gate = failed.map(|g| g.name.clone()).unwrap_or("Unknown".to_string());
+                    let hallucination = failed.and_then(|g| g.hallucination.clone()).unwrap_or("Unknown hallucination".to_string());
+
+                    let dangerous = scenario == &"vision_fail";
+
+                    entries.push(GraveyardEntryJson {
+                        scenario: scenario.to_string(),
+                        gate_failed: failed_gate.clone(),
+                        hallucination_type: hallucination,
+                        detail: format!("Scenario '{}' rejected at {}", scenario, failed_gate),
+                        computed_position: result.computed_raw.clone(),
+                        would_be_dangerous: dangerous,
+                    });
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+
+    Ok(GraveyardJson {
+        total: entries.len(),
+        entries,
+    })
+}
+
+/// What-if simulation — "bu claim kabul edilseydi ne olurdu?"
+///
+/// Bir failure senaryosunu hypothetical olarak uygular:
+/// 1. Engine space'i klonlar
+/// 2. Delta'yı uygular (ne olursa olsun — gates'i atla)
+/// 3. Yeni pozisyonları hesaplar
+/// 4. Hangi node'ların θ > θ_bound'a kayacağını bulur (impact wave)
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImpactNodeJson {
+    pub node_id: u64,
+    pub old_theta: f64,
+    pub new_theta: f64,
+    pub delta_theta: f64,
+    pub would_enter_negative_space: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WhatIfResultJson {
+    pub scenario: String,
+    pub accepted_hypothetically: bool,
+    pub impacted_nodes: Vec<ImpactNodeJson>,
+    pub nodes_entering_negative_space: usize,
+    pub message: String,
+}
+
+pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResultJson, String> {
+    use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
+    use osp_core::coords::CoordinateSystem;
+    use osp_core::engine::{EngineConfig, SpaceEngine};
+    use osp_core::space::{Edge, EdgeKind, Node, NodeKind};
+    use osp_core::vision::{CosineDeviation, DeviationMetric, VisionVector};
+    use osp_core::coords::RawPosition;
+
+    // Analyze repo
+    let config = AnalysisConfig::default();
+    let registry = AdapterRegistry::default_all();
+    let result = analyze_repo_with_config(Path::new(repo_path), &registry, &config)
+        .map_err(|e| e.to_string())?;
+
+    // Build engine
+    let cs = CoordinateSystem::default_raw_five(
+        CohesionAxis::new(),
+        EntropyAxis::from_commit_entropy(6.0),
+        WitnessDepthAxis::from_witness(0.3, 5),
+    );
+    let vision = VisionVector::new(RawPosition {
+        x: 0.4, y: 0.6, z: 0.5, w: 0.5, v: 0.5,
+    });
+    let engine = SpaceEngine::with_default_rules(
+        result.space, cs, vision, EngineConfig::default_calibrated(),
+    );
+
+    // Build delta from scenario (same logic as cmd_simulate_claim)
+    let next_id = engine.space().nodes.keys().max().copied().unwrap_or(0) + 1;
+    let (delta_nodes, delta_edges) = match scenario {
+        "syntax_fail" => (
+            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
+            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports }],
+        ),
+        "vision_fail" => (
+            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
+            vec![],
+        ),
+        "rule_fail" => {
+            let existing = engine.space().nodes.keys().next().copied().unwrap_or(1);
+            (
+                vec![Node { id: existing, kind: NodeKind::Module, mass: 99.0, ..Default::default() }],
+                vec![],
+            )
+        }
+        _ => return Err(format!("Unknown scenario: {scenario}")),
+    };
+
+    // Compute current θ for all nodes
+    let theta_bound = engine.config().theta_bound;
+    let current_thetas: Vec<(u64, f64)> = engine.space().nodes.values()
+        .map(|n| {
+            let raw = engine.coord_system().raw_position_of(n, engine.space());
+            let theta = CosineDeviation.theta(&raw, engine.vision(), engine.space());
+            (n.id, theta)
+        })
+        .collect();
+
+    // Hypothetical: apply delta (ignore gates) and compute new θ
+    let mut hypothetical_space = engine.space().clone();
+    for n in &delta_nodes { hypothetical_space.insert_node(n.clone()); }
+    for e in &delta_edges { hypothetical_space.insert_edge(*e); }
+
+    let impacted: Vec<ImpactNodeJson> = current_thetas.iter()
+        .map(|(id, old_theta)| {
+            let node = hypothetical_space.nodes.get(id);
+            let new_raw = node.map(|n| engine.coord_system().raw_position_of(n, &hypothetical_space))
+                .unwrap_or_default();
+            let new_theta = CosineDeviation.theta(&new_raw, engine.vision(), &hypothetical_space);
+            ImpactNodeJson {
+                node_id: *id,
+                old_theta: *old_theta,
+                new_theta,
+                delta_theta: new_theta - old_theta,
+                would_enter_negative_space: new_theta > theta_bound && *old_theta <= theta_bound,
+            }
+        })
+        .filter(|i| i.delta_theta.abs() > 0.001) // only show changed nodes
+        .collect();
+
+    let neg_count = impacted.iter().filter(|i| i.would_enter_negative_space).count();
+
+    let message = if neg_count > 0 {
+        format!("⚠ If this claim had been accepted, {} node(s) would have entered negative space (θ > {:.2}).", neg_count, theta_bound)
+    } else if !impacted.is_empty() {
+        format!("This claim would have shifted {} node(s) but none into negative space.", impacted.len())
+    } else {
+        "This claim would have minimal impact on the space.".to_string()
+    };
+
+    Ok(WhatIfResultJson {
+        scenario: scenario.to_string(),
+        accepted_hypothetically: true, // we force-accept for what-if
+        impacted_nodes: impacted,
+        nodes_entering_negative_space: neg_count,
+        message,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Command: vision config (get/set)
 // ═══════════════════════════════════════════════════════════════════════════════
 

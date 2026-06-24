@@ -69,6 +69,25 @@
   .footer { padding: 6px 24px; border-top: 1px solid #30363d; font-size: 11px; color: #484f58; }
   .scenario-btn { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 8px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; }
   .scenario-btn:hover { background: #30363d; border-color: #58a6ff; }
+  .grave-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-bottom: 12px; cursor: pointer; transition: border-color 0.2s; }
+  .grave-card:hover { border-color: #f85149; }
+  .grave-card.dangerous { border-left: 3px solid #f85149; }
+  .grave-card .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .grave-card .scenario { font-size: 14px; font-weight: 700; color: #f85149; }
+  .grave-card .gate { font-size: 11px; color: #8b949e; background: #21262d; padding: 2px 8px; border-radius: 4px; }
+  .grave-card .haluc { font-size: 12px; color: #d29922; margin: 6px 0; }
+  .grave-card .pos { font-size: 11px; color: #484f58; font-family: monospace; }
+  .grave-card .danger-badge { font-size: 10px; color: #f85149; background: #2d1b1b; padding: 2px 6px; border-radius: 3px; margin-left: 8px; }
+  .impact-wave-overlay { position: absolute; pointer-events: none; z-index: 50; }
+  .impact-result { margin-top: 12px; padding: 16px; border-radius: 8px; }
+  .impact-result.danger { background: #2d1b1b; border: 1px solid #f85149; }
+  .impact-result.safe { background: #0d2818; border: 1px solid #3fb950; }
+  .impact-result .msg { font-size: 13px; }
+  .impact-result.danger .msg { color: #f85149; }
+  .impact-result.safe .msg { color: #3fb950; }
+  .impact-nodes { margin-top: 8px; max-height: 200px; overflow-y: auto; }
+  .impact-node { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #21262d; font-size: 11px; font-family: monospace; }
+  .impact-node .neg { color: #f85149; }
   .pipeline-flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: center; margin: 20px 0; }
   .gate-box { padding: 16px 20px; border-radius: 8px; text-align: center; min-width: 100px; border: 2px solid; }
   .gate-box.passed { background: #0d2818; border-color: #3fb950; }
@@ -107,6 +126,7 @@
   <div class="tab" onclick="switchTab('vision')">Vision Editor</div>
     <div class="tab" onclick="switchTab('witness')">Witness Dashboard</div>
     <div class="tab" onclick="switchTab('pipeline')">Commit Pipeline</div>
+    <div class="tab" onclick="switchTab('graveyard')">Graveyard</div>
 </div>
 
 <!-- ═══ Panel 1: Space Topology ═══ -->
@@ -185,6 +205,25 @@
       <div style="text-align:center;padding:40px;color:#484f58;">
         <p style="font-size:15px;">Select a scenario to simulate the commit pipeline</p>
         <p style="font-size:12px;margin-top:8px;">Analyzes the loaded repo + applies a delta → runs Q4→Q5→Q6→Q1-Q3</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Panel 5: Graveyard ═══ -->
+<div class="panel" id="panel-graveyard">
+  <div style="padding:24px;max-width:900px;margin:0 auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <div>
+        <h3 style="font-size:16px;color:#f85149;margin-bottom:4px;">💀 Hallucination Graveyard</h3>
+        <p style="font-size:12px;color:#8b949e;">Rejected claims — epistemic negative-space data. "If OSP didn't exist, these would have entered your codebase."</p>
+      </div>
+      <button class="scenario-btn" onclick="loadGraveyard()">Load Graveyard</button>
+    </div>
+    <div id="graveyardContent">
+      <div style="text-align:center;padding:40px;color:#484f58;">
+        <p style="font-size:15px;">Load the graveyard to see rejected claims</p>
+        <p style="font-size:12px;margin-top:8px;">Each entry shows: which gate rejected it, hallucination type, and what-if impact</p>
       </div>
     </div>
   </div>
@@ -473,6 +512,115 @@ function renderPipeline(data) {
   }
 
   document.getElementById('pipelineContent').innerHTML = flowHtml + posHtml + resultHtml;
+}
+
+// ═══ Graveyard ═══
+async function loadGraveyard() {
+  if (!repoPathCache) {
+    document.getElementById('graveyardContent').innerHTML =
+      '<div style="color:#f85149;padding:20px;">Analyze a repo first</div>';
+    return;
+  }
+  document.getElementById('graveyardContent').innerHTML =
+    '<div style="text-align:center;padding:40px;color:#58a6ff;">Loading graveyard...</div>';
+
+  try {
+    const resp = await fetch('/api/graveyard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_path: repoPathCache }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      document.getElementById('graveyardContent').innerHTML =
+        `<div style="color:#f85149;padding:20px;">${data.error}</div>`;
+      return;
+    }
+    renderGraveyard(data);
+  } catch (e) {
+    document.getElementById('graveyardContent').innerHTML =
+      `<div style="color:#f85149;padding:20px;">${e.message}</div>`;
+  }
+}
+
+function renderGraveyard(data) {
+  if (!data.entries || data.entries.length === 0) {
+    document.getElementById('graveyardContent').innerHTML =
+      '<div style="text-align:center;padding:40px;color:#3fb950;">✓ No rejected claims in graveyard</div>';
+    return;
+  }
+
+  let html = `<div style="font-size:13px;color:#8b949e;margin-bottom:16px;">
+    <b>${data.total}</b> rejected claim(s) in graveyard — click any entry to see what-if impact
+  </div>`;
+
+  data.entries.forEach((entry, i) => {
+    const dangerClass = entry.would_be_dangerous ? 'dangerous' : '';
+    const dangerBadge = entry.would_be_dangerous ? '<span class="danger-badge">⚠ DANGEROUS</span>' : '';
+    const pos = entry.computed_position;
+    html += `<div class="grave-card ${dangerClass}" onclick="loadWhatIf('${entry.scenario}')">
+      <div class="header">
+        <span class="scenario">${entry.scenario}${dangerBadge}</span>
+        <span class="gate">${entry.gate_failed}</span>
+      </div>
+      <div class="haluc">${entry.hallucination_type}</div>
+      <div class="pos">Position: coupling=${pos[0]?.toFixed(2)} cohesion=${pos[1]?.toFixed(2)} instability=${pos[2]?.toFixed(2)}</div>
+    </div>`;
+  });
+
+  document.getElementById('graveyardContent').innerHTML = html;
+}
+
+async function loadWhatIf(scenario) {
+  // Find the card that was clicked and append impact below it
+  const cards = document.querySelectorAll('.grave-card');
+  let targetCard = null;
+  cards.forEach(c => { if (c.getAttribute('onclick')?.includes(scenario)) targetCard = c; });
+
+  if (!targetCard) return;
+
+  // Remove any existing impact result
+  document.querySelectorAll('.impact-result').forEach(el => el.remove());
+
+  targetCard.insertAdjacentHTML('afterend',
+    '<div class="impact-result" id="impactLoading" style="background:#161b22;text-align:center;padding:16px;color:#58a6ff;">Computing what-if impact...</div>');
+
+  try {
+    const resp = await fetch('/api/whatif', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_path: repoPathCache, scenario }),
+    });
+    const data = await resp.json();
+    document.getElementById('impactLoading')?.remove();
+
+    if (data.error) {
+      targetCard.insertAdjacentHTML('afterend',
+        `<div class="impact-result danger"><div class="msg">Error: ${data.error}</div></div>`);
+      return;
+    }
+
+    const cls = data.nodes_entering_negative_space > 0 ? 'danger' : 'safe';
+    let nodeRows = '';
+    data.impacted_nodes.forEach(n => {
+      const negCls = n.would_enter_negative_space ? 'neg' : '';
+      nodeRows += `<div class="impact-node ${negCls}">
+        <span>node ${n.node_id}</span>
+        <span>θ: ${n.old_theta.toFixed(3)} → ${n.new_theta.toFixed(3)} (Δ${n.delta_theta > 0 ? '+' : ''}${n.delta_theta.toFixed(3)})</span>
+        ${n.would_enter_negative_space ? '<span class="neg">⚠ NEGATIVE SPACE</span>' : ''}
+      </div>`;
+    });
+
+    targetCard.insertAdjacentHTML('afterend', `
+      <div class="impact-result ${cls}">
+        <div class="msg">${data.message}</div>
+        ${nodeRows ? `<div class="impact-nodes">${nodeRows}</div>` : ''}
+      </div>`);
+  } catch (e) {
+    document.getElementById('impactLoading')?.remove();
+    targetCard.insertAdjacentHTML('afterend',
+      `<div class="impact-result danger"><div class="msg">Error: ${e.message}</div></div>`);
+  }
 }
 
 // ═══ Topology chart ═══
