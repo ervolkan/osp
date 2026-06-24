@@ -1,9 +1,9 @@
 # Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing
 
-**OSP Paper Draft v2.5-edited** · Target: ICSE/FSE (Software Engineering)
+**OSP Paper Draft v2.6** · Target: arXiv then ACM TOSEM
 **Authors:** Volkan ER
 **Date:** 2026-06-24
-**Revision:** v2.4 → v2.5-edited: RQ5 Token Compression benchmark integrated (13 repos; chars/4 approximation; full-dump and 2-hop baselines); section numbering fixed; threshold and measurement claims calibrated; “real abstractness” wording changed to measured/tree-sitter-derived; token-reduction claims moved from speculation to measured approximation; hallucination telemetry privacy caveat added; Appendix B token benchmark table added.
+**Revision:** v2.5 → v2.6 (claim discipline pass): 28-repo/Rust-Go/AI-era-foam claims removed from Abstract/Contributions/Methodology (unsupported by paper tables — reserved for TOSEM revision); test count unified to 330+; RepoCoder/SWE-agent citations fixed ([14],[15]); constant ~155 corrected to median 155, density-sensitive; A4 ~500 lines softened to small auditable module; date-fns D precision harmonized to 0.036.
 
 ---
 
@@ -13,7 +13,7 @@ AI-assisted software development lacks a persistent, verifiable representation o
 
 OSP positions every module in a coordinate system and advances project time only through a two-witness quorum. We prove that this quorum rule is a **safety-refinement** of authenticated Byzantine Fault Tolerance (BFT) for f = 1: it provides optimal safety against Byzantine witnesses while leaving liveness to standard distributed systems mechanisms (Theorem 1). We introduce a **tri-state witness classification** (Witnessed, Unwitnessed, Unobservable-locally) that resolves the "squash-merge blind spot" — in our 15-repository corpus, 8 repositories use workflows where review evidence is not locally observable from merge commits.
 
-We evaluate OSP on a 15-repository primary corpus (extended to 28 repositories across 5 languages: Python, TypeScript, JavaScript, Rust, Go) using tree-sitter (Tier 1) and SCIP semantic indices (Tier 2). For the primary corpus, SCIP-based LCOM4 cohesion is computed for 13,031 classes across 13/15 repositories; the extended 28-repository corpus yields ~17,000 classes via scip-python, scip-typescript, scip-rust, and scip-go. Results suggest language-paradigm differences: Rust projects cluster highest in cohesion (y ≈ 0.67), while AI-era "foam" repositories exhibit 2–4× higher coupling density. A binary merge-based classifier would mark 8 repositories as unwitnessed; OSP instead classifies them as Unobservable-locally, avoiding unsupported negative claims. Tree-sitter-derived abstractness values (A = Nₐ/Nc) produce meaningful Martin main-sequence distances, distinguishing architectural balance across projects. A HashMap-based import resolver enables 3000-file analysis in 11.2 seconds median (5-run, release build). Finally, a token-size benchmark on 13 repositories shows that OSP coordinate prompts reduce architectural context size by 99.53% on average versus full repository dumps and by 89.19% versus a structure-aware 2-hop baseline, using a chars/4 token approximation. All data and implementations are open-source and reproducible.
+We evaluate OSP on 15 repositories across Python, TypeScript, and JavaScript using tree-sitter (Tier 1) and SCIP semantic indices (Tier 2). SCIP-based LCOM4 cohesion is computed for 13,031 classes across 13 repositories, suggesting language-paradigm differences in cohesion distributions. A binary merge-based classifier would mark 8 repositories as unwitnessed; OSP instead classifies them as Unobservable-locally, avoiding unsupported negative claims. Tree-sitter-derived abstractness values (A = Nₐ/Nc) produce meaningful Martin main-sequence distances, distinguishing architectural balance across projects. A HashMap-based import resolver enables 3000-file analysis in 11.2 seconds median (5-run, release build). Finally, a token-size benchmark on 13 repositories shows that OSP coordinate prompts reduce architectural context size by 99.53% on average versus full repository dumps and by 89.19% versus a structure-aware 2-hop baseline, using a chars/4 token approximation. All data and implementations are open-source and reproducible.
 
 ---
 
@@ -47,9 +47,9 @@ This paper makes four contributions:
 
 2. **Deterministic claim-based gate architecture** (Section 4, 6): We define a two-layer commit pipeline — deterministic Q4–Q6 gates (syntax, vision deviation θ, architectural rules) evaluated before witness-based Q1–Q3 gates — that rejects structurally invalid or architecturally deviating claims before any code generation or witness evaluation. Every metric carries provenance (source, confidence, coverage), ensuring epistemological honesty: "we don't know" is never conflated with "we measured 0.5."
 
-3. **Multi-language empirical evaluation** (Section 7): We analyze 15 primary repositories (extended to 28 across 5 languages: Python, TypeScript, JavaScript, Rust, Go) using tree-sitter (Tier 1) and SCIP semantic indices (Tier 2). Real LCOM4 cohesion is computed for ~17,000 classes across 22/28 repositories via scip-python, scip-typescript, scip-rust, and scip-go. Results reveal that Rust projects cluster highest in cohesion (y ≈ 0.67), while AI-era "foam" repositories (langchain, Auto-GPT, crewAI) exhibit 2–4× higher coupling density than mature projects.
+3. **Multi-language empirical evaluation** (Section 7): We analyze 15 repositories across Python, TypeScript, and JavaScript using tree-sitter (Tier 1) and SCIP semantic indices (Tier 2). Real LCOM4 cohesion is computed for 13,031 classes across 13 repositories via scip-python and scip-typescript. Results suggest language-paradigm differences in cohesion distributions (Python y ≈ 0.60, TS/JS y ≈ 0.52).
 
-4. **Token compression via epistemic codec** (Section 7.7): A 13-repository benchmark demonstrates that OSP's coordinate-based prompt reduces architectural context size by 99.53% on average versus full repository dumps and 89.19% versus a structure-aware 2-hop baseline. OSP prompt size is approximately constant (~155 tokens) regardless of repository scale, while baseline context grows linearly.
+4. **Token compression via epistemic codec** (Section 7.7): A 13-repository benchmark demonstrates that OSP's coordinate-based prompt reduces architectural context size by 99.53% on average versus full repository dumps and 89.19% versus a structure-aware 2-hop baseline. OSP prompt size remains small and depends on subgraph density rather than repository size; median size is 155 tokens, with dense slices reaching 6.5K.
 
 ---
 
@@ -185,7 +185,7 @@ The 10% threshold was selected from an observed gap in our 15-repository corpus:
 
 **A3 (Honest witness soundness).** An honest witness does not approve a claim that it cannot validate against observed evidence and project rules. Specifically, an honest witness that detects a vision violation (θ > θ_bound) or rule violation must reject. This is the soundness requirement linking witness behavior to the validity predicates.
 
-**A4 (Deterministic engine as trusted computing base).** The engine's Q4–Q6 gate evaluation is deterministic, type-checked Rust code that constitutes the trusted computing base (TCB) of the system — analogous to an OS kernel or database engine. If the TCB is compromised, all guarantees fail; this is a standard assumption in systems security. OSP's TCB is minimized and auditable (~500 lines of gate logic, 330+ unit and integration tests, compiled with `-D warnings`). Witnesses provide evidence (Q1–Q3); the engine applies rules (Q4–Q6). The boundary between formal guarantee and practical mechanism is explicit: safety against f = 1 Byzantine witness is guaranteed *given* A4 (engine integrity), while liveness depends on practical mechanisms (reviewer availability, timeout handling) that are not formally modeled.
+**A4 (Deterministic engine as trusted computing base).** The engine's Q4–Q6 gate evaluation is deterministic, type-checked Rust code that constitutes the trusted computing base (TCB) of the system — analogous to an OS kernel or database engine. If the TCB is compromised, all guarantees fail; this is a standard assumption in systems security. OSP minimizes this TCB by isolating gate evaluation in a small, auditable Rust module with dedicated unit and integration tests, compiled with `-D warnings`. Witnesses provide evidence (Q1–Q3); the engine applies rules (Q4–Q6). The boundary between formal guarantee and practical mechanism is explicit: safety against f = 1 Byzantine witness is guaranteed *given* A4 (engine integrity), while liveness depends on practical mechanisms (reviewer availability, timeout handling) that are not formally modeled.
 
 ### 5.2 Theorem and Proof
 
@@ -217,7 +217,7 @@ OSP's mapping to BFT is a **safety-refinement**, not a full equivalence. Dolev-S
 
 ### 6.1 Architecture
 
-The implementation comprises three Rust crates with 271 unit/integration tests:
+The implementation comprises three Rust crates with 330+ unit/integration tests:
 
 **osp-core** (136 unit + 6 integration tests): Ontological primitives (Node, Edge, Space, 9 NodeKinds, 8 EdgeKinds), coordinate system (5 core + N custom axes with pluggable `Axis` trait; `CustomRawPosition` + `MetricValue` provenance for custom axes), witness system (EvidenceEvent, CanonicalWitnessSet, tri-state WitnessStatus; `evaluate()` covers Q1-Q3 only), vision (CosineDeviation, DiffusionDeviation stub, compute_derived), space commit (`apply_delta` mutation-only, infallible; no `commit()` — separation of concerns), TimeFSM (`evaluate` + `apply_delta` composition), SpaceEngine (Q4-Q6 claim-based gates → Q1-Q3 witness → `apply_delta` → reposition → persist), and event-sourcing persistence (milestone snapshots + per-commit deltas). The **agent interaction layer** (`agent.rs`: PermissionMask, DeltaProposal, OutputContract, SyntaxViolation) and **rule engine contracts** (`rule.rs`: Rule trait, RuleViolation) define the foundational types and contracts for Faz 5 LLM integration — types are implemented and unit-tested; full gate logic arrives in Faz 5.
 
@@ -259,7 +259,7 @@ Full Space snapshots are stored at milestones (tags, periodic intervals). Per-co
 
 ### 7.2 Methodology
 
-**Corpus.** Our primary corpus comprises 15 open-source repositories selected for diversity across language (Python 9, TypeScript 3, JavaScript 3), maturity (small libraries to large frameworks), and workflow (merge-commit, squash, rebase, solo). One Python repository is a solo-author baseline. Repositories were cloned with full Git history. An extended corpus of 28 repositories (adding 5 Rust, 4 Go, and 4 AI-era Python repositories) is reported in Section 7.6 where noted; the primary 15-repository results are used for RQ1–RQ3 and the Appendix unless otherwise stated.
+**Corpus.** Our corpus comprises 15 open-source repositories selected for diversity across language (Python 9, TypeScript 3, JavaScript 3), maturity (small libraries to large frameworks), and workflow (merge-commit, squash, rebase, solo). One Python repository is a solo-author baseline. Repositories were cloned with full Git history.
 
 **Environment.** Windows 11, 32 GB RAM, Rust 1.75+, release build (`cargo build --release`). Each repository was analyzed 5 times (warm filesystem cache); median timing reported with range. Timing measured from process start to analysis completion (includes file I/O, tree-sitter parsing, import resolution, graph construction, metric computation).
 
@@ -330,7 +330,7 @@ We generated SCIP semantic indices for all 15 corpus repositories using `scip-py
 
 2. **TypeScript/JavaScript repos cluster lower** (y = 0.51–0.54) — more functional style, fewer classes, lighter method-field coupling per class.
 
-3. **date-fns (D = 0.02)** has the smallest observed main-sequence distance *and* moderate cohesion (y = 0.51) — a well-balanced modular architecture.
+3. **date-fns (D = 0.036)** has the smallest observed main-sequence distance *and* moderate cohesion (y = 0.51) — a well-balanced modular architecture.
 
 4. **Function-oriented repos** (lodash, worms-supabase) have zero classes — LCOM4 is not applicable, and OSP correctly reports placeholder cohesion (MetricValue source = Placeholder, confidence = 0.0). This demonstrates the provenance model's epistemological honesty: "we don't know" is never confused with "we measured 0.5."
 
@@ -395,9 +395,9 @@ Current AI coding agents (e.g., Copilot Workspace, Devin, Cursor) operate on fla
 
 **GraphRAG** [5] generates entity-relation graphs from source code for LLM retrieval, improving context relevance over keyword search. However, GraphRAG provides no enforcement mechanism — the graph is advisory, not a gate. An LLM can still produce code that violates the graph's implicit constraints. OSP differs by making the graph *actionable*: positions are computed, deviations are measured (θ), and violations are rejected (Q5) before mutation. GraphRAG optimizes retrieval; OSP enforces architectural constraints.
 
-**RepoCoder** [12] uses iterative retrieval-and-generation to improve code completion by feeding model outputs back as context. RepoCoder's context grows dynamically but remains unstructured text — there is no coordinate system, no provenance, and no gate. OSP's coordinate prompt is structurally smaller (~155 tokens vs RepoCoder's multi-KB iterations) and carries deterministic constraints (vision vector, rules) that RepoCoder lacks.
+**RepoCoder** [14] uses iterative retrieval-and-generation to improve code completion by feeding model outputs back as context. RepoCoder's context grows dynamically but remains unstructured text — there is no coordinate system, no provenance, and no gate. OSP's coordinate prompt is compact in our benchmark (median 155 tokens) and carries deterministic constraints (vision vector, rules) that RepoCoder lacks, but we do not yet compare against RepoCoder end-to-end.
 
-**SWE-agent** [13] and similar autonomous agents navigate repositories through file-system actions (open, search, edit) guided by LLM reasoning. They achieve impressive task completion rates but provide no architectural safety net: a SWE-agent can produce code that violates dependency rules, introduces circular imports, or drifts from the project's architectural vision without any deterministic rejection. OSP operates at a different layer — it does not replace the agent's file-navigation strategy but constrains the agent's *output* through Q4–Q6 gates before any mutation reaches the objective space.
+**SWE-agent** [15] and similar autonomous agents navigate repositories through file-system actions (open, search, edit) guided by LLM reasoning. They achieve impressive task completion rates but provide no architectural safety net: a SWE-agent can produce code that violates dependency rules, introduces circular imports, or drifts from the project's architectural vision without any deterministic rejection. OSP operates at a different layer — it does not replace the agent's file-navigation strategy but constrains the agent's *output* through Q4–Q6 gates before any mutation reaches the objective space.
 
 ---
 
@@ -431,9 +431,9 @@ Rather than discarding rejected LLM proposals as errors, OSP classifies them as 
 
 ## 10. Threats to Validity
 
-**Internal validity.** SCIP coverage varies significantly across repositories (2.4%–100%). Low-coverage repositories (svelte 2.4%, commander 7.5%, pydantic 18.7%) report cohesion values derived from a small subset of classes; their MetricValue confidence (0.95 × coverage) quantifies this uncertainty, but readers should weight these values accordingly. Tree-sitter abstractness detection may miss indirect inheritance chains (e.g., multi-level ABC inheritance in Python). Rust and Go repositories have been analyzed (28-repo extended corpus, Section 7.6), but their import edge extraction via tree-sitter adapters is currently incomplete (edges = 0 for most Rust/Go repos), limiting the validity of coupling (x) and instability (z) values for these languages. LCOM4 cohesion values for Rust/Go repos are derived from SCIP indices and are independent of the edge extraction limitation.
+**Internal validity.** SCIP coverage varies significantly across repositories (2.4%–100%). Low-coverage repositories (svelte 2.4%, commander 7.5%, pydantic 18.7%) report cohesion values derived from a small subset of classes; their MetricValue confidence (0.95 × coverage) quantifies this uncertainty, but readers should weight these values accordingly. Tree-sitter abstractness detection may miss indirect inheritance chains (e.g., multi-level ABC inheritance in Python).
 
-**External validity.** The 15-repository corpus (extended to 28 in latest results) may not generalize across all language ecosystems, project sizes, or organizational workflows. The 10% merge-ratio threshold for tri-state classification is calibrated on GitHub-hosted Python/TypeScript/JavaScript projects and may differ for other platforms (GitLab, Bitbucket), organizations with formal merge policies, or repositories using unconventional branching strategies. The AI-era "foam" repositories (langchain, Auto-GPT, crewAI) represent a specific temporal phenomenon (2023–2024 LLM wrapper boom); their architectural characteristics may not persist as these projects mature.
+**External validity.** The 15-repository corpus may not generalize across all language ecosystems, project sizes, or organizational workflows. The 10% merge-ratio threshold for tri-state classification is calibrated on GitHub-hosted Python/TypeScript/JavaScript projects and may differ for other platforms (GitLab, Bitbucket), organizations with formal merge policies, or repositories using unconventional branching strategies.
 
 **Construct validity.** The token benchmark (Section 7.7) measures **architectural context size compression**, not end-to-end task success rate. A smaller prompt does not guarantee better LLM output — the OSP coordinate prompt trades file content for geometric abstraction, which may lose information relevant to specific tasks (e.g., exact variable names, implementation patterns). The chars/4 token approximation does not capture model-specific tokenizer behavior (e.g., GPT-4o vs Claude token boundaries). CosineDeviation is a geometric proxy for architectural deviation with a structural θ_max = 0.5 limit in [0,1]-normalized spaces; Diffusion Distance (future work) may provide better sensitivity beyond this boundary. No comparative baseline against GraphRAG, RepoCoder, or production AI coding agents (Copilot, Devin) has been conducted — our baselines (full dump, 2-hop context) are structural lower bounds, not competitive system comparisons.
 
@@ -542,6 +542,10 @@ The OSP prompt includes 5-axis coordinates, typed edges, vision thresholds, rule
 
 [13] Amit, I. & Feitelson, D.G. (2020). The Corrective Commit Probability. arXiv:2007.10912.
 
+[14] Zhang, F., et al. (2023). RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation. EMNLP.
+
+[15] Yang, J., et al. (2024). SWE-agent: Agent-Computer Interactions Enable Software Engineering Language Models. arXiv:2405.15793.
+
 ---
 
-*Paper draft v2.5-edited · OSP project · 2026-06-24 · All data reproducible from `docs/` and `crates/` · LCOM4 cohesion from SCIP deployment (13,031 classes) · Token benchmark from `token_benchmark` (13 repos, chars/4 approximation)*
+*Paper draft v2.6 · OSP project · 2026-06-24 · All data reproducible from `docs/` and `crates/` · LCOM4 cohesion from SCIP deployment (13,031 classes) · Token benchmark from `token_benchmark` (13 repos, chars/4 approximation)*
