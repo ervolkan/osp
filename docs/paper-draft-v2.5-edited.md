@@ -228,9 +228,18 @@ These mechanisms are standard in distributed systems practice but are not formal
 
 **Corollary (Quorum consistency).** θ_quorum = 1.5 ensures: two strong witnesses (2 × MergeCommit = 2.0 ≥ 1.5) commit; a single witness (1.0 < 1.5) does not — self-merge prevention is structural.
 
-### 5.3 Scope and Limitations
+### 5.3 Scope, Practical Implications, and Limitations
 
-OSP's mapping to BFT is a **safety-refinement**, not a full equivalence. Dolev-Strong requires message rounds, synchrony assumptions, and authenticated broadcast — OSP does not implement these. Instead, OSP adapts the quorum threshold (n > f + 1 for authenticated, f = 1) to software knowledge commits, providing the same safety guarantee under explicit assumptions (authenticated witness identities, local evidence observation).
+**OSP's mapping to BFT is a safety argument by analogy, not a protocol-level reduction.** We adapt the quorum threshold (n ≥ f + 1 for authenticated, f = 1) from authenticated BFT [2], but do not implement Dolev-Strong's message rounds, synchrony assumptions, or authenticated broadcast. Instead, OSP provides a safety guarantee that is *inspired by* BFT quorum semantics and *valid under* the four explicit assumptions A1–A4. A full protocol-level reduction would require formalizing the OSP commit pipeline as a distributed protocol with message-passing semantics — we leave this to future work with mechanized verification (Section 11).
+
+**Practical safety guarantee.** f = 1 safety means: a single compromised account — whether a hijacked CI bot, a stolen maintainer credential, or a malicious insider — cannot force a vision-violating or rule-violating claim into the main branch. The attacker faces two independent barriers:
+
+- *Barrier 1 (Q4–Q6):* The claim must be structurally valid (no self-imports, no malformed schema), geometrically aligned (θ ≤ θ_bound), and rule-compliant. A compromised account cannot bypass these checks because they are enforced by the deterministic engine (A4), not by any account's discretion.
+- *Barrier 2 (Q1–Q3):* Even if the claim passes all validity checks, it requires support from at least two independent non-author witnesses (support ≥ 1.5). A single compromised account provides at most weight 1.0 (MergeCommit) or 0.8 (PRMerged) — below quorum.
+
+**Concrete attack scenario.** Consider a compromised CI bot account that attempts to merge code introducing a circular dependency (coupling θ = 0.95, far exceeding θ_bound = 0.25). Without OSP: the bot's auto-merge pushes the code to main. With OSP: Q5 rejects the claim deterministically (θ > θ_bound) before any witness sees it — the compromised account cannot even submit the claim for review. If the attack is subtler (claim passes Q4–Q6 but introduces a subtle rule violation that Q6 does not catch), Q1–Q3 still requires a second independent human reviewer — the bot alone is insufficient.
+
+**Where the guarantee ends.** The safety guarantee holds under A1–A4. It does not protect against: (a) two or more colluding compromised accounts (f ≥ 2); (b) a compromised engine binary (A4 violation); (c) social engineering that causes honest witnesses to approve malicious claims (A3 violation — witnesses act honestly but on false information); or (d) claims that pass all gates but are semantically incorrect in ways not captured by the current rule set (Q6 coverage gaps). These limitations are inherent to any rule-based gating system and are addressed incrementally through additional rules, calibration, and the extended rule engine (Section 11, Future Work).
 
 ---
 
