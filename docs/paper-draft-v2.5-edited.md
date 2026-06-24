@@ -407,7 +407,22 @@ We benchmarked token-size reduction on a 13-repository subset using three contex
 
 The tight IQR for savings versus full dump (0.13%) confirms that OSP's compression is consistent across repository sizes. The wider IQR for savings versus 2-hop (9.43%) reflects graph-density variation: densely connected repositories (vitest, svelte) produce larger subgraph slices, but even the minimum saving (68.62%) represents a 3:1 compression.
 
-**Caveat.** This benchmark measures prompt-size compression, not end-to-end agent performance. It uses a chars/4 approximation rather than model-specific tokenizers, and the OSP prompt serialization is intentionally compact: it contains node identifiers, 5-axis coordinates, typed edges, vision thresholds, rules, and output contract, but not raw source code. Future work will measure model-specific tokenization, real LLM calls, task success, and quality/cost trade-offs.
+**Caveat.** This benchmark measures prompt-size compactness, not end-to-end agent performance. It uses a chars/4 approximation rather than model-specific tokenizers, and the OSP prompt serialization is intentionally compact: it contains node identifiers, 5-axis coordinates, typed edges, vision thresholds, rules, and output contract, but not raw source code. Section 7.8 reports a preliminary measurement with a real tokenizer.
+
+### 7.8 Preliminary Usage Observations
+
+We applied OSP to its own codebase (osp-core, 15 Rust files) with a configured architectural vision (coupling ≤ 0.30, cohesion ≥ 0.70) and simulated 10 development scenarios using the deterministic gate pipeline.
+
+**Dogfooding results.** Of 10 simulated claims, 3 (30%) passed all gates and committed; 6 (60%) were rejected at deterministic gates (2 at Q4 syntax, 2 at Q5 vision θ > 0.25, 2 at Q6 rule); 1 (10%) was held for insufficient witnesses. The gate distribution was uniform across Q4, Q5, and Q6 (20% each), suggesting that all three gate types contribute meaningfully to filtering. Each rejection produced a typed hallucination classification with a calibration message.
+
+**Real tokenizer measurement.** We measured real token consumption using GPT-4o-mini's tiktoken tokenizer (cl100k_base) via the OpenAI API. For a 10-node subgraph context, OSP's coordinate prompt consumed 609 prompt tokens versus 3,000 tokens for a 5-file raw source dump — a 4.9× reduction (79.7%). The model correctly produced a valid DeltaProposal JSON from the coordinate prompt, with positions within the configured vision constraints (x = 0.25 ≤ 0.30, y = 0.80 ≥ 0.70). Completion tokens were 59% shorter (202 vs. 500) for structured JSON versus free-form code.
+
+| Context | OSP Prompt | Raw Prompt | Ratio |
+|---|---:|---:|---:|
+| 4 nodes / 2 files | 570 | 1,238 | 2.2× |
+| 10 nodes / 5 files | 609 | 3,000 | 4.9× |
+
+OSP prompt size grows ~6 tokens per additional node (sub-linear), while raw file dumps grow ~600 tokens per file (linear). These results use a real tokenizer but measure representation compactness only — task success and code quality with each prompt type remain open questions for future work.
 
 ## 8. Related Work
 
