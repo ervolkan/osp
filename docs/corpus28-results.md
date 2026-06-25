@@ -77,13 +77,13 @@ Rust/Go artık gerçek κ değerleri ile stable Python/TS bandında, foam'dan ne
 
 | Kategori | Ortalama y | Range |
 |---|---|---|
-| **Rust** (SCIP) | **0.67** | 0.59–0.75 |
+| **Rust** (SCIP) | **0.67** † | 0.59–0.75 |
 | **Go** (SCIP) | **0.64** | 0.57–0.71 |
 | Stable Python (SCIP) | 0.60 | 0.49–0.67 |
 | Stable TS/JS (SCIP) | 0.52 | 0.51–0.54 |
 | Foam (placeholder) | 0.50* | — |
 
-**Bulgü:** Rust projeleri en yüksek cohesion (0.67 ortalama) — güçlü tip sistemi + trait-based design.
+**Bulgü:** Rust projeleri en yüksek cohesion (0.67 ortalama) — güçlü tip sistemi + trait-based design. † Rust cohesion değerleri loader bug öncesi üretilmiştir; rerun gerekir (bkz. Sınırlamalar #4).
 
 ### 4. 5 Dil Karşılaştırması
 
@@ -92,7 +92,7 @@ Rust/Go artık gerçek κ değerleri ile stable Python/TS bandında, foam'dan ne
 | Python | 12 | 0.58 | 1.23 | 0.55 | 8/12 |
 | TypeScript | 3 | 0.52 | 1.46 | 0.74 | 3/3 |
 | JavaScript | 3 | 0.52 | 0.57 | 0.74 | 2/3 |
-| **Rust** | 5 | **0.67** | 0.57 | 0.54 | 5/5 |
+| **Rust** | 5 | **0.67** † | 0.57 | 0.54 | 5/5 |
 | **Go** | 4 | **0.64** | 0.72 | 0.56 | 4/4 |
 
 ### 5. SCIP Toolchain Doğrulama
@@ -114,4 +114,4 @@ Rust/Go artık gerçek κ değerleri ile stable Python/TS bandında, foam'dan ne
 
 3. **SCIP coverage değişken:** Bazı Rust repolarda (axum 32%, serde 42%) kısmi coverage. MetricValue.confidence bu belirsizliği yansıtır.
 
-4. **scip-rust field_access eksik:** scip-rust field-access verisi üretmiyor → Rust class'ları LCOM4=1 → y placeholder'a yakın. Bu scip-rust toolchain sınırlaması, OSP kodundan bağımsız.
+4. **Rust cohesion loader bug (çözüldü 2026-06-25):** Önceki teşhis "scip-rust field-access üretmiyor, toolchain limitation" yanlıştı — scip-rust veriyi üretiyor. Gerçek kök neden: OSP SCIP loader'ı rust-analyzer'in `impl#[Type]...method().` sembol desenini tanımıyordu (sadece Python/TS `Type#member` desenini biliyordu). Bu yüzden Rust struct'larının method'ları yakalanamıyor → hiçbir class hem method hem field gösteremiyordu → LCOM4 her zaman 1 (placeholder-level) çıkıyordu. Fix: `symbol_belongs_to_class` yardımcı fonksiyonu iki deseni de ele alıyor (Python/TS/trait `Type#member` + Rust impl-block `impl#[Type]...`). Doğrulama: serde n=319 class, fix öncesi 0 class hem method+field → fix sonrası 117 class, gerçek LCOM4 hesaplanıyor (serde y: placeholder → 0.57). **Bu bir toolchain limitation değil, OSP loader bug'ıydı.** Yukarıdaki Rust cohesion değerleri (y=0.67) fix öncesi üretilmiştir; Rust repo'ları için 28-repo rerun gerekir.

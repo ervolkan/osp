@@ -1,6 +1,6 @@
 # OSP Dogfooding Report — OSP Applied to Its Own Codebase
 
-> **Tarih:** 2026-06-24
+> **Tarih:** 2026-06-24 (Rust edge extraction 2026-06-25 güncellendi)
 > **Repo:** osp-core (crates/osp-core/src/, 15 Rust source files)
 > **SCIP:** scip-rust (Docker, 296s index time)
 > **Amaç:** "OSP gerçekten kullanılıyor mu?" sorusuna somut cevap
@@ -15,12 +15,12 @@
 |---|---|---|
 | Source files | 15 | osp-core/src/ altında |
 | Nodes | 15 | Her dosya = 1 Module node |
-| Edges | 0† | Rust `use` extraction pending |
+| Edges | 34 | Rust `use` extraction (crate::/super::/self:: + grouped) |
 | Abstractness (A) | 0.053 | 4 abstract / 75 total types (trait definitions) |
-| Instability (I) | 0.50† | Default (edges=0 → Ce=Ca=0) |
-| Main-seq dist (D) | 0.45† | |0.053 + 0.50 − 1| |
+| Instability (I) | 0.52 | Gerçek Martin I (Ce/Ca edges'ten) |
+| Main-seq dist (D) | 0.33 | |0.053 + 0.52 − 1| |
 
-**†** Edge extraction pending → coupling/instability sınırlı geçerlilik.
+Rust edge extraction tamamlandı (2026-06-25) — coupling/instability artık gerçek değerler.
 
 ### Tier 2 (SCIP scip-rust)
 
@@ -131,8 +131,8 @@ PASS ALL      ███░░░░░░░  30%  (3/10 Commit)
 4. **Vision gate anlamalı** — θ=0.68 high-coupling module doğru reject edildi
 
 ### Bilinen sınırlamalar
-1. **scip-rust field-access boş** — LCOM4 cohesion y=0.50 (all LCOM4=1). Bu scip-rust limitation.
-2. **Rust edge extraction=0** — coupling/instability default değerler. Tree-sitter Rust adapter `use` statement parsing gerekiyor.
+1. ~~**scip-rust field-access boş**~~ → **Çözüldü (2026-06-25):** Kök neden OSP loader bug'ıydı (`impl#[Type]` sembol deseni tanınmıyordu), toolchain limitation değil. Fix sonrası Rust struct method'ları class'lara bağlanıyor, gerçek LCOM4 hesaplanıyor. osp-core cohesion için rerun gerekir (önceki y=0.50 placeholder).
+2. ~~**Rust edge extraction=0**~~ → **Çözüldü (2026-06-25):** osp-core artık 34 edges, I=0.52, D=0.33 veriyor.
 3. **Mock LLM** — senaryolar manuel tanımlandı, gerçek LLM üretmedi. Adım 2 (real LLM) bunu çözecek.
 4. **Tek repo** — n=1, istatistik değil gözlem. Daha fazla repo needed.
 
