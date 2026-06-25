@@ -37,17 +37,33 @@ impl LanguageAdapter for GoAdapter {
         &self,
         import: &ImportStatement,
         _from_file: &Path,
-        _repo: &RepoContext,
+        repo: &RepoContext,
     ) -> Option<ResolvedImport> {
-        // Go: no relative imports (Go modules). Everything is a module path.
-        // Internal packages (same module) vs external → needs go.mod analysis.
-        // For now: everything non-stdlib-looking → External.
-        // Go stdlib: single-word paths (fmt, os, net, http, etc.)
+        // Go stdlib: single-word paths with no '.' and no '/' (fmt, os, net, http).
         let path = &import.path;
         let is_stdlib = !path.contains('.') && !path.contains('/');
         if is_stdlib {
             return Some(ResolvedImport { kind: ImportKind::StandardLibrary, target_path: None });
         }
+        // Internal package? Check against go.mod module path.
+        if let Some(module_path) = &repo.go_module_path {
+            // Zero-alloc prefix test: import == module OR import starts with "module/".
+            let is_internal = path == module_path.as_str()
+                || path
+                    .strip_prefix(module_path.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'));
+            if is_internal {
+                if let Some(target) = repo.go_package_index.resolve(path, module_path) {
+                    return Some(ResolvedImport {
+                        kind: ImportKind::Internal,
+                        target_path: Some(target.clone()),
+                    });
+                }
+                // Internal module path but no files found (empty/ excluded pkg) → Unknown.
+                return Some(ResolvedImport { kind: ImportKind::Unknown, target_path: None });
+            }
+        }
+        // Otherwise → external module (github.com/...).
         Some(ResolvedImport { kind: ImportKind::External, target_path: None })
     }
 
@@ -106,5 +122,50 @@ import "github.com/gin-gonic/gin"
         let import = ImportStatement { path: "github.com/gin-gonic/gin".into(), source_location: 0 };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
+    }
+
+    #[test]
+    fn go_resolve_internal_package_via_module_path() {
+        // Build a temp repo with go.mod + two packages.
+        let dir = std::env::temp_dir().join(format!(
+            "osp-go-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("pkg/util")).unwrap();
+        std::fs::write(dir.join("go.mod"), "module github.com/example/foo\n\ngo 1.21\n").unwrap();
+        std::fs::write(dir.join("main.go"), "package main\n").unwrap();
+        std::fs::write(dir.join("pkg/util/util.go"), "package util\n").unwrap();
+
+        let repo = RepoContext::new(
+            dir.clone(),
+            vec![dir.join("main.go"), dir.join("pkg/util/util.go")],
+        );
+        assert_eq!(repo.go_module_path.as_deref(), Some("github.com/example/foo"));
+
+        let adapter = GoAdapter;
+        let import = ImportStatement {
+            path: "github.com/example/foo/pkg/util".into(),
+            source_location: 0,
+        };
+        let resolved = adapter
+            .resolve_import(&import, dir.join("main.go").as_path(), &repo)
+            .unwrap();
+        assert_eq!(resolved.kind, ImportKind::Internal);
+        assert_eq!(resolved.target_path.as_deref(), Some(dir.join("pkg/util/util.go").as_path()));
+    }
+
+    #[test]
+    fn go_stdlib_single_word_detected() {
+        let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
+        let adapter = GoAdapter;
+        for p in &["fmt", "os", "strings"] {
+            let import = ImportStatement { path: (*p).to_string(), source_location: 0 };
+            let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
+            assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
+        }
     }
 }

@@ -39,18 +39,29 @@ impl LanguageAdapter for RustAdapter {
         _from_file: &Path,
         repo: &RepoContext,
     ) -> Option<ResolvedImport> {
-        // crate:: or super:: or self:: → internal
-        if import.path.starts_with("crate::") || import.path.starts_with("super::") || import.path.starts_with("self::") {
-            if let Some(target) = repo.resolver.resolve(&import.path).cloned() {
+        // crate:: / super:: / self:: → internal candidates (resolve to file).
+        let is_internal = import.path.starts_with("crate::")
+            || import.path.starts_with("super::")
+            || import.path.starts_with("self::")
+            || import.path == "crate"
+            || import.path == "super"
+            || import.path == "self";
+        if is_internal {
+            if let Some(target) = shared::resolve_rust_use(&import.path, &repo.resolver).cloned() {
                 return Some(ResolvedImport { kind: ImportKind::Internal, target_path: Some(target) });
             }
+            // crate::/super::/self:: that didn't resolve → Unknown (likely same-crate
+            // module we couldn't map to a file, e.g. inline mod).
             return Some(ResolvedImport { kind: ImportKind::Unknown, target_path: None });
         }
         // std:: → standard library
-        if import.path.starts_with("std::") || import.path == "std" {
+        if import.path.starts_with("std::") || import.path == "std"
+            || import.path.starts_with("alloc::") || import.path == "alloc"
+            || import.path.starts_with("core::") || import.path == "core"
+        {
             return Some(ResolvedImport { kind: ImportKind::StandardLibrary, target_path: None });
         }
-        // Otherwise → external crate
+        // Otherwise → external crate (serde, tokio, ...)
         Some(ResolvedImport { kind: ImportKind::External, target_path: None })
     }
 
@@ -105,5 +116,41 @@ mod tests {
         let import = ImportStatement { path: "serde::Serialize".into(), source_location: 0 };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
+    }
+
+    #[test]
+    fn rust_resolve_internal_crate_path_drops_type_name() {
+        // crate::models::User → drop "User" → resolve to /repo/models.rs
+        let repo = RepoContext::new(
+            PathBuf::from("/repo"),
+            vec![PathBuf::from("/repo/models.rs"), PathBuf::from("/repo/main.rs")],
+        );
+        let adapter = RustAdapter;
+        let import = ImportStatement { path: "crate::models::User".into(), source_location: 0 };
+        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+        assert_eq!(resolved.kind, ImportKind::Internal);
+        assert_eq!(resolved.target_path.as_deref(), Some(std::path::Path::new("/repo/models.rs")));
+    }
+
+    #[test]
+    fn rust_grouped_use_expands_multiple_imports() {
+        let src = "use crate::utils::{a, b, c};\n";
+        let adapter = RustAdapter;
+        let imports = adapter.extract_imports(src);
+        let paths: Vec<&str> = imports.iter().map(|i| i.path.as_str()).collect();
+        assert!(paths.contains(&"crate::utils::a"), "{:?}", paths);
+        assert!(paths.contains(&"crate::utils::b"), "{:?}", paths);
+        assert!(paths.contains(&"crate::utils::c"), "{:?}", paths);
+    }
+
+    #[test]
+    fn rust_resolve_stdlib_alloc_core() {
+        let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
+        let adapter = RustAdapter;
+        for p in ["alloc::sync::Arc", "core::fmt::Debug"] {
+            let import = ImportStatement { path: p.into(), source_location: 0 };
+            let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+            assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
+        }
     }
 }

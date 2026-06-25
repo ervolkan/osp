@@ -87,6 +87,8 @@ pub fn analyze_repo_with_config(
     }
 
     // 5. Phase 2: resolve imports → edges (registry borrowed again, fresh)
+    let mut seen_edges: std::collections::HashSet<(NodeId, NodeId)> =
+        std::collections::HashSet::new();
     for fd in &file_data {
         let adapter = match registry.adapter_for_extension(&fd.ext) {
             Some(a) => a,
@@ -100,7 +102,7 @@ pub fn analyze_repo_with_config(
                     ImportKind::Internal => {
                         if let Some(target) = &resolved.target_path {
                             if let Some(&to_id) = node_map.get(target) {
-                                if from_id != to_id {
+                                if from_id != to_id && seen_edges.insert((from_id, to_id)) {
                                     space.insert_edge(Edge {
                                         from: from_id,
                                         to: to_id,

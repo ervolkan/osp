@@ -1,5 +1,7 @@
 //! Shared tree-sitter helpers — AST walk patterns reusable across adapters.
 
+use std::path::Path;
+
 use tree_sitter::{Language, Node, Parser};
 
 use crate::contract::ClassDef;
@@ -68,17 +70,21 @@ fn extract_import_path(node: &Node, source: &[u8], imports: &mut Vec<String>) {
             }
         }
     } else if kind == "use_declaration" {
-        // Rust: `use crate::foo::Bar;` → strip "use " and ";"
+        // Rust: `use crate::foo::Bar;` → expand grouped imports recursively.
+        // `use foo::{a, b}` → "foo::a", "foo::b". `use foo::bar::{A, B}}` → both.
         if let Ok(text) = node.utf8_text(source) {
-            let path = text
-                .trim_start_matches("use ")
+            let body = text
+                .trim_start_matches("use")
                 .trim()
                 .trim_end_matches(';')
                 .trim();
-            // Handle grouped: `use foo::{a, b}` → take "foo"
-            let path = path.split('{').next().unwrap_or(path).trim().trim_end_matches("::");
-            if !path.is_empty() && path != "self" && path != "crate" && path != "super" {
-                imports.push(path.to_string());
+            let mut expanded = Vec::new();
+            expand_rust_use_group("", body, &mut expanded);
+            for path in expanded {
+                let p = path.trim().trim_end_matches("::").to_string();
+                if !p.is_empty() && p != "self" && p != "crate" && p != "super" {
+                    imports.push(p);
+                }
             }
         }
     } else if kind == "import_declaration" {
@@ -204,6 +210,225 @@ pub fn strip_js_extension(s: &str) -> &str {
         }
     }
     s
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Rust `use` expansion + resolution (crate::/super::/self:: aware)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Recursively expand a Rust `use` body into individual path strings.
+///
+/// - `"crate::foo::Bar"` → `["crate::foo::Bar"]`
+/// - `"foo::{a, b}"` → `["foo::a", "foo::b"]`
+/// - `"foo::bar::{A, B::{C, D}}"` → `["foo::bar::A", "foo::bar::B::C", "foo::bar::B::D"]`
+/// - `"foo::bar as baz"` → `["foo::bar"]` (alias stripped)
+fn expand_rust_use_group(prefix: &str, segment: &str, out: &mut Vec<String>) {
+    let seg = segment.trim();
+    if let Some(brace) = seg.find('{') {
+        let pre = seg[..brace].trim().trim_end_matches("::").trim();
+        let full_prefix = if prefix.is_empty() {
+            pre.to_string()
+        } else if pre.is_empty() {
+            prefix.to_string()
+        } else {
+            format!("{prefix}::{pre}")
+        };
+        let after = &seg[brace + 1..];
+        if let Some(close) = matching_rust_brace(after) {
+            let inner = &after[..close];
+            for item in split_top_level_commas_rust(inner) {
+                expand_rust_use_group(&full_prefix, item.trim(), out);
+            }
+        }
+    } else {
+        // No group — strip `as Alias`, emit prefix::segment (or segment alone).
+        let path_part = seg.split_whitespace().next().unwrap_or(seg);
+        if path_part.is_empty() {
+            return;
+        }
+        let full = if prefix.is_empty() {
+            path_part.to_string()
+        } else {
+            format!("{prefix}::{path_part}")
+        };
+        out.push(full);
+    }
+}
+
+/// Find the matching closing brace index in `s` (content after an opening `{`).
+/// Handles nested braces. Returns None if unbalanced.
+fn matching_rust_brace(s: &str) -> Option<usize> {
+    let mut depth = 1u32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth = depth.saturating_add(1),
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split on top-level commas (depth-0 only). Used for `use` group expansion.
+fn split_top_level_commas_rust(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0u32;
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '{' => depth = depth.saturating_add(1),
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// Resolve a Rust `use` path to a source file via the HashMap resolver.
+///
+/// Strips `crate::` / `super::` / `self::` prefixes (iteratively), converts
+/// `::` → `.`, then tries progressively shorter suffixes (dropping the trailing
+/// type name, e.g. `crate::foo::Bar` → tries `foo.Bar`, then `foo`).
+pub fn resolve_rust_use<'a>(
+    path: &str,
+    resolver: &'a ImportResolver,
+) -> Option<&'a std::path::PathBuf> {
+    let mut cleaned = path.trim();
+    loop {
+        let stripped = cleaned
+            .strip_prefix("crate::")
+            .or_else(|| cleaned.strip_prefix("super::"))
+            .or_else(|| cleaned.strip_prefix("self::"));
+        match stripped {
+            Some(rest) => cleaned = rest.trim(),
+            None => break,
+        }
+    }
+    let dotted = cleaned.replace("::", ".");
+    let parts: Vec<&str> = dotted.split('.').collect();
+    if parts.is_empty() {
+        return None;
+    }
+    // Try full path, then drop trailing segments (type name) until 1 segment left.
+    for end in (1..=parts.len()).rev() {
+        let candidate = parts[..end].join(".");
+        if let Some(p) = resolver.resolve(&candidate) {
+            return Some(p);
+        }
+    }
+    None
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Go module-path detection + package resolution
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Read `go.mod` from `repo_root` and return the `module` path.
+pub fn detect_go_module_path(repo_root: &Path) -> Option<String> {
+    let go_mod = repo_root.join("go.mod");
+    let content = std::fs::read_to_string(&go_mod).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("module ") {
+            let m = rest.trim();
+            if !m.is_empty() {
+                return Some(m.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Pre-indexed map of Go package directories → their `.go` files (sorted).
+///
+/// Built once from `all_files` relative to `repo_root`. Keys are
+/// repo-root-relative package directories with forward-slash separators
+/// (e.g. `"pkg/util"`), so sibling directories that share a path suffix
+/// (e.g. `internal/pkg/util` vs `pkg/util`) map to distinct keys — no
+/// collision. Enables O(1) per-import lookup instead of O(M×N) linear scan.
+#[derive(Debug, Clone, Default)]
+pub struct GoPackageIndex {
+    map: std::collections::HashMap<String, Vec<std::path::PathBuf>>,
+}
+
+impl GoPackageIndex {
+    /// Build the index from all source files. Only `.go` files are indexed;
+    /// files outside `repo_root` are skipped.
+    pub fn build(repo_root: &Path, all_files: &[std::path::PathBuf]) -> Self {
+        let mut map: std::collections::HashMap<String, Vec<std::path::PathBuf>> =
+            std::collections::HashMap::new();
+        for f in all_files {
+            if f.extension().and_then(|e| e.to_str()) != Some("go") {
+                continue;
+            }
+            let rel = match f.strip_prefix(repo_root) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let parent = match rel.parent() {
+                Some(p) if !p.as_os_str().is_empty() => p,
+                _ => continue,
+            };
+            let pkg_dir = parent.to_string_lossy().replace('\\', "/");
+            map.entry(pkg_dir).or_default().push(f.clone());
+        }
+        for files in map.values_mut() {
+            files.sort();
+        }
+        Self { map }
+    }
+
+    /// Number of indexed packages (diagnostic).
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Resolve a Go import path to a representative source file in the target package.
+    ///
+    /// `import_path` must already be confirmed internal (starts with `module_path`).
+    /// Returns None if the target package directory contains no indexed `.go` files.
+    pub fn resolve(
+        &self,
+        import_path: &str,
+        module_path: &str,
+    ) -> Option<&std::path::PathBuf> {
+        // Strip module prefix + '/'. import_path uses forward slashes.
+        let rest = import_path
+            .strip_prefix(module_path)
+            .map(|r| r.trim_start_matches('/'))?;
+        if rest.is_empty() {
+            return None;
+        }
+        let pkg_dir = rest.replace('\\', "/");
+        let files = self.map.get(&pkg_dir)?;
+        debug_assert!(!files.is_empty(), "indexed package dir has no files");
+        let pkg_name = pkg_dir.rsplit('/').next().unwrap_or(&pkg_dir);
+        // Priority 1: <pkg>/<pkgname>.go (conventional primary file).
+        let primary = format!("/{pkg_name}.go");
+        if let Some(p) = files.iter().find(|f| f.to_string_lossy().ends_with(&primary)) {
+            return Some(p);
+        }
+        // Priority 2: first non-test .go file.
+        if let Some(p) = files.iter().find(|f| !f.to_string_lossy().ends_with("_test.go")) {
+            return Some(p);
+        }
+        // Priority 3: any file (only test files exist).
+        files.first()
+    }
 }
 
 /// HashMap-based import resolver — O(depth) build + O(1) lookup.
@@ -423,5 +648,173 @@ mod tests {
 
         assert_eq!(old_result, new_result);
         assert_eq!(old_result, Some(pb("/repo/utils.py")));
+    }
+
+    // --- resolve_rust_use (crate::/super::/self:: + trailing type drop) ---
+
+    #[test]
+    fn resolve_rust_use_strips_crate_prefix_and_drops_type_name() {
+        // crate::models::User → drop "User" → resolve "models" → /repo/models.rs
+        let files = vec![pb("/repo/models.rs"), pb("/repo/main.rs")];
+        let resolver = ImportResolver::build(&files);
+        assert_eq!(
+            resolve_rust_use("crate::models::User", &resolver),
+            Some(&pb("/repo/models.rs"))
+        );
+        // Bare module import (lowercase) → kept as-is.
+        assert_eq!(
+            resolve_rust_use("crate::models", &resolver),
+            Some(&pb("/repo/models.rs"))
+        );
+    }
+
+    #[test]
+    fn resolve_rust_use_strips_super_and_self_prefixes() {
+        let files = vec![pb("/repo/foo/bar.rs")];
+        let resolver = ImportResolver::build(&files);
+        assert_eq!(
+            resolve_rust_use("super::bar", &resolver),
+            Some(&pb("/repo/foo/bar.rs"))
+        );
+        assert_eq!(
+            resolve_rust_use("self::bar", &resolver),
+            Some(&pb("/repo/foo/bar.rs"))
+        );
+    }
+
+    #[test]
+    fn resolve_rust_use_returns_none_for_unresolvable() {
+        let files = vec![pb("/repo/main.rs")];
+        let resolver = ImportResolver::build(&files);
+        assert_eq!(resolve_rust_use("crate::nonexistent::Thing", &resolver), None);
+    }
+
+    // --- expand_rust_use_group (grouped + nested imports) ---
+
+    #[test]
+    fn expand_rust_use_group_handles_plain_path() {
+        let mut out = Vec::new();
+        expand_rust_use_group("", "crate::foo::Bar", &mut out);
+        assert_eq!(out, vec!["crate::foo::Bar"]);
+    }
+
+    #[test]
+    fn expand_rust_use_group_handles_simple_group() {
+        let mut out = Vec::new();
+        expand_rust_use_group("", "foo::{a, b}", &mut out);
+        assert_eq!(out, vec!["foo::a", "foo::b"]);
+    }
+
+    #[test]
+    fn expand_rust_use_group_handles_nested_group() {
+        let mut out = Vec::new();
+        expand_rust_use_group("", "foo::bar::{A, B::{C, D}}", &mut out);
+        assert_eq!(
+            out,
+            vec!["foo::bar::A", "foo::bar::B::C", "foo::bar::B::D"]
+        );
+    }
+
+    #[test]
+    fn expand_rust_use_group_strips_as_alias() {
+        let mut out = Vec::new();
+        expand_rust_use_group("", "foo::Bar as Baz", &mut out);
+        assert_eq!(out, vec!["foo::Bar"]);
+    }
+
+    // --- detect_go_module_path + GoPackageIndex ---
+
+    #[test]
+    fn detect_go_module_path_reads_go_mod() {
+        let dir = tempdir();
+        std::fs::write(dir.join("go.mod"), "module github.com/example/foo\n\ngo 1.21\n").unwrap();
+        assert_eq!(
+            detect_go_module_path(&dir),
+            Some("github.com/example/foo".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_go_module_path_returns_none_without_go_mod() {
+        let dir = tempdir();
+        assert_eq!(detect_go_module_path(&dir), None);
+    }
+
+    #[test]
+    fn go_package_index_prefers_primary_file() {
+        // pkg/baz has baz.go (primary) + other.go + other_test.go
+        let root = pb("/repo");
+        let files = vec![
+            pb("/repo/pkg/baz/baz.go"),
+            pb("/repo/pkg/baz/util.go"),
+            pb("/repo/pkg/baz/util_test.go"),
+        ];
+        let idx = GoPackageIndex::build(&root, &files);
+        let target = idx.resolve("github.com/example/foo/pkg/baz", "github.com/example/foo");
+        assert_eq!(target, Some(&pb("/repo/pkg/baz/baz.go")));
+    }
+
+    #[test]
+    fn go_package_index_falls_back_to_first_non_test() {
+        // No primary file (no baz.go) → first non-test file (sorted: util.go).
+        let root = pb("/repo");
+        let files = vec![pb("/repo/pkg/baz/util.go"), pb("/repo/pkg/baz/util_test.go")];
+        let idx = GoPackageIndex::build(&root, &files);
+        let target = idx.resolve("github.com/example/foo/pkg/baz", "github.com/example/foo");
+        assert_eq!(target, Some(&pb("/repo/pkg/baz/util.go")));
+    }
+
+    #[test]
+    fn go_package_index_returns_none_for_external() {
+        let root = pb("/repo");
+        let files = vec![pb("/repo/pkg/baz/baz.go")];
+        let idx = GoPackageIndex::build(&root, &files);
+        assert_eq!(
+            idx.resolve("github.com/other/pkg", "github.com/example/foo"),
+            None
+        );
+    }
+
+    #[test]
+    fn go_package_index_returns_none_for_empty_package() {
+        let root = pb("/repo");
+        let files = vec![pb("/repo/main.go")];
+        let idx = GoPackageIndex::build(&root, &files);
+        assert_eq!(
+            idx.resolve("github.com/example/foo/pkg/baz", "github.com/example/foo"),
+            None
+        );
+    }
+
+    #[test]
+    fn go_package_index_does_not_collide_on_sibling_suffix_dirs() {
+        // Regression: unanchored ends_with matched both pkg/util and internal/pkg/util.
+        // With repo-root-relative keys, they are distinct packages.
+        let root = pb("/repo");
+        let files = vec![
+            pb("/repo/pkg/util/util.go"),
+            pb("/repo/internal/pkg/util/internal_util.go"),
+        ];
+        let idx = GoPackageIndex::build(&root, &files);
+        assert_eq!(idx.len(), 2, "two distinct package dirs indexed");
+        // Import of pkg/util must NOT resolve into internal/pkg/util.
+        let target = idx.resolve("github.com/example/foo/pkg/util", "github.com/example/foo");
+        assert_eq!(target, Some(&pb("/repo/pkg/util/util.go")));
+        let target2 =
+            idx.resolve("github.com/example/foo/internal/pkg/util", "github.com/example/foo");
+        assert_eq!(target2, Some(&pb("/repo/internal/pkg/util/internal_util.go")));
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "osp-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        base
     }
 }

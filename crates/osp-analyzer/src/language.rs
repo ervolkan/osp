@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use crate::contract::{ClassDef, ImportStatement, ResolvedImport};
-use crate::adapters::shared::ImportResolver;
+use crate::adapters::shared::{GoPackageIndex, ImportResolver};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RepoContext (§10 #10 — Faz 3.3'te tam tanım)
@@ -22,12 +22,18 @@ pub struct RepoContext {
     pub all_files: Vec<std::path::PathBuf>,
     /// Faz 3.9.1: HashMap-based import resolver.
     pub resolver: ImportResolver,
+    /// Go: `go.mod` module path (internal import detection için). Go repo değilse None.
+    pub go_module_path: Option<String>,
+    /// Go: package directory → files index (O(1) import lookup). Non-Go repo'da boş.
+    pub go_package_index: GoPackageIndex,
 }
 
 impl RepoContext {
     pub fn new(repo_root: std::path::PathBuf, all_files: Vec<std::path::PathBuf>) -> Self {
         let resolver = ImportResolver::build(&all_files);
-        Self { repo_root, all_files, resolver }
+        let go_module_path = crate::adapters::shared::detect_go_module_path(&repo_root);
+        let go_package_index = GoPackageIndex::build(&repo_root, &all_files);
+        Self { repo_root, all_files, resolver, go_module_path, go_package_index }
     }
 }
 
