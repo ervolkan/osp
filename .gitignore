@@ -36,6 +36,8 @@ docs/usage-evidence-plan.md
 docs/usage-dogfooding.md
 docs/usage-llm-benchmark.md
 docs/usage-report.md
+docs/session-notes-*.md
+docs/session-handoff.md
 
 # API keys — ASLA commit etme
 docs/llm-apikey.md
