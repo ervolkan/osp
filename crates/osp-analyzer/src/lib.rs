@@ -14,6 +14,9 @@ pub mod language;
 pub mod pipeline;
 pub mod scip;
 
+pub use contract::AnalysisResult;
+pub use pipeline::analyze_repo;
+
 // Faz 3.2+: pub mod adapters;
 // Faz 3.3+: pub mod scip;
 // Faz 3.5+: pub mod pipeline;

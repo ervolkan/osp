@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::LlmError;
 use crate::prompt::{osp_system_prompt, osp_user_prompt};
-use crate::response::{parse_raw, Completion, RawCompletion, TokenUsage};
+use crate::response::{parse_raw, RawCompletion, TokenUsage};
 
 /// Endpoint + model + auth configuration. Cloneable for shared use.
 #[derive(Debug, Clone)]

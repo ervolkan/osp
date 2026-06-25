@@ -2168,6 +2168,7 @@ name = "osp-llm-runtime"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "osp-analyzer",
  "osp-core",
  "reqwest 0.12.28",
  "serde",

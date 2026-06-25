@@ -36,17 +36,6 @@ impl RawCompletion {
     }
 }
 
-/// One successful completion: parsed proposal + token usage + raw assistant text.
-#[derive(Debug, Clone)]
-pub struct Completion {
-    /// The assistant's message content parsed as a DeltaProposal.
-    pub proposal: DeltaProposal,
-    /// Token counts from `response.usage`.
-    pub usage: TokenUsage,
-    /// Raw assistant text (kept for diagnostics / hallucination analysis).
-    pub raw_content: String,
-}
-
 // Wire types for the subset of the OpenAI response we read. We deliberately do
 // not model the full schema — only the fields consumed by the runtime.
 
@@ -93,22 +82,6 @@ pub(super) fn parse_raw(body: &str) -> Result<RawCompletion, LlmError> {
     })
 }
 
-/// Parse a raw HTTP response body into a [`Completion`] (envelope + proposal).
-///
-/// Proposal parsing uses [`RawCompletion::into_proposal`]; a schema mismatch
-/// returns [`LlmError::ProposalParse`] with the raw assistant text attached.
-pub(super) fn parse_completion(body: &str) -> Result<Completion, LlmError> {
-    let raw = parse_raw(body)?;
-    match raw.into_proposal() {
-        Ok((proposal, usage)) => Ok(Completion {
-            proposal,
-            usage,
-            raw_content: String::new(), // already moved into proposal parse
-        }),
-        Err((content, source)) => Err(LlmError::ProposalParse { raw: content, source }),
-    }
-}
-
 /// Remove a leading/trailing ``` or ```json fence if present.
 fn strip_code_fence(s: &str) -> String {
     let s = s.trim();
@@ -128,7 +101,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_completion_extracts_proposal_and_usage() {
+    fn parse_raw_extracts_usage_and_content() {
+        let body = r#"{
+            "choices": [{
+                "message": {
+                    "content": "{\"reasoning\":\"hello\"}"
+                }
+            }],
+            "usage": {"prompt_tokens": 155, "completion_tokens": 42, "total_tokens": 197}
+        }"#;
+        let raw = parse_raw(body).unwrap();
+        assert_eq!(raw.usage.prompt_tokens, 155);
+        assert_eq!(raw.usage.completion_tokens, 42);
+        assert!(raw.content.contains("reasoning"));
+    }
+
+    #[test]
+    fn into_proposal_extracts_proposal_and_usage() {
         let body = r#"{
             "choices": [{
                 "message": {
@@ -137,15 +126,15 @@ mod tests {
             }],
             "usage": {"prompt_tokens": 155, "completion_tokens": 42, "total_tokens": 197}
         }"#;
-        let c = parse_completion(body).unwrap();
-        assert_eq!(c.usage.prompt_tokens, 155);
-        assert_eq!(c.usage.completion_tokens, 42);
-        assert_eq!(c.proposal.reasoning, "no change needed");
-        assert!(c.proposal.new_nodes.is_empty());
+        let raw = parse_raw(body).unwrap();
+        let (proposal, usage) = raw.into_proposal().unwrap();
+        assert_eq!(usage.prompt_tokens, 155);
+        assert_eq!(proposal.reasoning, "no change needed");
+        assert!(proposal.new_nodes.is_empty());
     }
 
     #[test]
-    fn parse_completion_strips_json_code_fence() {
+    fn into_proposal_strips_json_code_fence() {
         let body = r#"{
             "choices": [{
                 "message": {
@@ -154,30 +143,26 @@ mod tests {
             }],
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
         }"#;
-        let c = parse_completion(body).unwrap();
-        assert_eq!(c.proposal.reasoning, "fenced");
+        let raw = parse_raw(body).unwrap();
+        let (proposal, _usage) = raw.into_proposal().unwrap();
+        assert_eq!(proposal.reasoning, "fenced");
     }
 
     #[test]
-    fn parse_completion_proposal_parse_error_carries_raw() {
+    fn into_proposal_parse_error_carries_raw() {
         let body = r#"{
             "choices": [{"message": {"content": "not json at all"}}],
             "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
         }"#;
-        let err = parse_completion(body).unwrap_err();
-        match err {
-            LlmError::ProposalParse { raw, .. } => assert_eq!(raw, "not json at all"),
-            other => panic!("expected ProposalParse, got {other:?}"),
-        }
+        let raw = parse_raw(body).unwrap();
+        let err = raw.into_proposal().unwrap_err();
+        assert_eq!(err.0, "not json at all");
     }
 
     #[test]
-    fn parse_completion_missing_choices_is_bad_response() {
+    fn parse_raw_missing_choices_is_bad_response() {
         let body = r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"#;
-        assert!(matches!(
-            parse_completion(body),
-            Err(LlmError::BadResponse(_))
-        ));
+        assert!(matches!(parse_raw(body), Err(LlmError::BadResponse(_))));
     }
 
     #[test]

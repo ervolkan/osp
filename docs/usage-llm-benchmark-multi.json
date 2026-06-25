@@ -1,0 +1,115 @@
+{
+  "k": 8,
+  "model": "gpt-4o-mini",
+  "repos": [
+    {
+      "name": "axum",
+      "node_count": 302,
+      "osp_completion_tokens": 178,
+      "osp_input_chars": 1719,
+      "osp_prompt_tokens": 643,
+      "ratio": 6.4,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 15871,
+      "raw_prompt_tokens": 4114,
+      "savings_pct": 84.4
+    },
+    {
+      "name": "cobra",
+      "node_count": 36,
+      "osp_completion_tokens": 182,
+      "osp_input_chars": 1678,
+      "osp_prompt_tokens": 630,
+      "ratio": 5.9,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 15491,
+      "raw_prompt_tokens": 3732,
+      "savings_pct": 83.1
+    },
+    {
+      "name": "gin",
+      "node_count": 99,
+      "osp_completion_tokens": 219,
+      "osp_input_chars": 1679,
+      "osp_prompt_tokens": 631,
+      "ratio": 5.7,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 14510,
+      "raw_prompt_tokens": 3611,
+      "savings_pct": 82.5
+    },
+    {
+      "name": "prometheus",
+      "node_count": 955,
+      "osp_completion_tokens": 265,
+      "osp_input_chars": 1683,
+      "osp_prompt_tokens": 632,
+      "ratio": 6.3,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 16441,
+      "raw_prompt_tokens": 3990,
+      "savings_pct": 84.2
+    },
+    {
+      "name": "ripgrep",
+      "node_count": 100,
+      "osp_completion_tokens": 159,
+      "osp_input_chars": 1754,
+      "osp_prompt_tokens": 657,
+      "ratio": 5.8,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 16387,
+      "raw_prompt_tokens": 3799,
+      "savings_pct": 82.7
+    },
+    {
+      "name": "serde",
+      "node_count": 208,
+      "osp_completion_tokens": 253,
+      "osp_input_chars": 1763,
+      "osp_prompt_tokens": 659,
+      "ratio": 4.9,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 13457,
+      "raw_prompt_tokens": 3222,
+      "savings_pct": 79.5
+    },
+    {
+      "name": "tokio",
+      "node_count": 786,
+      "osp_completion_tokens": 186,
+      "osp_input_chars": 1676,
+      "osp_prompt_tokens": 630,
+      "ratio": 5.8,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 16413,
+      "raw_prompt_tokens": 3685,
+      "savings_pct": 82.9
+    },
+    {
+      "name": "tracing",
+      "node_count": 256,
+      "osp_completion_tokens": 172,
+      "osp_input_chars": 1673,
+      "osp_prompt_tokens": 630,
+      "ratio": 4.0,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 9981,
+      "raw_prompt_tokens": 2499,
+      "savings_pct": 74.8
+    },
+    {
+      "name": "viper",
+      "node_count": 33,
+      "osp_completion_tokens": 144,
+      "osp_input_chars": 1674,
+      "osp_prompt_tokens": 630,
+      "ratio": 4.8,
+      "raw_completion_tokens": 300,
+      "raw_input_chars": 12080,
+      "raw_prompt_tokens": 3041,
+      "savings_pct": 79.3
+    }
+  ],
+  "timestamp_unix": 1782393097
+}

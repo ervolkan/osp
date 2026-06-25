@@ -20,7 +20,12 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
+osp-analyzer = { path = "../osp-analyzer" }
 
 [[example]]
 name = "token_bench"
 path = "examples/token_bench.rs"
+
+[[example]]
+name = "multi_repo_bench"
+path = "examples/multi_repo_bench.rs"

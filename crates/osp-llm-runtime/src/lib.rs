@@ -26,7 +26,7 @@ mod runtime;
 
 pub use error::LlmError;
 pub use prompt::{raw_dump_user_prompt, osp_user_prompt, osp_system_prompt, raw_system_prompt};
-pub use response::{Completion, RawCompletion, TokenUsage};
+pub use response::{RawCompletion, TokenUsage};
 pub use runtime::{CompletionRequest, Runtime, RuntimeConfig};
 
 /// Run one OSP-prompt completion and return the parsed proposal + token usage.
