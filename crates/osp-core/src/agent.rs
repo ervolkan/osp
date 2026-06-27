@@ -167,7 +167,8 @@ impl OutputContract {
     /// Kontroller (proposal'ın kendi içinde doğrulanabilecekler):
     /// 1. new_nodes: NodeKind allowed (varsa), mass finite/non-negative,
     ///    connected_to duplicate-edge reddi
-    /// 2. new_edges: Imports self-loop reddi (from == to)
+    /// 2. new_edges: Imports self-loop reddi (from == to), duplicate
+    ///    (from, to, kind) üçlüsü reddi
     /// 3. position_hints: suggested_raw finite
     /// 4. reasoning: require_reasoning ise boş olamaz
     /// 5. max_nodes: limit aşımı
@@ -175,6 +176,8 @@ impl OutputContract {
     /// **Kapsam dışı (Engine sorumluluğunda — `check_claim_syntax`):**
     /// - Cross-ref: new_edges from/to ve connected_to target_id'lerin existing
     ///   space node'larına işaret ettiği — `validate()` `&Space` göremiyor.
+    ///   (from/to existing space node'larına referans eder, faz5_e2e.rs örneği;
+    ///   index olarak yorumlanmaz.)
     /// - Duplicate node IDs — `NewNodeSpec`'lerin ID'si yok (index tabanlı),
     ///   Engine `Claim.delta_nodes` (resolved ID'ler) üzerinde kontrol eder.
     /// - modified_entities: `EntityChangeSpec.changes` Faz 5 stub — doğrulanacak
@@ -195,7 +198,6 @@ impl OutputContract {
         }
 
         // 1. NewNodeSpec validation
-        let mut new_node_ids: HashSet<NodeId> = HashSet::new();
         for (i, node) in proposal.new_nodes.iter().enumerate() {
             // NodeKind allowed?
             if let Some(allowed) = &self.allowed_node_kinds {
@@ -244,11 +246,10 @@ impl OutputContract {
                     });
                 }
             }
-
-            new_node_ids.insert(i as NodeId); // index as provisional ID
         }
 
         // 2. NewEdgeSpec validation
+        let mut seen_explicit_edges: HashSet<(NodeId, NodeId, EdgeKind)> = HashSet::new();
         for (i, edge) in proposal.new_edges.iter().enumerate() {
             // Imports self-loop
             if edge.kind == EdgeKind::Imports && edge.from == edge.to {
@@ -257,6 +258,19 @@ impl OutputContract {
                     detail: format!(
                         "new_edges[{}]: Imports self-loop (node {} → {})",
                         i, edge.from, edge.to
+                    ),
+                });
+            }
+
+            // Duplicate (from, to, kind) üçlüsü reddi — connected_to ile simetrik.
+            // Aynı kenarı iki kez listelemek gereksiz; farklı EdgeKind'ler aynı
+            // from→to çifti için geçerli (örn. A -Imports-> B ve A -Calls-> B).
+            if !seen_explicit_edges.insert((edge.from, edge.to, edge.kind)) {
+                return Err(SyntaxViolation {
+                    claim_id: 0,
+                    detail: format!(
+                        "new_edges[{}]: duplicate edge ({} → {}, {:?})",
+                        i, edge.from, edge.to, edge.kind
                     ),
                 });
             }
@@ -740,6 +754,79 @@ mod tests {
             ..Default::default()
         };
         assert!(contract.validate(&proposal).is_ok());
+    }
+
+    #[test]
+    fn new_edges_rejects_duplicate() {
+        // Aynı (from, to, kind) üçlüsü iki kez listelenemez
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+            ],
+            new_edges: vec![
+                NewEdgeSpec {
+                    from: 0,
+                    to: 1,
+                    kind: EdgeKind::Imports,
+                },
+                NewEdgeSpec {
+                    from: 0,
+                    to: 1,
+                    kind: EdgeKind::Imports, // duplicate
+                },
+            ],
+            ..Default::default()
+        };
+        let result = contract.validate(&proposal);
+        assert!(result.is_err(), "duplicate new_edges entry should be rejected");
+    }
+
+    #[test]
+    fn new_edges_accepts_distinct_kinds_same_endpoints() {
+        // Aynı from→to çifti ama FARKLI EdgeKind'ler geçerli (Imports + Calls)
+        let contract = OutputContract::default();
+        let proposal = DeltaProposal {
+            new_nodes: vec![
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+                NewNodeSpec {
+                    kind: NodeKind::Module,
+                    initial_mass: 1.0,
+                    connected_to: vec![],
+                },
+            ],
+            new_edges: vec![
+                NewEdgeSpec {
+                    from: 0,
+                    to: 1,
+                    kind: EdgeKind::Imports,
+                },
+                NewEdgeSpec {
+                    from: 0,
+                    to: 1,
+                    kind: EdgeKind::Calls, // distinct kind → OK
+                },
+            ],
+            ..Default::default()
+        };
+        let result = contract.validate(&proposal);
+        assert!(
+            result.is_ok(),
+            "distinct EdgeKinds between same endpoints should be accepted"
+        );
     }
 
     #[test]
