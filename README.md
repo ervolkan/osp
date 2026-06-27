@@ -8,10 +8,11 @@
 > system (coupling, cohesion, instability, entropy, witness-depth) and constrains AI-agent
 > commits through deterministic validity gates before mutation.
 
-**Paper:** v2.3 (ICSE/FSE target) — 4 research questions, 15-repo corpus, 13,031 real LCOM4
-classes analyzed via SCIP. See [`docs/paper-draft.md`](docs/paper-draft.md).
+**Paper:** v2.6 (arXiv then ACM TOSEM target) — 5 research questions, 23-repo corpus across 5 languages
+(Python, TypeScript, JavaScript, Rust, Go), 18,952 real LCOM4 classes analyzed via SCIP. See
+[`docs/paper-draft-v2.6.md`](docs/paper-draft-v2.6.md).
 
-**Vision source:** [`SoftwarePhysics.txt`](SoftwarePhysics.txt) · **Paper:** [`docs/paper-draft.md`](docs/paper-draft.md)
+**Vision source:** [`SoftwarePhysics.txt`](SoftwarePhysics.txt) · **Paper:** [`docs/paper-draft-v2.6.md`](docs/paper-draft-v2.6.md)
 
 ---
 
@@ -21,7 +22,7 @@ classes analyzed via SCIP. See [`docs/paper-draft.md`](docs/paper-draft.md).
 
 - **Rust** 1.75+ ([rustup.rs](https://rustup.rs))
 - **Git** 2.40+
-- **Docker** (optional — for Python SCIP indices via `scip-python`)
+- **Docker** (optional — for Python/Rust/Go SCIP indices via `scip-python`/`scip-rust`/`scip-go`)
 - **Node.js** 16+ (optional — for TypeScript/JavaScript SCIP indices via `scip-typescript`)
 
 ### Build & Test
@@ -30,7 +31,7 @@ classes analyzed via SCIP. See [`docs/paper-draft.md`](docs/paper-draft.md).
 git clone https://github.com/ervolkan/osp.git
 cd osp
 cargo build --workspace
-cargo test --workspace          # 275 tests
+cargo test --workspace          # 375 tests
 ```
 
 ### Analyze a Repository
@@ -66,6 +67,22 @@ docker run --rm -v /path/to/repo:/repo -w /repo \
   --project-name myproject --project-version 1.0.0
 ```
 
+### Rust (via Docker, rust-analyzer)
+
+```bash
+docker run --rm -v /path/to/repo:/repo -w /repo \
+  sourcegraph/scip-rust:latest \
+  rust-analyzer scip . --output /repo/index.scip
+```
+
+### Go (via Docker)
+
+```bash
+docker run --rm -v /path/to/repo:/repo -w /repo \
+  sourcegraph/scip-go:latest \
+  scip-go --output /repo/index.scip
+```
+
 ### TypeScript / JavaScript (via npm)
 
 ```bash
@@ -82,16 +99,19 @@ scip-typescript index --output index.scip --infer-tsconfig
 osp/
 ├── crates/
 │   ├── osp-core/          # Formal model: coords, axes, witness, vision, engine, persistence
-│   │   ├── agent.rs       # Faz 5 stubs: PermissionMask, DeltaProposal, OutputContract
-│   │   └── rule.rs        # Faz 5 stubs: Rule trait, RuleViolation
+│   │   ├── agent.rs       # Faz 5: PermissionMask, DeltaProposal, OutputContract (validate gates)
+│   │   └── rule.rs        # Faz 5: Rule trait, RuleViolation, Q6 rule set
 │   ├── osp-analyzer/      # Two-tier analysis: tree-sitter (5 langs) + SCIP LCOM4
 │   │   ├── adapters/      # Python, TypeScript, JavaScript, Rust, Go
-│   │   ├── scip/          # SCIP loader, LCOM4 algorithm, SemanticIndex
+│   │   ├── scip/          # SCIP loader (impl#[Type] fix), LCOM4 algorithm, SemanticIndex
 │   │   └── examples/      # scip_dump, scip_semantic_dump, timing_bench
+│   ├── osp-llm-runtime/   # Stateless OpenAI-compatible runtime: OspPrompt → DeltaProposal
+│   ├── osp-desktop/       # Tauri + tiny_http MVP: 5-panel UI, Node Inspector, Snapshot
 │   └── osp-spike/         # Faz 0 frozen reference (tri-state witness validation)
-├── docs/                  # 8 design docs + paper v2.3 + scip-cohesion-results
-├── scripts/               # Reproducibility scripts (see below)
-├── Cargo.toml             # Workspace root
+├── docs/                  # Paper v2.6 + design docs + corpus results
+├── scripts/               # Reproducibility scripts (corpus clone + SCIP + analyze)
+├── viz/                   # Paper figures (commit pipeline, space topology, graveyard)
+├── Cargo.toml             # Workspace root (5 crates)
 └── SoftwarePhysics.txt    # Vision source (immutable)
 ```
 
@@ -99,14 +119,32 @@ osp/
 
 ## Reproducing Paper Results
 
-The 15-repo corpus analysis (RQ1–RQ4) can be reproduced:
+The 23-repo corpus analysis (RQ1–RQ5) can be reproduced. The primary 15-repo Python/TS/JS corpus:
 
 ```bash
 # Clone corpus, generate SCIP indices, run analysis, collect results
 bash scripts/reproduce-corpus.sh
 ```
 
-See [`docs/scip-cohesion-results.md`](docs/scip-cohesion-results.md) for the full dataset.
+The extended 8-repo Rust/Go corpus (RQ4 cohesion + coupling/instability):
+
+```bash
+# Clone Rust/Go repos
+powershell -File scripts/clone-corpus.ps1
+# Generate SCIP indices (Rust via scip-rust Docker, Go via scip-go Docker) then:
+powershell -File scripts/run-corpus.ps1
+```
+
+See [`docs/scip-cohesion-results.md`](docs/scip-cohesion-results.md) (primary corpus) and
+[`docs/corpus28-results.md`](docs/corpus28-results.md) (extended Rust/Go) for the full datasets.
+
+### Token-Size Benchmark (RQ5)
+
+```bash
+# Real GPT-4o-mini token counts across 9 repositories
+cargo run -p osp-llm-runtime --example multi_repo_bench
+# Raw results: docs/usage-llm-benchmark-multi.json
+```
 
 ### Timing Benchmark
 
@@ -123,13 +161,14 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 |---|---|---|
 | **0** | Spike validation (squash blind-spot) | ✅ Done |
 | **1** | Core formalism + 15 invariants | ✅ Done |
-| **2** | Space Engine (Q4-Q6 gates, event-sourcing) | ✅ Done |
-| **3** | Analyzer (tree-sitter + SCIP LCOM4) | ✅ Done (13,031 classes) |
+| **2** | Space engine (Q4-Q6 gates, event-sourcing) | ✅ Done |
+| **3** | Analyzer (tree-sitter + SCIP LCOM4) | ✅ Done (18,952 classes, 5 langs) |
 | **4** | Scale / KùzuDB | ⏸️ Deferred (50k+ nodes) |
-| **5** | Agent/LLM OSP Codec | 🔶 Stub types ready |
+| **5** | Agent/LLM OSP Codec | 🔶 Stub types + validate gates + stateless runtime |
 | **6** | Multi-Agent Coordination | 📄 Proposal |
-| **7** | Academic Paper | ✅ v2.3 submit-ready |
-| **8** | Custom Axis Marketplace | ⏸️ Planned |
+| **7** | Academic Paper | ✅ v2.6 (arXiv target) |
+| **8** | OSP Desktop UI | ✅ MVP (5 panels + Node Inspector + Snapshot) |
+| **9** | Custom Axis Marketplace | ⏸️ Planned |
 
 ---
 
@@ -149,14 +188,15 @@ Full formalism: [`docs/OSP-formalism.md`](docs/OSP-formalism.md)
 
 | Document | Content |
 |---|---|
-| [`docs/paper-draft.md`](docs/paper-draft.md) | ICSE/FSE paper v2.3 (4 RQs, real LCOM4 data) |
+| [`docs/paper-draft-v2.6.md`](docs/paper-draft-v2.6.md) | Paper v2.6 (5 RQs, 23-repo/5-lang corpus, real LCOM4 data, token benchmark) |
 | [`docs/OSP-formalism.md`](docs/OSP-formalism.md) | Mathematical model (coordinate system, BFT proof, commit operator) |
-| [`docs/scip-cohesion-results.md`](docs/scip-cohesion-results.md) | 15-repo corpus LCOM4 cohesion results |
+| [`docs/scip-cohesion-results.md`](docs/scip-cohesion-results.md) | Primary 15-repo corpus LCOM4 cohesion results |
+| [`docs/corpus28-results.md`](docs/corpus28-results.md) | Extended 23-repo results (Rust/Go cohesion + coupling + foam analysis) |
 | [`docs/calibration-corpus.md`](docs/calibration-corpus.md) | Corpus selection methodology |
 | [`docs/literature-scan.md`](docs/literature-scan.md) | Related work + originality analysis |
 
 *Internal design specs (agent semantics, invariants, core/engine/analyzer design,
-roadmap, UI design) are maintained privately during development.*
+roadmap, session notes, dogfooding logs) are maintained privately during development.*
 
 ---
 
