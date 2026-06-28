@@ -31,7 +31,7 @@
 git clone https://github.com/ervolkan/osp.git
 cd osp
 cargo build --workspace
-cargo test --workspace          # 375 tests
+cargo test --workspace          # 387 tests
 ```
 
 ### Analyze a Repository
@@ -167,7 +167,7 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 | **5** | Agent/LLM OSP Codec | 🔶 Stub types + validate gates + stateless runtime |
 | **6** | Multi-Agent Coordination | 📄 Proposal |
 | **7** | Academic Paper | ✅ v2.6 (arXiv target) |
-| **8** | OSP Desktop UI | ✅ MVP (5 panels + Node Inspector + Snapshot) |
+| **8** | OSP Desktop UI | ✅ v0.3.4 (6 panels + role-aware vision + Node Inspector + Confidence) |
 | **9** | Custom Axis Marketplace | ⏸️ Planned |
 
 ---
