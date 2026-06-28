@@ -223,6 +223,34 @@ impl VisionConfig {
         self.role_overrides.contains_key(&format!("{:?}", role))
     }
 
+    /// Bir role için builtin (hardcoded) sensible-default vision override.
+    ///
+    /// Kullanıcı TOML'da `[role_overrides.<Role>]` tanımlamasa bile role-aware
+    /// vision çalışsın diye. Değerlendirmenin "Runtime/Core için instability
+    /// target 0.50 olmamalı" tespitini adresler.
+    ///
+    /// Default'lar mimari normlardan türetilmiştir:
+    /// - TypeSurface (.d.ts): coupling düşük (declaration = runtime deps yok)
+    /// - Core: instability düşük (stabil foundation), cohesion yüksek
+    /// - Adapter: instability yüksek olabilir (integration boundary)
+    /// - Utility: coupling düşük (leaf helper)
+    /// - Runtime: global vision'a yakın ama instability biraz düşük (0.35)
+    /// - Support (test/migration): instability yüksek doğal, coupling gevşek
+    pub fn builtin_role_override(role: NodeRole) -> Option<RoleVisionOverride> {
+        use NodeRole as R;
+        let ovr = |x: f64, y: f64, z: f64| RoleVisionOverride {
+            x: Some(x), y: Some(y), z: Some(z),
+        };
+        match role {
+            R::TypeSurface => Some(ovr(0.05, 0.80, 0.50)), // coupling relaxed
+            R::Core => Some(ovr(0.60, 0.75, 0.20)),        // instability low (stabil)
+            R::Adapter => Some(ovr(0.80, 0.50, 0.80)),     // instability tolerated
+            R::Utility => Some(ovr(0.20, 0.60, 0.50)),     // coupling low
+            R::Runtime => Some(ovr(0.40, 0.60, 0.35)),     // instability biraz düşük
+            R::Support => None, // Support advisory mode'da, vision relaxation UI'da
+        }
+    }
+
     /// EngineConfig henüz tanımlı değil (Faz 2.5 `engine.rs`).
     /// Faz 2.5'te `to_engine_config(&self) -> EngineConfig` eklenecek.
     /// Şimdilik policy/threshold değerlerine direct accessor:

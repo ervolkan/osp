@@ -184,6 +184,54 @@ pub fn analyze_repo_with_config(
         );
     }
 
+    // 8b. Role refinement — metric-bazlı 2. geçiş. İlk geçişte (node build)
+    // edges henüz yoktu, bu yüzden Core/Adapter/Utility detection çalışamadı.
+    // Şimdi edges + metrics hazır: in/out degree ve instability ile role'ü röfiniş et.
+    // Örn: incoming=44, outgoing=2, instability=0.043 → Runtime yerine Core.
+    {
+        // Her node için in/out degree hesapla (edges'ten)
+        let mut in_degree: std::collections::HashMap<NodeId, f64> =
+            std::collections::HashMap::new();
+        let mut out_degree: std::collections::HashMap<NodeId, f64> =
+            std::collections::HashMap::new();
+        for e in &space.edges {
+            *out_degree.entry(e.from).or_insert(0.0) += 1.0;
+            *in_degree.entry(e.to).or_insert(0.0) += 1.0;
+        }
+        // Role refinement: sadece Runtime default'ta kalanlar için (TypeSurface/Support
+        // zaten path/classification'dan doğru çıktı). Metric shape ile Core/Adapter/
+        // Utility'ye yükselt.
+        for (node_id, node) in space.nodes.iter_mut() {
+            if node.role != osp_core::space::NodeRole::Runtime {
+                continue; // TypeSurface/Support zaten doğru, overwrite etme
+            }
+            let metrics = osp_core::space::RoleMetrics {
+                mass: node.mass,
+                outgoing: out_degree.get(node_id).copied().unwrap_or(0.0),
+                incoming: in_degree.get(node_id).copied().unwrap_or(0.0),
+                instability: module_metrics
+                    .get(node_id)
+                    .map(|m| m.instability.value)
+                    .unwrap_or(0.5),
+            };
+            let rel_path = node_map
+                .iter()
+                .find(|(_, id)| *id == node_id)
+                .map(|(p, _)| {
+                    p.strip_prefix(&repo)
+                        .map(|r| r.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| p.to_string_lossy().replace('\\', "/"))
+                })
+                .unwrap_or_default();
+            let refined = osp_core::space::infer_role(&rel_path, node.classification, Some(metrics));
+            // infer_role Runtime dönerse (metric eşleşmezse) olduğu gibi kalsın;
+            // Core/Adapter/Utility dönerse yükselt.
+            if refined != osp_core::space::NodeRole::Runtime {
+                node.role = refined;
+            }
+        }
+    }
+
     // 9. repo_head
     let repo_head = std::process::Command::new("git")
         .arg("-C")

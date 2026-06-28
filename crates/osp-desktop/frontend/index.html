@@ -189,9 +189,9 @@
       <div class="slider-row" style="margin-bottom:16px;">
         <label>θ_bound preset</label>
         <select id="thetaPreset" onchange="applyThetaPreset()" style="flex:1;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px;">
-          <option value="0.20">Strict (0.20)</option>
-          <option value="0.30" selected>Balanced (0.30)</option>
-          <option value="0.50">Exploratory (0.50)</option>
+          <option value="strict">Strict (pass≤0.20, warn≤0.35, reject&gt;0.35)</option>
+          <option value="balanced" selected>Balanced (pass≤0.30, warn≤0.45, reject&gt;0.45)</option>
+          <option value="exploratory">Exploratory (pass≤0.35, warn≤0.55, reject&gt;0.55)</option>
         </select>
       </div>
       <div id="thresholdSliders"></div>
@@ -397,15 +397,24 @@ async function loadVisionConfig() {
   }
 }
 
-// θ_bound preset uygula — Strict/Balanced/Exploratory.
-// Değerlendirmenin "θ_bound=0.25 çok agresif" tespitini adresler. Balanced (0.30)
-// engine/TOML default'la tutarlı; ilk analiz için daha öğretici.
+// θ_bound preset uygula — Strict/Balanced/Exploratory. Her preset pass/warn/reject
+// üç threshold'unu set eder. Değerlendirmenin "0 reject çok yumuşak" tespitini
+// adresler — artık her preset'te bir reject bandı var.
+const THETA_PRESETS = {
+  strict:       { pass: 0.20, warn: 0.35 },
+  balanced:     { pass: 0.30, warn: 0.45 },
+  exploratory:  { pass: 0.35, warn: 0.55 },
+};
+// Mevcut reject bound — preset'ten okunur, manuel slider değişince pass bound.
+let currentRejectBound = 0.45;
+
 function applyThetaPreset() {
-  const val = parseFloat(document.getElementById('thetaPreset').value);
+  const preset = THETA_PRESETS[document.getElementById('thetaPreset').value] || THETA_PRESETS.balanced;
   const slider = document.getElementById('vis_theta_bound');
   const display = document.getElementById('visval_theta_bound');
-  if (slider) { slider.value = val; }
-  if (display) { display.textContent = val.toFixed(2); }
+  if (slider) { slider.value = preset.pass; }
+  if (display) { display.textContent = preset.pass.toFixed(2); }
+  currentRejectBound = preset.warn;
   updateVisionPreview();
 }
 
@@ -443,10 +452,10 @@ function updateVisionPreview() {
 
   const preview = document.getElementById('visionPreview');
   if (analysisData && analysisData.space.nodes.length > 0) {
-    // Üç seviye karar: pass / warning / reject. Değerlendirmenin "binary çok sert"
-    // tespitini adresler. warning bandı θ_bound ile θ_bound+0.15 arası.
+    // Üç seviye karar: pass / warning / reject. Değerlendirmenin "0 reject çok
+    // yumuşak" tespitini adresler. pass = θ_bound slider'dan, reject bound preset'ten.
     const thetaBound = get('theta_bound');
-    const warnBound = thetaBound + 0.15;
+    const rejectBound = currentRejectBound;
     const vx = get('x'), vy = get('y'), vz = get('z');
     let pass = 0, warning = 0, reject = 0;
     // Axis breakdown — hangi eksende en çok sapma var (reject'ler için)
@@ -457,7 +466,7 @@ function updateVisionPreview() {
       const dz = (n.instability ?? 0.5) - vz;
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
       if (dist <= thetaBound) pass++;
-      else if (dist <= warnBound) warning++;
+      else if (dist <= rejectBound) warning++;
       else {
         reject++;
         // En çok sapma olan ekseni say
@@ -476,7 +485,7 @@ function updateVisionPreview() {
         <span style="color:#3fb950;">${pass} pass</span> ·
         <span style="color:#d29922;">${warning} warning</span> ·
         <span style="color:#f85149;">${reject} reject</span>
-        (θ≤${thetaBound.toFixed(2)} pass, ≤${warnBound.toFixed(2)} warn)
+        (θ≤${thetaBound.toFixed(2)} pass, ≤${rejectBound.toFixed(2)} warn, &gt; reject)
       </div>
       <div style="height:10px;border-radius:4px;background:#21262d;overflow:hidden;display:flex;">
         <div style="height:100%;width:${passPct}%;background:#3fb950;"></div>
@@ -929,7 +938,13 @@ function showNodeInspector(d) {
     // Production/Unknown için mevcut kırmızı fail korunur.
     let statusColor, statusText;
     if (passes) {
-      statusColor = '#3fb950'; statusText = '✓ pass';
+      // Pass margin: boundary'ye yakınsa "near boundary" işaretle.
+      const margin = thetaBound - theta;
+      const nearBoundary = margin < 0.05;
+      statusColor = nearBoundary ? '#d29922' : '#3fb950';
+      statusText = nearBoundary
+        ? `✓ pass · near boundary (margin ${margin.toFixed(3)})`
+        : `✓ pass (margin ${margin.toFixed(3)})`;
     } else if (isAdvisory) {
       statusColor = '#d29922';
       statusText = `⚠ advisory — high ${axes[0].name.split(' ')[0]} normal for ${cls}`;

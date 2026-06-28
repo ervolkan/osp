@@ -440,19 +440,24 @@ impl SpaceEngine {
     }
 
     /// Claim'in temsil ettiği node'un rolüne göre vision vector seç.
-    /// Override yoksa global `self.vision` döner.
+    /// Override (kullanıcı TOML) yoksa builtin sensible-default kullanılır.
     fn vision_for_claim(&self, claim: &Claim) -> VisionVector {
         use crate::space::{infer_role, NodeRole};
+        use crate::vision_config::VisionConfig;
         // İlk delta_node'un classification'ından rol çıkar (path/metric olmadan
         // classification-only — engine path bilmez, sadece node classification).
         if let Some(node) = claim.delta_nodes.first() {
             let role = infer_role("", node.classification, None);
             if let NodeRole::Runtime = role {
-                return self.vision; // default → global
+                // Runtime: builtin override uygula (z=0.35) — değerlendirmenin
+                // "Runtime için z=0.50 yanlış" tespiti. Kullanıcı override varsa o kazanır.
             }
-            // Role override varsa uygula
+            // Önce kullanıcı TOML override'ı, sonra builtin default
             let key = format!("{:?}", role);
-            if let Some(ovr) = self.config.role_overrides.get(&key) {
+            let ovr = self.config.role_overrides.get(&key)
+                .cloned()
+                .or_else(|| VisionConfig::builtin_role_override(role));
+            if let Some(ovr) = ovr {
                 let mut raw = *self.vision.raw();
                 if let Some(x) = ovr.x { raw.x = x; }
                 if let Some(y) = ovr.y { raw.y = y; }
