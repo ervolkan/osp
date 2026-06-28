@@ -641,16 +641,22 @@ async function loadWhatIf(scenario) {
 // ═══ Topology chart ═══
 function renderSidebar(data) {
   const m = data.repo_metrics, c = data.semantic_coverage;
+  const scipActive = c.coverage_ratio > 0;
+  const scipBadge = scipActive
+    ? `<span style="color:#3fb950;font-weight:600;">● ACTIVE</span>`
+    : `<span style="color:#f85149;font-weight:600;">○ inactive</span>`;
   document.getElementById('repoMetrics').innerHTML = `
     <div class="metric"><span class="label">Modules</span><span class="value">${data.module_count}</span></div>
     <div class="metric"><span class="label">Edges</span><span class="value">${data.space.edges.length}</span></div>
     <div class="metric"><span class="label">Abstractness</span><span class="value">${m.abstractness.toFixed(3)}</span></div>
     <div class="metric"><span class="label">Main-seq dist</span><span class="value">${m.main_sequence_distance.toFixed(3)}</span></div>`;
   document.getElementById('scipInfo').innerHTML = `
+    <div class="metric"><span class="label">SCIP status</span><span class="value">${scipBadge}</span></div>
     <div class="metric"><span class="label">Files total</span><span class="value">${c.files_total}</span></div>
     <div class="metric"><span class="label">SCIP indexed</span><span class="value">${c.files_with_scip}</span></div>
     <div class="metric"><span class="label">Coverage</span><span class="value">${(c.coverage_ratio * 100).toFixed(1)}%</span></div>
-    <div class="metric"><span class="label">Classes</span><span class="value">${c.classes_total}</span></div>`;
+    <div class="metric"><span class="label">Classes</span><span class="value">${c.classes_total}</span></div>
+    ${!scipActive ? '<div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">No --scip index provided; re-analyze with a SCIP index for LCOM4 cohesion + class semantics.</span></div>' : ''}`;
 }
 
 function render() {
@@ -702,6 +708,27 @@ function render() {
 
 // ═══ Node Inspector ═══
 let selectedNodeId = null;
+
+// SCIP semantic özeti — bu dosyada kaç class/method/field var?
+// class_count > 0 iken göster; yoksa "no SCIP data" (dosya indekslenmemiş
+// veya SCIP index yok). Bu, "SCIP yok" yanılgısını önler: repo-level coverage
+// >0 iken bile indekslenmemiş dosyalar net şekilde işaretlenir.
+function renderScipSemantics(d) {
+  const cc = d.scip_class_count || 0;
+  if (cc === 0) {
+    return '<div class="metric"><span class="label">No SCIP data for this file</span><span class="value" style="color:#8b949e;">—</span></div>';
+  }
+  const mc = d.scip_method_count || 0;
+  const fc = d.scip_field_count || 0;
+  const ml = d.scip_max_lcom4 || 0;
+  // max_lcom4 > 1 → en az bir class'ta fragmentation var (cohesion düşük)
+  const fragNote = ml > 1 ? ` <span style="color:#d29922;">⚠ max LCOM4=${ml}</span>` : '';
+  return `
+    <div class="metric"><span class="label">Classes</span><span class="value">${cc}</span></div>
+    <div class="metric"><span class="label">Methods (total)</span><span class="value">${mc}</span></div>
+    <div class="metric"><span class="label">Fields (total)</span><span class="value">${fc}</span></div>
+    <div class="metric" style="font-size:11px;"><span class="label">Cohesion signal${fragNote}</span></div>`;
+}
 
 function showNodeInspector(d) {
   const el = document.getElementById('nodeInspector');
@@ -781,6 +808,8 @@ function showNodeInspector(d) {
     <div class="metric"><span class="label">x — Coupling</span><span class="value">${fmt(d.coupling)}</span></div>
     <div class="metric"><span class="label">y — Cohesion</span><span class="value">${fmt(d.cohesion)}</span></div>
     <div class="metric"><span class="label">z — Instability</span><span class="value">${fmt(d.instability)}</span></div>
+    <div style="margin-top:10px;font-size:12px;color:#8b949e;">SCIP Semantics</div>
+    ${renderScipSemantics(d)}
     <div style="margin-top:10px;font-size:12px;color:#8b949e;">Vision</div>
     ${visionHtml}
     <div style="margin-top:10px;font-size:12px;color:#8b949e;">Edges — outgoing (${outgoing.length})</div>

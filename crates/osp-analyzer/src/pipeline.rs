@@ -213,10 +213,45 @@ pub fn analyze_repo_with_config(
         })
         .collect();
 
+    // Node ID → SCIP semantic özeti (class/method/field sayıları).
+    // Her node'un path'ine karşılık gelen SCIP class'larını topla. SCIP yoksa
+    // veya dosya indekslenmemişse boş summary (tüm alanlar 0).
+    let node_semantics: std::collections::HashMap<NodeId, crate::contract::NodeSemanticSummary> =
+        node_paths
+            .iter()
+            .map(|(id, rel_path)| {
+                let summary = semantic_index
+                    .classes_by_file
+                    .get(rel_path)
+                    .map(|classes| {
+                        let method_count: usize =
+                            classes.iter().map(|c| c.methods.len()).sum();
+                        let field_count: usize =
+                            classes.iter().map(|c| c.fields.len()).sum();
+                        let max_lcom4 = classes
+                            .iter()
+                            .map(|c| {
+                                crate::scip::lcom4::compute_lcom4(c).lcom4 as u32
+                            })
+                            .max()
+                            .unwrap_or(0);
+                        crate::contract::NodeSemanticSummary {
+                            class_count: classes.len(),
+                            method_count,
+                            field_count,
+                            max_lcom4,
+                        }
+                    })
+                    .unwrap_or_default();
+                (*id, summary)
+            })
+            .collect();
+
     Ok(AnalysisResult {
         space,
         module_metrics,
         node_paths,
+        node_semantics,
         repo_metrics: RepoMetrics {
             abstractness: abstractness_mv,
             main_sequence_distance: d_mv,
@@ -521,6 +556,34 @@ mod tests {
             osp_core::space::NodeClassification::Test,
             "test_models.py should be classified as Test"
         );
+    }
+
+    #[test]
+    fn analyze_repo_populates_node_semantics() {
+        // node_semantics: SCIP varsa per-node class/method/field count.
+        // SCIP yoksa (bu fixture'da olduğu gibi) tüm summary'ler default (0).
+        let dir = make_fixture();
+        let result = analyze_repo(dir.path()).expect("analyze succeeded");
+
+        // SCIP index olmadan → her node için boş summary (class_count=0)
+        assert_eq!(
+            result.node_semantics.len(),
+            3,
+            "node_semantics should have an entry per node"
+        );
+        for (_id, sem) in &result.node_semantics {
+            assert_eq!(sem.class_count, 0, "no SCIP → class_count should be 0");
+            assert_eq!(sem.method_count, 0, "no SCIP → method_count should be 0");
+            assert_eq!(sem.field_count, 0, "no SCIP → field_count should be 0");
+        }
+
+        // Tüm node ID'leri hem node_semantics'te hem space'te olmalı
+        for id in result.space.nodes.keys() {
+            assert!(
+                result.node_semantics.contains_key(id),
+                "node {id} missing from node_semantics"
+            );
+        }
     }
 
     #[test]

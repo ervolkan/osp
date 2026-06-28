@@ -109,6 +109,23 @@ pub struct RepoMetrics {
 // AnalysisResult — output contract
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Bir node'a (source file) ait SCIP semantic özeti.
+///
+/// Inspector'ın "class-level ownership" görünürlüğü için: bu dosyada kaç class
+/// var, kaç method/field içeriyorlar. SCIP yoksa tüm alanlar 0; bu durumda
+/// inspector "no SCIP data for this file" gösterir.
+#[derive(Debug, Clone, Default)]
+pub struct NodeSemanticSummary {
+    /// Bu dosyada tanımlı class sayısı.
+    pub class_count: usize,
+    /// Tüm class'lardaki toplam method sayısı.
+    pub method_count: usize,
+    /// Tüm class'lardaki toplam field sayısı.
+    pub field_count: usize,
+    /// En yüksek LCOM4 component sayısı (en düşük cohesion'lı class).
+    pub max_lcom4: u32,
+}
+
 /// Full analysis pipeline çıktısı. Analyzer → Engine arayüzü.
 #[derive(Debug, Clone)]
 pub struct AnalysisResult {
@@ -118,6 +135,9 @@ pub struct AnalysisResult {
     pub module_metrics: HashMap<NodeId, ModuleMetrics>,
     /// Node ID → source file relative path eşlemesi (Inspector için).
     pub node_paths: HashMap<NodeId, String>,
+    /// Node ID → SCIP semantic özeti (class/method/field sayıları).
+    /// SCIP yoksa boş → inspector "no SCIP data" gösterir.
+    pub node_semantics: HashMap<NodeId, NodeSemanticSummary>,
     /// Repo-level metrikler (A, D).
     pub repo_metrics: RepoMetrics,
     /// SCIP index kalitesi (coverage, stale).

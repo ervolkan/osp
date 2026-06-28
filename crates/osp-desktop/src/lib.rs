@@ -35,6 +35,18 @@ pub struct NodeJson {
     /// vision uyarıları için. Eski snapshot'lar "Unknown" default ile deserialize olur.
     #[serde(default)]
     pub classification: String,
+    /// SCIP semantic: bu dosyada tanımlı class sayısı (0 = SCIP yok/indekslenmemiş).
+    #[serde(default)]
+    pub scip_class_count: usize,
+    /// SCIP semantic: bu dosyadaki tüm class'lardaki toplam method sayısı.
+    #[serde(default)]
+    pub scip_method_count: usize,
+    /// SCIP semantic: bu dosyadaki tüm class'lardaki toplam field sayısı.
+    #[serde(default)]
+    pub scip_field_count: usize,
+    /// SCIP semantic: en yüksek LCOM4 component sayısı (en düşük cohesion'lı class).
+    #[serde(default)]
+    pub scip_max_lcom4: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,6 +104,7 @@ pub fn cmd_analyze_repo(
         .values()
         .map(|n| {
             let metrics = result.module_metrics.get(&n.id);
+            let sem = result.node_semantics.get(&n.id);
             NodeJson {
                 id: n.id,
                 kind: format!("{:?}", n.kind),
@@ -101,6 +114,10 @@ pub fn cmd_analyze_repo(
                 instability: metrics.map(|m| m.instability.value),
                 path: result.node_paths.get(&n.id).cloned(),
                 classification: format!("{:?}", n.classification),
+                scip_class_count: sem.map(|s| s.class_count).unwrap_or(0),
+                scip_method_count: sem.map(|s| s.method_count).unwrap_or(0),
+                scip_field_count: sem.map(|s| s.field_count).unwrap_or(0),
+                scip_max_lcom4: sem.map(|s| s.max_lcom4).unwrap_or(0),
             }
         })
         .collect();
@@ -613,24 +630,32 @@ mod tests {
             instability: Some(0.5),
             path: Some("src/main.py".to_string()),
             classification: "Production".to_string(),
+            scip_class_count: 3,
+            scip_method_count: 12,
+            scip_field_count: 8,
+            scip_max_lcom4: 2,
         };
         let json = serde_json::to_string(&node).expect("serialize");
         assert!(json.contains("\"path\":\"src/main.py\""), "path field in JSON");
-        assert!(json.contains("\"classification\":\"Production\""), "classification field in JSON");
+        assert!(json.contains("\"classification\":\"Production\""), "classification field");
+        assert!(json.contains("\"scip_class_count\":3"), "scip_class_count field");
+        assert!(json.contains("\"scip_method_count\":12"), "scip_method_count field");
         // Round-trip
         let back: NodeJson = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.path, Some("src/main.py".to_string()));
         assert_eq!(back.classification, "Production");
+        assert_eq!(back.scip_class_count, 3);
+        assert_eq!(back.scip_max_lcom4, 2);
         assert_eq!(back.id, 42);
     }
 
-    /// Eski snapshot (classification yok) deserialize → empty default (frontend
-    /// JS tarafı "Unknown" olarak gösterir — boş string → Unknown eşlemesi).
+    /// Eski snapshot (SCIP alanları yok) deserialize → 0 default.
     #[test]
-    fn node_json_backward_compat_missing_classification() {
+    fn node_json_backward_compat_missing_scip_fields() {
         let old_json = r#"{"id":1,"kind":"Module","mass":10.0,"coupling":null,"cohesion":null,"instability":null,"path":"a.py"}"#;
         let n: NodeJson = serde_json::from_str(old_json).expect("deserialize old node");
-        assert_eq!(n.classification, "", "missing classification defaults to empty string");
-        assert_eq!(n.id, 1);
+        assert_eq!(n.scip_class_count, 0, "missing scip_class_count defaults to 0");
+        assert_eq!(n.scip_method_count, 0, "missing scip_method_count defaults to 0");
+        assert_eq!(n.classification, "", "missing classification defaults to empty");
     }
 }
