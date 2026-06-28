@@ -532,7 +532,7 @@ impl Default for VisionConfigJson {
             z: 0.5,
             w: 0.5,
             v: 0.5,
-            theta_bound: 0.25,
+            theta_bound: 0.30,
             theta_quorum: 1.5,
             min_approvers: 2,
         }

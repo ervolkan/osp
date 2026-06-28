@@ -186,6 +186,14 @@
     </div>
     <div class="vision-section">
       <h3>Thresholds</h3>
+      <div class="slider-row" style="margin-bottom:16px;">
+        <label>θ_bound preset</label>
+        <select id="thetaPreset" onchange="applyThetaPreset()" style="flex:1;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px;">
+          <option value="0.20">Strict (0.20)</option>
+          <option value="0.30" selected>Balanced (0.30)</option>
+          <option value="0.50">Exploratory (0.50)</option>
+        </select>
+      </div>
       <div id="thresholdSliders"></div>
     </div>
     <div class="vision-preview" id="visionPreview">
@@ -389,6 +397,18 @@ async function loadVisionConfig() {
   }
 }
 
+// θ_bound preset uygula — Strict/Balanced/Exploratory.
+// Değerlendirmenin "θ_bound=0.25 çok agresif" tespitini adresler. Balanced (0.30)
+// engine/TOML default'la tutarlı; ilk analiz için daha öğretici.
+function applyThetaPreset() {
+  const val = parseFloat(document.getElementById('thetaPreset').value);
+  const slider = document.getElementById('vis_theta_bound');
+  const display = document.getElementById('visval_theta_bound');
+  if (slider) { slider.value = val; }
+  if (display) { display.textContent = val.toFixed(2); }
+  updateVisionPreview();
+}
+
 function renderVisionSliders(config) {
   const renderSlider = (axis, container) => {
     const val = config[axis.key];
@@ -423,26 +443,53 @@ function updateVisionPreview() {
 
   const preview = document.getElementById('visionPreview');
   if (analysisData && analysisData.space.nodes.length > 0) {
-    // Show how many nodes would pass/fail at current vision
+    // Üç seviye karar: pass / warning / reject. Değerlendirmenin "binary çok sert"
+    // tespitini adresler. warning bandı θ_bound ile θ_bound+0.15 arası.
     const thetaBound = get('theta_bound');
+    const warnBound = thetaBound + 0.15;
     const vx = get('x'), vy = get('y'), vz = get('z');
-    let pass = 0, fail = 0;
+    let pass = 0, warning = 0, reject = 0;
+    // Axis breakdown — hangi eksende en çok sapma var (reject'ler için)
+    const axisRejects = { coupling: 0, cohesion: 0, instability: 0 };
     analysisData.space.nodes.forEach(n => {
       const dx = (n.coupling ?? 0.5) - vx;
       const dy = (n.cohesion ?? 0.5) - vy;
       const dz = (n.instability ?? 0.5) - vz;
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
-      if (dist <= thetaBound) pass++; else fail++;
+      if (dist <= thetaBound) pass++;
+      else if (dist <= warnBound) warning++;
+      else {
+        reject++;
+        // En çok sapma olan ekseni say
+        const absDx = Math.abs(dx), absDy = Math.abs(dy), absDz = Math.abs(dz);
+        if (absDx >= absDy && absDx >= absDz) axisRejects.coupling++;
+        else if (absDy >= absDz) axisRejects.cohesion++;
+        else axisRejects.instability++;
+      }
     });
+    const total = pass + warning + reject;
+    const passPct = (pass/total*100).toFixed(0);
+    const warnPct = (warning/total*100).toFixed(0);
+    const rejPct = (reject/total*100).toFixed(0);
     preview.innerHTML = `
       <div style="font-size:13px;margin-bottom:10px;">
-        <span style="color:#3fb950;">${pass} nodes pass</span> ·
-        <span style="color:#f85149;">${fail} nodes would be rejected</span>
-        (θ_bound = ${thetaBound.toFixed(2)})
+        <span style="color:#3fb950;">${pass} pass</span> ·
+        <span style="color:#d29922;">${warning} warning</span> ·
+        <span style="color:#f85149;">${reject} reject</span>
+        (θ≤${thetaBound.toFixed(2)} pass, ≤${warnBound.toFixed(2)} warn)
       </div>
-      <div style="height:8px;border-radius:4px;background:#21262d;overflow:hidden;">
-        <div style="height:100%;width:${pass/(pass+fail)*100}%;background:#3fb950;border-radius:4px;"></div>
+      <div style="height:10px;border-radius:4px;background:#21262d;overflow:hidden;display:flex;">
+        <div style="height:100%;width:${passPct}%;background:#3fb950;"></div>
+        <div style="height:100%;width:${warnPct}%;background:#d29922;"></div>
+        <div style="height:100%;width:${rejPct}%;background:#f85149;"></div>
       </div>
+      ${reject > 0 ? `
+      <div style="font-size:11px;color:#8b949e;margin-top:10px;">Rejected by worst axis:</div>
+      <div style="font-size:11px;margin-top:4px;">
+        <span style="color:#f85149;">coupling ${axisRejects.coupling}</span> ·
+        <span style="color:#f85149;">cohesion ${axisRejects.cohesion}</span> ·
+        <span style="color:#f85149;">instability ${axisRejects.instability}</span>
+      </div>` : ''}
       <div style="font-size:11px;color:#8b949e;margin-top:8px;">
         Vision: x=${fmt('x')} y=${fmt('y')} z=${fmt('z')} w=${fmt('w')} v=${fmt('v')} |
         θ_bound=${fmt('theta_bound')} quorum=${fmt('theta_quorum')} min_approvers=${fmt('min_approvers')}
