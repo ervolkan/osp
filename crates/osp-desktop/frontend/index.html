@@ -776,6 +776,20 @@ function render() {
 // ═══ Node Inspector ═══
 let selectedNodeId = null;
 
+// Mimari rol badge'i — role-aware vision'da hangi hedef vector'un uygulandığını göster.
+function roleBadge(role) {
+  const desc = {
+    TypeSurface: 'declaration/type surface · coupling relaxed',
+    Core: 'domain core · instability expected low',
+    Adapter: 'integration boundary · instability tolerated',
+    Utility: 'leaf helper · low coupling expected',
+    Runtime: 'implementation · global vision',
+    Support: 'test/fixture/migration · advisory mode',
+  };
+  const d = desc[role] || 'global vision';
+  return `${role} <span style="color:#8b949e;font-weight:400;">(${d})</span>`;
+}
+
 // Cohesion source/confidence rozeti — placeholder cohesion (0.5, SCIP yok) ile
 // gerçek SCIP cohesion'ı ayırt et. Değerlendirmenin "bu kadar çok dosyanın
 // cohesion'ı gerçekten 0.5 mi?" sorusunu yanıtlar: hayır, placeholder.
@@ -829,6 +843,9 @@ function showNodeInspector(d) {
   // Classification: dosya rolü (test/production/migration/...).
   // Eski snapshot'lar classification taşımaz → "Unknown".
   const cls = d.classification || 'Unknown';
+  // Mimari rol (TypeSurface/Core/Adapter/Utility/Runtime/Support) —
+  // role-aware vision için. Eski snapshot'lar → "Runtime".
+  const role = d.role || 'Runtime';
   // Advisory: bu node türlerinde yüksek instability / incoming=0 doğaldır →
   // vision fail'i kırmızı risk yerine sarı uyarı olarak göster.
   const advisoryTypes = ['Test', 'Fixture', 'Migration', 'Generated', 'Script'];
@@ -888,6 +905,7 @@ function showNodeInspector(d) {
   el.innerHTML = `
     <div class="metric"><span class="label">Node ID</span><span class="value">#${d.id}</span></div>
     <div class="metric"><span class="label">Classification</span><span class="value" style="color:${badgeColor};font-weight:600;">${cls}</span></div>
+    <div class="metric"><span class="label">Detected role</span><span class="value" style="color:#58a6ff;font-size:12px;">${roleBadge(role)}</span></div>
     <div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">Kind</span><span class="value">${d.kind}</span></div>
     <div class="metric"><span class="label">Mass (LOC)</span><span class="value">${d.mass}</span></div>
     ${d.path ? `<div class="metric" style="font-size:11px;word-break:break-all;"><span class="label">Path</span><span class="value">${d.path}</span></div>` : ''}

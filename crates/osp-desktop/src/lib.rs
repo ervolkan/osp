@@ -35,6 +35,10 @@ pub struct NodeJson {
     /// vision uyarıları için. Eski snapshot'lar "Unknown" default ile deserialize olur.
     #[serde(default)]
     pub classification: String,
+    /// Mimari rol (TypeSurface/Core/Adapter/Utility/Runtime/Support) —
+    /// role-aware vision için. Eski snapshot'lar "Runtime" default.
+    #[serde(default)]
+    pub role: String,
     /// Cohesion değeri nereden geldi: "scip" / "placeholder" / "heuristic".
     /// UI, placeholder cohesion (0.5) gerçek cohesion'dan ayırt etmek için kullanır.
     #[serde(default)]
@@ -148,6 +152,7 @@ pub fn cmd_analyze_repo(
                 instability: metrics.map(|m| m.instability.value),
                 path: result.node_paths.get(&n.id).cloned(),
                 classification: format!("{:?}", n.classification),
+                role: format!("{:?}", n.role),
                 scip_class_count: sem.map(|s| s.class_count).unwrap_or(0),
                 scip_method_count: sem.map(|s| s.method_count).unwrap_or(0),
                 scip_field_count: sem.map(|s| s.field_count).unwrap_or(0),
@@ -667,6 +672,7 @@ mod tests {
             instability: Some(0.5),
             path: Some("src/main.py".to_string()),
             classification: "Production".to_string(),
+            role: "Runtime".to_string(),
             scip_class_count: 3,
             scip_method_count: 12,
             scip_field_count: 8,

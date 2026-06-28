@@ -45,6 +45,9 @@ pub struct EngineConfig {
     pub milestone_interval: u64,
     pub abstractness: f64,
     pub merge_ratio_observable: f64,
+    /// Role-aware vision overrides (role → x/y/z override). Boşsa global vision.
+    /// Engine, claim'in temsil ettiği node'un rolüne göre vision seçer.
+    pub role_overrides: std::collections::HashMap<String, crate::vision_config::RoleVisionOverride>,
 }
 
 impl EngineConfig {
@@ -56,6 +59,7 @@ impl EngineConfig {
             milestone_interval: config.milestone_interval(),
             abstractness: config.abstractness(),
             merge_ratio_observable: config.merge_ratio_observable(),
+            role_overrides: config.role_overrides.clone(),
         }
     }
 
@@ -70,6 +74,7 @@ impl EngineConfig {
             milestone_interval: 1000,
             abstractness: 0.5,
             merge_ratio_observable: 0.10,
+            role_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -406,8 +411,15 @@ impl SpaceEngine {
 
     /// Q5 Vision Gate — `θ(claim.computed_raw, vision) > theta_bound` → Err.
     /// Claim negatif-uzayda ise ana dala GİREMEZ (BFT-derived Safety, §4.1).
+    ///
+    /// **Role-aware:** Claim'in temsil ettiği node'un mimari rolüne göre vision
+    /// vector seçilir (override varsa). Örn: bir TypeSurface node'u için coupling
+    /// düşük beklenir — global vision'a göre fail etmemeli. Rol, claim'in ilk
+    /// delta_node'unun classification'ından çıkarılır (çoğu claim tek node ekler).
     fn check_claim_vision(&self, claim: &Claim) -> Result<(), EngineCommitError> {
-        let theta = CosineDeviation.theta(&claim.computed_raw, &self.vision, &self.space);
+        // Role-aware vision: claim'in node'undan rol çıkar, override uygula.
+        let vision = self.vision_for_claim(claim);
+        let theta = CosineDeviation.theta(&claim.computed_raw, &vision, &self.space);
         if theta > self.config.theta_bound {
             tracing::warn!(
                 claim_id = claim.id,
@@ -425,6 +437,30 @@ impl SpaceEngine {
             });
         }
         Ok(())
+    }
+
+    /// Claim'in temsil ettiği node'un rolüne göre vision vector seç.
+    /// Override yoksa global `self.vision` döner.
+    fn vision_for_claim(&self, claim: &Claim) -> VisionVector {
+        use crate::space::{infer_role, NodeRole};
+        // İlk delta_node'un classification'ından rol çıkar (path/metric olmadan
+        // classification-only — engine path bilmez, sadece node classification).
+        if let Some(node) = claim.delta_nodes.first() {
+            let role = infer_role("", node.classification, None);
+            if let NodeRole::Runtime = role {
+                return self.vision; // default → global
+            }
+            // Role override varsa uygula
+            let key = format!("{:?}", role);
+            if let Some(ovr) = self.config.role_overrides.get(&key) {
+                let mut raw = *self.vision.raw();
+                if let Some(x) = ovr.x { raw.x = x; }
+                if let Some(y) = ovr.y { raw.y = y; }
+                if let Some(z) = ovr.z { raw.z = z; }
+                return VisionVector::new(raw);
+            }
+        }
+        self.vision
     }
 
     /// Q6 Rule Gate — ΔS herhangi bir Rule'u ihlal ediyor mu?

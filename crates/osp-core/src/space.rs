@@ -180,6 +180,108 @@ pub fn classify_path(path: &str) -> NodeClassification {
     NodeClassification::Production
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// NodeRole — mimari rol (classification + metric shape'tan çıkarılır)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Bir node'un mimari rolü — `NodeClassification`'tan daha ince taneli.
+///
+/// Classification dosya *rolünü* söyler (test/production/migration); Role ise
+/// mimari *şeklini* söyler (type surface, core, adapter, utility). Aynı
+/// classification içinde farklı roller olabilir: bir `Production` dosyası
+/// TypeSurface (.d.ts), Core (domain), Adapter (integration) veya Utility
+/// (leaf helper) olabilir.
+///
+/// Role-aware vision her role için ayrı hedef vector kullanır — örn. TypeSurface
+/// için coupling düşük beklenir (declaration = runtime deps yok), Core için
+/// instability düşük beklenir (stable foundation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum NodeRole {
+    /// Declaration/type surface — .d.ts, types/, interfaces (coupling low, cohesion high).
+    TypeSurface,
+    /// Domain core — business logic, stable foundation (instability low, cohesion high).
+    Core,
+    /// Integration boundary — adapters, API clients (instability high olabilir).
+    Adapter,
+    /// Leaf utility — helpers, low coupling, low incoming.
+    Utility,
+    /// Runtime implementation — default Production behavior.
+    #[default]
+    Runtime,
+    /// Test/fixture/migration/generated — classification'tan inherit, advisory vision.
+    Support,
+}
+
+/// Bir node'un mimari rolünü classification + path + metric shape'tan çıkar.
+///
+/// Heuristic kurallar (en spesifikten en genele):
+/// - `.d.ts`, `types/`, `declarations/`, `interfaces/` → TypeSurface
+/// - Support classification (Test/Fixture/Migration/Generated/Config/Script) → Support
+/// - High mass + high incoming + low instability → Core (foundation)
+/// - High outgoing + low incoming → Adapter (integration boundary)
+/// - Low mass + low coupling → Utility (leaf helper)
+/// - gerisi → Runtime (default Production)
+///
+/// `metrics` opsiyonel — yoksa sadece path/classification'a dayanır.
+pub fn infer_role(
+    path: &str,
+    classification: NodeClassification,
+    metrics: Option<RoleMetrics>,
+) -> NodeRole {
+    use NodeClassification as C;
+    use NodeRole as R;
+
+    let p = path.replace('\\', "/");
+    let lower = p.to_lowercase();
+    let base = lower.rsplit('/').next().unwrap_or(&lower);
+
+    // TypeSurface — en spesifik (declaration dosyaları)
+    if base.ends_with(".d.ts")
+        || lower.contains("/types/")
+        || lower.contains("/declarations/")
+        || lower.contains("/interfaces/")
+        || lower.contains("/typings/")
+    {
+        return R::TypeSurface;
+    }
+
+    // Support — test/fixture/migration/generated/config/script direkt inherit
+    match classification {
+        C::Test | C::Fixture | C::Migration | C::Generated | C::Config | C::Script => {
+            return R::Support;
+        }
+        _ => {}
+    }
+
+    // Metric shape'e dayalı rol çıkarımı (varsa)
+    if let Some(m) = metrics {
+        // Core: high incoming (başka modüller buna bağlı) + stable (low instability)
+        if m.incoming >= 5.0 && m.instability <= 0.3 {
+            return R::Core;
+        }
+        // Adapter: high outgoing (çok şey import ediyor) + low incoming
+        if m.outgoing >= 3.0 && m.incoming <= 1.0 {
+            return R::Adapter;
+        }
+        // Utility: small + low coupling
+        if m.mass <= 100.0 && m.outgoing <= 1.0 {
+            return R::Utility;
+        }
+    }
+
+    R::Runtime
+}
+
+/// Role çıkarımı için gerekli metric özeti (coupling/incoming/outgoing/mass).
+/// infer_role'e opsiyonel olarak verilir — yoksa sadece path/classification'a bakar.
+#[derive(Debug, Clone, Default)]
+pub struct RoleMetrics {
+    pub mass: f64,
+    pub outgoing: f64,
+    pub incoming: f64,
+    pub instability: f64,
+}
+
 /// Tipleşmiş kenar türleri (OSP-formalism.md §1.3).
 ///
 /// Klasik yazılım grafindan (yalnız `DependsOn`) farklı olarak OSP'de epistemolojik
@@ -227,6 +329,11 @@ pub struct Node {
     /// Eski snapshot'lar `Unknown` default ile deserialize olur.
     #[serde(default)]
     pub classification: NodeClassification,
+    /// Mimari rol (TypeSurface/Core/Adapter/Utility/Runtime/Support) —
+    /// classification + metric shape'tan çıkarılır. Role-aware vision için.
+    /// Eski snapshot'lar `Runtime` default ile deserialize olur.
+    #[serde(default)]
+    pub role: NodeRole,
 }
 
 /// Tipleşmiş yönlü kenar (OSP-formalism.md §1.3).

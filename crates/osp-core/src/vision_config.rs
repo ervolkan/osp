@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::coords::RawPosition;
+use crate::space::NodeRole;
 use crate::vision::VisionVector;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -64,6 +65,11 @@ pub struct VisionConfig {
     pub thresholds: VisionThresholdsConfig,
     #[serde(default)]
     pub diagnostics: VisionDiagnosticsConfig,
+    /// Role-aware vision overrides: her mimari rol için ayrı (x,y,z) hedefi.
+    /// Olmayan roller global `[raw]` default'a düşer. Değerlendirmenin
+    /// "3114 false-reject" sorununu çözer — TypeSurface için coupling düşük vb.
+    #[serde(default)]
+    pub role_overrides: std::collections::HashMap<String, RoleVisionOverride>,
 }
 
 /// `[raw]` — vizyon pozisyonu (zorunlu). Değerler [0,1] validate edilir.
@@ -74,6 +80,20 @@ pub struct VisionRawConfig {
     pub z: f64, // instability (Martin I saf)
     pub w: f64, // entropy
     pub v: f64, // witness-depth
+}
+
+/// `[role_overrides.<Role>]` — belirli bir mimari rol için vision override.
+///
+/// Sadece x/y/z (coupling/cohesion/instability) override edilir; w/v global'den
+/// inherit edilir. Olmayan alanlar global `[raw]` default'a düşer.
+#[derive(Debug, Clone, serde::Deserialize, PartialEq)]
+pub struct RoleVisionOverride {
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub z: Option<f64>,
 }
 
 /// `[policies]` — şahitlik politikaları (opsiyonel, default'lu).
@@ -175,6 +195,32 @@ impl VisionConfig {
             w: self.raw.w,
             v: self.raw.v,
         })
+    }
+
+    /// → role-specific `VisionVector`. Override varsa x/y/z onu kullanır,
+    /// yoksa (veya alan None ise) global `[raw]` default. w/v her zaman global.
+    ///
+    /// Bu, değerlendirmenin "her rol için ayrı vision vector" önerisini formal
+    /// model seviyesinde uygular. Örn: TypeSurface için coupling=0.05 (declaration
+    /// dosyasında runtime deps beklenmez), Core için instability=0.20 (stable).
+    pub fn role_vision(&self, role: NodeRole) -> VisionVector {
+        let key = format!("{:?}", role);
+        let global = self.to_vision_vector();
+        match self.role_overrides.get(&key) {
+            Some(ovr) => VisionVector::new(RawPosition {
+                x: ovr.x.unwrap_or(self.raw.x),
+                y: ovr.y.unwrap_or(self.raw.y),
+                z: ovr.z.unwrap_or(self.raw.z),
+                w: self.raw.w,
+                v: self.raw.v,
+            }),
+            None => global,
+        }
+    }
+
+    /// Bir role için override tanımlı mı?
+    pub fn has_role_override(&self, role: NodeRole) -> bool {
+        self.role_overrides.contains_key(&format!("{:?}", role))
     }
 
     /// EngineConfig henüz tanımlı değil (Faz 2.5 `engine.rs`).

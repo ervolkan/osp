@@ -77,19 +77,25 @@ pub fn analyze_repo_with_config(
     let mut diagnostics = Vec::new();
 
     for (i, fd) in file_data.iter().enumerate() {
-        // Classification: path'ten dosya rolü çıkar (test/production/migration/...).
+        // Classification + Role: path'ten dosya rolü ve mimari rol çıkar.
         // Context-aware mimari yorum için — örn. test dosyasında yüksek instability
-        // normaldir ve "risk" olarak işaretlenmemelidir.
+        // normaldir; TypeSurface (.d.ts) için coupling düşük beklenir.
         let rel_path = fd
             .path
             .strip_prefix(&repo)
             .map(|r| r.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| fd.path.to_string_lossy().replace('\\', "/"));
+        let classification = osp_core::space::classify_path(&rel_path);
+        // Role: ilk geçişte metric olmadan (path + classification). TypeSurface ve
+        // Support path/classification'dan çıkar; Core/Adapter/Utility metric ister
+        // ama metric-bazlı röfiniş edges sonrası ikinci geçişle yapılabilir.
+        let role = osp_core::space::infer_role(&rel_path, classification, None);
         space.insert_node(CoreNode {
             id: i as NodeId,
             kind: NodeKind::Module,
             mass: fd.loc as f64,
-            classification: osp_core::space::classify_path(&rel_path),
+            classification,
+            role,
             ..Default::default()
         });
         node_map.insert(fd.path.clone(), i as NodeId);
