@@ -125,12 +125,21 @@ pub fn walk_class_defs(
         let is_class_def = k == "class_definition"        // Python
             || k == "class_declaration"                     // JS/TS
             || k == "abstract_class_declaration"            // TS abstract
+            || k == "interface_declaration"                 // TS/JS interface (abstract — Martin)
+            || k == "type_alias_declaration"                // TS type alias (abstract surface)
             || k == "struct_item"                           // Rust concrete
             || k == "trait_item"                            // Rust abstract (trait)
             || k == "enum_item"                             // Rust concrete (enum)
             || k == "type_declaration";                     // Go
+        // TS interface/type_alias abstract sayılır (Martin: interface = abstract contract).
+        // extract_class_def abstract_patterns'e bakar ama biz bu node kind'lerini
+        // doğrudan abstract işaretliyoruz — TS adapter'da pattern gerekmez.
+        let force_abstract = k == "interface_declaration" || k == "type_alias_declaration";
         if is_class_def {
-            if let Some(def) = extract_class_def(&n, source_bytes, abstract_patterns) {
+            if let Some(mut def) = extract_class_def(&n, source_bytes, abstract_patterns) {
+                if force_abstract {
+                    def.is_abstract = true;
+                }
                 defs.push(def);
             }
         }

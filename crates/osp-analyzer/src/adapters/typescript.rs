@@ -108,6 +108,29 @@ mod tests {
     }
 
     #[test]
+    fn ts_interface_counted_as_abstract() {
+        // Regression: değerlendirme Svelte'de Abstractness=0.0 gördü. Kök neden
+        // walk_class_defs'in interface_declaration node kind'ini tanımamasıydı.
+        // Interface'ler Martin tanımına göre abstract sayılır (abstract contract).
+        let src = "interface Animal { speak(): void; }\nclass Dog implements Animal { speak() {} }\n";
+        let adapter = TypeScriptAdapter;
+        let defs = adapter.extract_class_defs(src);
+        assert!(defs.iter().any(|d| d.is_abstract), "Animal interface should be abstract");
+        assert!(defs.iter().any(|d| !d.is_abstract), "Dog class should be concrete");
+        // 2 def beklenir (interface + class), ikisi de sayılmalı
+        assert_eq!(defs.len(), 2, "interface + class both counted");
+    }
+
+    #[test]
+    fn ts_type_alias_counted_as_abstract() {
+        // type alias da abstract surface — declaration dosyalarında yoğun.
+        let src = "type Status = 'active' | 'inactive';\nclass Service { status: Status; }\n";
+        let adapter = TypeScriptAdapter;
+        let defs = adapter.extract_class_defs(src);
+        assert!(defs.iter().any(|d| d.is_abstract), "type alias should be abstract");
+    }
+
+    #[test]
     fn ts_resolve_relative_internal() {
         let repo = RepoContext::new(
             PathBuf::from("/repo"),

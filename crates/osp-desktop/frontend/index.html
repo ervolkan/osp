@@ -705,10 +705,16 @@ function renderSidebar(data) {
   const scipBadge = scipActive
     ? `<span style="color:#3fb950;font-weight:600;">● ACTIVE</span>`
     : `<span style="color:#f85149;font-weight:600;">○ inactive</span>`;
+  // Abstractness confidence: düşük SCIP coverage'da tree-sitter abstractness
+  // güvenilir ama cohesion değil — burada coverage-based confidence göster.
+  const absConf = m.abstractness_confidence ?? 1.0;
+  const absConfBadge = absConf >= 0.7 ? `<span style="color:#3fb950;font-size:10px;">● full</span>`
+    : absConf >= 0.3 ? `<span style="color:#d29922;font-size:10px;">● partial</span>`
+    : `<span style="color:#f85149;font-size:10px;">● low</span>`;
   document.getElementById('repoMetrics').innerHTML = `
     <div class="metric"><span class="label">Modules</span><span class="value">${data.module_count}</span></div>
     <div class="metric"><span class="label">Edges</span><span class="value">${data.space.edges.length}</span></div>
-    <div class="metric"><span class="label">Abstractness</span><span class="value">${m.abstractness.toFixed(3)}</span></div>
+    <div class="metric"><span class="label">Abstractness</span><span class="value">${m.abstractness.toFixed(3)} ${absConfBadge}</span></div>
     <div class="metric"><span class="label">Main-seq dist</span><span class="value">${m.main_sequence_distance.toFixed(3)}</span></div>`;
   document.getElementById('scipInfo').innerHTML = `
     <div class="metric"><span class="label">SCIP status</span><span class="value">${scipBadge}</span></div>
@@ -760,7 +766,8 @@ function render() {
     .attr('r',d=>size(d.mass)).attr('fill',d=>{const v=getVal(d,colorKey);return color(v!=null?v:0.5);})
     .attr('stroke',d=>d.id===selectedNodeId?'#58a6ff':"#30363d")
     .attr('stroke-width',d=>d.id===selectedNodeId?3:1)
-    .attr('opacity',0.85).style('cursor','pointer')
+    .attr('fill-opacity',d=>(d.cohesion_source==='placeholder'||d.cohesion_source==='heuristic')?0.35:0.85)
+    .style('cursor','pointer')
     .on('mouseover',(e,d)=>{tt.style('opacity',1).html(`<b>Node ${d.id}</b><br>kind: ${d.kind}<br>mass: ${d.mass}<br>coupling: ${d.coupling!=null?d.coupling.toFixed(3):'—'}<br>cohesion: ${d.cohesion!=null?d.cohesion.toFixed(3):'—'}<br>instability: ${d.instability!=null?d.instability.toFixed(3):'—'}`).style('left',(e.clientX+14)+'px').style('top',(e.clientY-10)+'px');})
     .on('mouseout',()=>tt.style('opacity',0))
     .on('click',(e,d)=>{selectedNodeId=d.id; render(); showNodeInspector(d);});
@@ -768,6 +775,26 @@ function render() {
 
 // ═══ Node Inspector ═══
 let selectedNodeId = null;
+
+// Cohesion source/confidence rozeti — placeholder cohesion (0.5, SCIP yok) ile
+// gerçek SCIP cohesion'ı ayırt et. Değerlendirmenin "bu kadar çok dosyanın
+// cohesion'ı gerçekten 0.5 mi?" sorusunu yanıtlar: hayır, placeholder.
+function cohesionBadge(d) {
+  const src = d.cohesion_source;
+  if (!src) return '';
+  if (src === 'placeholder') {
+    return ` <span style="color:#8b949e;font-size:10px;" title="Cohesion ölçülemedi (SCIP yok) — 0.5 fallback değeri">⚠ placeholder</span>`;
+  }
+  if (src === 'heuristic') {
+    return ` <span style="color:#d29922;font-size:10px;" title="Approximate cohesion">~ heuristic</span>`;
+  }
+  if (src === 'scip') {
+    const conf = d.cohesion_confidence ?? 0;
+    const label = conf >= 0.7 ? 'high' : conf >= 0.3 ? 'partial' : 'low';
+    return ` <span style="color:#3fb950;font-size:10px;" title="SCIP LCOM4, confidence ${(conf*100).toFixed(0)}%">● ${label}</span>`;
+  }
+  return '';
+}
 
 // SCIP semantic özeti — bu dosyada kaç class/method/field var?
 // class_count > 0 iken göster; yoksa "no SCIP data" (dosya indekslenmemiş
@@ -866,7 +893,7 @@ function showNodeInspector(d) {
     ${d.path ? `<div class="metric" style="font-size:11px;word-break:break-all;"><span class="label">Path</span><span class="value">${d.path}</span></div>` : ''}
     <div style="margin-top:10px;font-size:12px;color:#8b949e;">OSP Coordinates</div>
     <div class="metric"><span class="label">x — Coupling</span><span class="value">${fmt(d.coupling)}</span></div>
-    <div class="metric"><span class="label">y — Cohesion</span><span class="value">${fmt(d.cohesion)}</span></div>
+    <div class="metric"><span class="label">y — Cohesion</span><span class="value">${fmt(d.cohesion)}${cohesionBadge(d)}</span></div>
     <div class="metric"><span class="label">z — Instability</span><span class="value">${fmt(d.instability)}</span></div>
     <div style="margin-top:10px;font-size:12px;color:#8b949e;">SCIP Semantics</div>
     ${renderScipSemantics(d)}

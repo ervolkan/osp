@@ -35,6 +35,13 @@ pub struct NodeJson {
     /// vision uyarıları için. Eski snapshot'lar "Unknown" default ile deserialize olur.
     #[serde(default)]
     pub classification: String,
+    /// Cohesion değeri nereden geldi: "scip" / "placeholder" / "heuristic".
+    /// UI, placeholder cohesion (0.5) gerçek cohesion'dan ayırt etmek için kullanır.
+    #[serde(default)]
+    pub cohesion_source: Option<String>,
+    /// Cohesion confidence ∈ [0,1] (0.95 × coverage × stale_penalty veya 0.0 placeholder).
+    #[serde(default)]
+    pub cohesion_confidence: Option<f64>,
     /// SCIP semantic: bu dosyada tanımlı class sayısı (0 = SCIP yok/indekslenmemiş).
     #[serde(default)]
     pub scip_class_count: usize,
@@ -67,6 +74,9 @@ pub struct AnalysisResultJson {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RepoMetricsJson {
     pub abstractness: f64,
+    /// Abstractness confidence ∈ [0,1] — düşük SCIP coverage'da değer güvenilmez.
+    #[serde(default)]
+    pub abstractness_confidence: f64,
     pub main_sequence_distance: f64,
 }
 
@@ -118,12 +128,23 @@ pub fn cmd_analyze_repo(
         .map(|n| {
             let metrics = result.module_metrics.get(&n.id);
             let sem = result.node_semantics.get(&n.id);
+            // Cohesion: node.cohesion (SCIP direkt) veya module_metrics'ten.
+            // Source/confidence module_metrics'ten gelir (node.cohesion sadece değer taşır).
+            let (cohesion_val, cohesion_src, cohesion_conf) = if let Some(m) = metrics {
+                (Some(m.cohesion.value),
+                 Some(format!("{:?}", m.cohesion.source).to_lowercase()),
+                 Some(m.cohesion.confidence))
+            } else {
+                (n.cohesion, None, None)
+            };
             NodeJson {
                 id: n.id,
                 kind: format!("{:?}", n.kind),
                 mass: n.mass,
                 coupling: metrics.map(|m| m.coupling.value),
-                cohesion: n.cohesion.or_else(|| metrics.map(|m| m.cohesion.value)),
+                cohesion: cohesion_val,
+                cohesion_source: cohesion_src,
+                cohesion_confidence: cohesion_conf,
                 instability: metrics.map(|m| m.instability.value),
                 path: result.node_paths.get(&n.id).cloned(),
                 classification: format!("{:?}", n.classification),
@@ -152,6 +173,7 @@ pub fn cmd_analyze_repo(
         space: SpaceJson { nodes, edges },
         repo_metrics: RepoMetricsJson {
             abstractness: result.repo_metrics.abstractness.value,
+            abstractness_confidence: result.repo_metrics.abstractness.confidence,
             main_sequence_distance: result.repo_metrics.main_sequence_distance.value,
         },
         semantic_coverage: SemanticCoverageJson {
@@ -640,6 +662,8 @@ mod tests {
             mass: 100.0,
             coupling: Some(0.3),
             cohesion: Some(0.7),
+            cohesion_source: Some("scip".to_string()),
+            cohesion_confidence: Some(0.85),
             instability: Some(0.5),
             path: Some("src/main.py".to_string()),
             classification: "Production".to_string(),
@@ -652,6 +676,7 @@ mod tests {
         assert!(json.contains("\"path\":\"src/main.py\""), "path field in JSON");
         assert!(json.contains("\"classification\":\"Production\""), "classification field");
         assert!(json.contains("\"scip_class_count\":3"), "scip_class_count field");
+        assert!(json.contains("\"cohesion_source\":\"scip\""), "cohesion_source field");
         assert!(json.contains("\"scip_method_count\":12"), "scip_method_count field");
         // Round-trip
         let back: NodeJson = serde_json::from_str(&json).expect("deserialize");
