@@ -52,6 +52,23 @@ fn handle_request(mut request: tiny_http::Request) {
             respond_json(request, &osp_desktop::cmd_get_vision_config());
         }
 
+        (Method::Post, "/api/detect-scip") => {
+            let mut content = String::new();
+            request.as_reader().read_to_string(&mut content).ok();
+            let req: Value = match serde_json::from_str(&content) {
+                Ok(v) => v,
+                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+            };
+            let repo = req["repo_path"].as_str().unwrap_or("");
+            if repo.is_empty() {
+                respond_error(request, 400, "repo_path is required");
+            } else {
+                // cmd_detect_scip → {"scip_path": "..."} veya {"scip_path": null}
+                let scip_path = osp_desktop::cmd_detect_scip(repo);
+                let resp = serde_json::json!({ "scip_path": scip_path });
+                respond_json(request, &resp);
+            }
+        }
         (Method::Post, "/api/stats") => {
             let mut content = String::new();
             request.as_reader().read_to_string(&mut content).ok();

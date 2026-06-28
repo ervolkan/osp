@@ -115,8 +115,9 @@
 </div>
 
 <div class="toolbar">
-  <input type="text" id="repoPath" placeholder="/path/to/repository" value="">
-  <input type="text" id="scipPath" placeholder="SCIP index (optional)" value="">
+  <input type="text" id="repoPath" placeholder="/path/to/repository" value="" onchange="onRepoPathChange()">
+  <input type="text" id="scipPath" placeholder="SCIP index path (optional — enables LCOM4 cohesion)" value="">
+  <button onclick="showScipHelp()" style="font-size:12px;padding:6px 10px;">? SCIP</button>
   <button id="analyzeBtn" onclick="doAnalyze()">Analyze</button>
   <button id="snapshotSaveBtn" onclick="saveSnapshot()" disabled>Save Snapshot</button>
   <button id="snapshotLoadBtn" onclick="document.getElementById('snapshotFile').click()">Load Snapshot</button>
@@ -272,6 +273,65 @@ const setStatus = (cls, msg) => {
 };
 
 // ═══ Analyze ═══
+// Repo path değişince otomatik SCIP index tespit et.
+// Frontend dosya sistemine erişemediği için backend /api/detect-scip çağırır.
+// index.scip bulunursa SCIP Path kutusunu otomatik doldurur — "neden SCIP inactive?"
+// kafa karışıklığını önler. Kullanıcı manuel değiştirebilir veya silebilir.
+async function onRepoPathChange() {
+  const repoPath = document.getElementById('repoPath').value.trim();
+  if (!repoPath) return;
+  try {
+    const resp = await fetch('/api/detect-scip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_path: repoPath }),
+    });
+    const data = await resp.json();
+    if (data.scip_path) {
+      document.getElementById('scipPath').value = data.scip_path;
+      setStatus('success', `SCIP index detected: ${data.scip_path.split('/').pop()}`);
+    }
+  } catch (e) { /* sessiz geç — detection opsiyonel */ }
+}
+
+// SCIP help modalı — index üretme komutlarını göster (dile göre).
+// Kullanıcı "SCIP inactive" görünce buradan nasıl index üreteceğini öğrenir.
+function showScipHelp() {
+  const repoPath = document.getElementById('repoPath').value.trim() || '/path/to/repo';
+  const help = `
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;" onclick="if(event.target===this)this.remove()">
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:24px;max-width:720px;max-height:85vh;overflow:auto;color:#c9d1d9;">
+        <h3 style="margin-top:0;color:#58a6ff;">Generating a SCIP Index</h3>
+        <p style="color:#8b949e;font-size:13px;">A SCIP index adds semantic analysis (LCOM4 cohesion, class/method/field counts) on top of the structural tree-sitter graph. Generate one per language, then paste the path into the <b>SCIP index path</b> field.</p>
+
+        <h4 style="color:#3fb950;">Python (Docker)</h4>
+        <pre style="background:#0d1117;padding:10px;border-radius:4px;overflow-x:auto;font-size:12px;">docker run --rm -v ${repoPath}:/repo -w /repo \\
+  sourcegraph/scip-python:latest \\
+  /usr/local/bin/scip-python index . --output index.scip \\
+  --project-name myproject --project-version 1.0.0</pre>
+
+        <h4 style="color:#3fb950;">Rust (Docker, rust-analyzer)</h4>
+        <pre style="background:#0d1117;padding:10px;border-radius:4px;overflow-x:auto;font-size:12px;">docker run --rm -v ${repoPath}:/repo -w /repo \\
+  sourcegraph/scip-rust:latest \\
+  rust-analyzer scip . --output /repo/index.scip</pre>
+
+        <h4 style="color:#3fb950;">Go (Docker)</h4>
+        <pre style="background:#0d1117;padding:10px;border-radius:4px;overflow-x:auto;font-size:12px;">docker run --rm -v ${repoPath}:/repo -w /repo \\
+  sourcegraph/scip-go:latest \\
+  scip-go --output /repo/index.scip</pre>
+
+        <h4 style="color:#3fb950;">TypeScript / JavaScript (npm)</h4>
+        <pre style="background:#0d1117;padding:10px;border-radius:4px;overflow-x:auto;font-size:12px;">npm install -g @sourcegraph/scip-typescript
+cd ${repoPath}
+scip-typescript index --output index.scip --infer-tsconfig</pre>
+
+        <p style="color:#8b949e;font-size:12px;margin-top:16px;">After generating, the index file is <code>${repoPath}/index.scip</code>. If you already placed it there, OSP auto-detects it when you enter the repo path.</p>
+        <button onclick="this.closest('div[onclick]').remove()" style="margin-top:12px;padding:8px 16px;background:#238636;color:#fff;border:none;border-radius:6px;cursor:pointer;">Close</button>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', help);
+}
+
 async function doAnalyze() {
   const repoPath = document.getElementById('repoPath').value.trim();
   const scipPath = document.getElementById('scipPath').value.trim();

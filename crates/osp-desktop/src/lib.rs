@@ -82,6 +82,20 @@ pub struct SemanticCoverageJson {
 // Command: analyze_repo
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Bir repo için mevcut SCIP index'i tespit et (frontend otomatik-detect için).
+///
+/// Repo root'nda `index.scip` arar. Bulursa absolute path döndürür; bulamazsa
+/// `None`. Frontend, repo path girilince bunu çağırır ve SCIP Path kutusunu
+/// otomatik doldurur — kullanıcı "neden SCIP inactive?" kafa karışıklığını önler.
+pub fn cmd_detect_scip(repo_path: &str) -> Option<String> {
+    let candidate = Path::new(repo_path).join("index.scip");
+    if candidate.is_file() {
+        Some(candidate.to_string_lossy().replace('\\', "/"))
+    } else {
+        None
+    }
+}
+
 /// Bir reponun tam analizini yap → JSON (frontend için).
 ///
 /// `scip_path` verilirse gerçek LCOM4 cohesion; yoksa placeholder.
@@ -92,8 +106,7 @@ pub fn cmd_analyze_repo(
     let config = AnalysisConfig {
         scip_index: scip_path.map(PathBuf::from),
         ..Default::default()
-    };
-    let registry = AdapterRegistry::default_all();
+    };    let registry = AdapterRegistry::default_all();
     let result = analyze_repo_with_config(Path::new(repo_path), &registry, &config)
         .map_err(|e| e.to_string())?;
 
