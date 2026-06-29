@@ -23,7 +23,7 @@ use crate::agent::{PermissionMask, SyntaxViolation};
 use crate::bigbang::Delta;
 use crate::coords::{Position, RawPosition};
 use crate::persistence::{
-    DeltaRecord, PersistenceError, SNAPSHOT_FORMAT_VERSION, SpaceSnapshot, SnapshotStore,
+    DeltaRecord, PersistenceError, SnapshotStore, SpaceSnapshot, SNAPSHOT_FORMAT_VERSION,
 };
 use crate::rule::{Rule, RuleViolation};
 use crate::space::{EdgeKind, NodeId, Space};
@@ -115,10 +115,19 @@ pub struct GateResult {
 
 impl GateResult {
     pub fn passed(name: &'static str, detail: &str) -> Self {
-        Self { name, passed: true, detail: detail.to_string(), hallucination: None }
+        Self {
+            name,
+            passed: true,
+            detail: detail.to_string(),
+            hallucination: None,
+        }
     }
 
-    pub fn failed(name: &'static str, detail: &str, h: Option<crate::agent::HallucinationType>) -> Self {
+    pub fn failed(
+        name: &'static str,
+        detail: &str,
+        h: Option<crate::agent::HallucinationType>,
+    ) -> Self {
         Self {
             name,
             passed: false,
@@ -377,10 +386,7 @@ impl SpaceEngine {
                 return Err(EngineCommitError::SyntaxViolation {
                     violation: SyntaxViolation {
                         claim_id: claim.id,
-                        detail: format!(
-                            "self-import edge: node {} imports itself",
-                            edge.from
-                        ),
+                        detail: format!("self-import edge: node {} imports itself", edge.from),
                     },
                 });
             }
@@ -449,8 +455,8 @@ impl SpaceEngine {
     ///   - engine global vision (`self.vision`) → `self.vision.source()` inherit
     fn vision_for_claim(&self, claim: &Claim) -> VisionVector {
         use crate::space::infer_role;
-        use crate::vision_config::VisionConfig;
         use crate::vision::VisionSource;
+        use crate::vision_config::VisionConfig;
         // İlk delta_node'un classification'ından rol çıkar (path/metric olmadan
         // classification-only — engine path bilmez, sadece node classification).
         if let Some(node) = claim.delta_nodes.first() {
@@ -462,9 +468,15 @@ impl SpaceEngine {
             // Kullanıcı override'ı varsa o kazanır; yoksa builtin.
             if let Some(ovr) = user_override.clone().or(builtin_override.clone()) {
                 let mut raw_v = *self.vision.raw();
-                if let Some(x) = ovr.x { raw_v.x = x; }
-                if let Some(y) = ovr.y { raw_v.y = y; }
-                if let Some(z) = ovr.z { raw_v.z = z; }
+                if let Some(x) = ovr.x {
+                    raw_v.x = x;
+                }
+                if let Some(y) = ovr.y {
+                    raw_v.y = y;
+                }
+                if let Some(z) = ovr.z {
+                    raw_v.z = z;
+                }
                 // Source: kullanıcı override mı, builtin mi?
                 let source = if user_override.is_some() {
                     VisionSource::RoleProfile
@@ -610,11 +622,7 @@ impl SpaceEngine {
     ///
     /// Bu metod `commit()`'ten farklı olarak: hatada durmaz, tüm gate durumlarını raporlar.
     /// Frontend visualizer için tasarlandı.
-    pub fn check_all_gates(
-        &self,
-        claim: &Claim,
-        omega: &WitnessSet,
-    ) -> Vec<GateResult> {
+    pub fn check_all_gates(&self, claim: &Claim, omega: &WitnessSet) -> Vec<GateResult> {
         let mut results = vec![];
 
         // Q4 Syntax
@@ -657,11 +665,19 @@ impl SpaceEngine {
                     support: 0.0,
                     threshold: 1.5,
                 });
-                results.push(GateResult::failed("Q1-Q3 Witness", &format!("Hold: {:?}", reason), h));
+                results.push(GateResult::failed(
+                    "Q1-Q3 Witness",
+                    &format!("Hold: {:?}", reason),
+                    h,
+                ));
             }
             crate::witness::WitnessResult::Reject(reason) => {
                 let h = Some(crate::agent::HallucinationType::Witness { witness: 0 });
-                results.push(GateResult::failed("Q1-Q3 Witness", &format!("Reject: {:?}", reason), h));
+                results.push(GateResult::failed(
+                    "Q1-Q3 Witness",
+                    &format!("Reject: {:?}", reason),
+                    h,
+                ));
             }
         }
 
@@ -867,9 +883,16 @@ mod tests {
     fn commit_q5_aligned_claim_passes() {
         let mut engine = make_engine();
         // Claim aligned with vision → θ ≈ 0 → passes Q5
-        let good_claim = claim_with(100, RawPosition {
-            x: 0.5, y: 0.5, z: 0.5, w: 0.5, v: 0.5,
-        });
+        let good_claim = claim_with(
+            100,
+            RawPosition {
+                x: 0.5,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.5,
+            },
+        );
         let omega = two_witnesses();
 
         let result = engine.commit(&good_claim, &omega);
@@ -887,7 +910,9 @@ mod tests {
         let result = engine.commit(&claim, &omega);
         assert!(matches!(
             result,
-            Err(EngineCommitError::Witness(Reason::MinApproversNotMet { .. }))
+            Err(EngineCommitError::Witness(
+                Reason::MinApproversNotMet { .. }
+            ))
         ));
         assert_eq!(engine.space().node_count(), 0, "Hold → mutasyon yok");
     }
@@ -1172,7 +1197,7 @@ v = 0.5
     #[test]
     fn q4_allows_calls_self_loop() {
         // Calls self-loop (recursion) is valid — not Imports
-        let mut engine = make_engine();
+        let engine = make_engine();
         let claim = claim_with_delta(
             100,
             vec![Node {
@@ -1190,12 +1215,16 @@ v = 0.5
         );
         // Should pass Q4 (might fail Q5 if vision not aligned, but not Q4)
         let result = engine.check_claim_syntax(&claim);
-        assert!(result.is_ok(), "Calls self-loop should pass Q4: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Calls self-loop should pass Q4: {:?}",
+            result
+        );
     }
 
     #[test]
     fn q4_rejects_nan_computed_raw() {
-        let mut engine = make_engine();
+        let engine = make_engine();
         let mut claim = claim_with(100, CENTER);
         claim.computed_raw.x = f64::NAN;
         let result = engine.check_claim_syntax(&claim);
@@ -1226,7 +1255,7 @@ v = 0.5
 
     #[test]
     fn q6_rejects_self_import_via_default_rule() {
-        let mut engine = make_engine_with_rules();
+        let engine = make_engine_with_rules();
         let claim = claim_with_delta(
             100,
             vec![Node {
@@ -1281,7 +1310,7 @@ v = 0.5
 
     #[test]
     fn q6_allows_valid_claim_with_default_rules() {
-        let mut engine = make_engine_with_rules();
+        let engine = make_engine_with_rules();
         let claim = claim_with_delta(
             100,
             vec![
@@ -1319,7 +1348,11 @@ v = 0.5
             WitnessDepthAxis::from_witness(0.3, 5),
         );
         let vision = VisionVector::new(RawPosition {
-            x: 0.5, y: 0.5, z: 0.5, w: 0.5, v: 0.5,
+            x: 0.5,
+            y: 0.5,
+            z: 0.5,
+            w: 0.5,
+            v: 0.5,
         });
         SpaceEngine::new(Space::new(), cs, vision, EngineConfig::default_calibrated())
     }
@@ -1328,12 +1361,16 @@ v = 0.5
     fn compute_raw_empty_delta_returns_default() {
         let engine = make_engine();
         let raw = engine.compute_raw_from_delta(&[], &[]);
-        assert_eq!(raw, RawPosition::default(), "empty delta → default position");
+        assert_eq!(
+            raw,
+            RawPosition::default(),
+            "empty delta → default position"
+        );
     }
 
     #[test]
     fn compute_raw_does_not_mutate_real_space() {
-        let mut engine = make_engine();
+        let engine = make_engine();
         let initial_count = engine.space().node_count();
 
         let nodes = vec![Node {
@@ -1362,9 +1399,17 @@ v = 0.5
         }];
         let raw = engine.compute_raw_from_delta(&nodes, &[]);
         // Isolated node: coupling = out_degree / (1 + out_degree) = 0 / 1 = 0
-        assert!((raw.x - 0.0).abs() < 1e-9, "isolated node coupling should be 0, got {}", raw.x);
+        assert!(
+            (raw.x - 0.0).abs() < 1e-9,
+            "isolated node coupling should be 0, got {}",
+            raw.x
+        );
         // Isolated node: Ce=Ca=0 → instability = 0.5 (convention)
-        assert!((raw.z - 0.5).abs() < 1e-9, "isolated node instability should be 0.5, got {}", raw.z);
+        assert!(
+            (raw.z - 0.5).abs() < 1e-9,
+            "isolated node instability should be 0.5, got {}",
+            raw.z
+        );
     }
 
     #[test]
@@ -1372,10 +1417,25 @@ v = 0.5
         let engine = make_engine_full();
         // Two nodes + one import edge: node 1 imports node 2
         let nodes = vec![
-            Node { id: 1, kind: NodeKind::Module, mass: 10.0, ..Default::default() },
-            Node { id: 2, kind: NodeKind::Module, mass: 10.0, ..Default::default() },
+            Node {
+                id: 1,
+                kind: NodeKind::Module,
+                mass: 10.0,
+                ..Default::default()
+            },
+            Node {
+                id: 2,
+                kind: NodeKind::Module,
+                mass: 10.0,
+                ..Default::default()
+            },
         ];
-        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() }];
+        let edges = vec![Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        }];
 
         let raw = engine.compute_raw_from_delta(&nodes, &edges);
 
@@ -1393,10 +1453,25 @@ v = 0.5
     fn compute_raw_is_mass_weighted() {
         let engine = make_engine_full();
         let nodes = vec![
-            Node { id: 1, kind: NodeKind::Module, mass: 100.0, ..Default::default() },
-            Node { id: 2, kind: NodeKind::Module, mass: 1.0, ..Default::default() },
+            Node {
+                id: 1,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                ..Default::default()
+            },
+            Node {
+                id: 2,
+                kind: NodeKind::Module,
+                mass: 1.0,
+                ..Default::default()
+            },
         ];
-        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() }];
+        let edges = vec![Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        }];
 
         let raw = engine.compute_raw_from_delta(&nodes, &edges);
         let expected = 100.0 * 0.5 / 101.0;

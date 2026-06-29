@@ -27,7 +27,9 @@ pub type EvidenceSource = String;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Şahit türü. Ağırlık = güven seviyesi.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum WitnessKind {
     /// `git rev-list --merges` — kriptografik (imzalı merge). En güçlü.
     #[default]
@@ -126,7 +128,8 @@ impl WitnessSet {
     /// `CanonicalWitnessSet`'te, o da sadece bu metodla oluşur.
     pub fn canonicalize_for(&self, author: AgentId) -> CanonicalWitnessSet {
         use std::collections::HashMap;
-        let mut deduped: HashMap<(EvidenceSource, AgentId, ClaimId), EvidenceEvent> = HashMap::new();
+        let mut deduped: HashMap<(EvidenceSource, AgentId, ClaimId), EvidenceEvent> =
+            HashMap::new();
         for e in &self.events {
             if e.actor == author {
                 continue; // inv #1 — author witness rejection
@@ -349,7 +352,11 @@ pub fn evaluate(claim: &Claim, omega: &WitnessSet) -> WitnessResult {
 ///
 /// Faz 1.10 re-spike'ta `osp-spike` `WitnessProfile`'ından beslenir. `locally_observable=false`
 /// (`squash/rebase + trailersız`) → `UnobservableLocally` (`Unwitnessed` ile karıştırma).
-pub fn classify_status(support: f64, quorum_threshold: f64, locally_observable: bool) -> WitnessStatus {
+pub fn classify_status(
+    support: f64,
+    quorum_threshold: f64,
+    locally_observable: bool,
+) -> WitnessStatus {
     if !locally_observable {
         WitnessStatus::UnobservableLocally
     } else if support >= quorum_threshold {
@@ -424,7 +431,10 @@ mod tests {
         ]);
         let canon = omega.canonicalize_for(999); // author yok
         assert_eq!(canon.approver_count(), 1, "aynı key → 1 event");
-        assert!((canon.support() - 1.0).abs() < 1e-9, "strongest (1.0) kalmalı");
+        assert!(
+            (canon.support() - 1.0).abs() < 1e-9,
+            "strongest (1.0) kalmalı"
+        );
     }
 
     #[test]
@@ -432,7 +442,12 @@ mod tests {
         // Farklı source → distinct evidence → ikisi de kalır
         let omega = WitnessSet::new(vec![
             ev(1, "PR#42", WitnessKind::PRMerged, 200),
-            ev(2, "trailer: Reviewed-by:200", WitnessKind::TrailerReviewed, 200),
+            ev(
+                2,
+                "trailer: Reviewed-by:200",
+                WitnessKind::TrailerReviewed,
+                200,
+            ),
         ]);
         let canon = omega.canonicalize_for(999);
         assert_eq!(canon.approver_count(), 2, "farklı source → 2 event");
@@ -460,7 +475,13 @@ mod tests {
         ]);
         // support = 2.0 ≥ 1.5, 2 distinct ≥ 2 → Commit
         let result = evaluate(&claim, &omega);
-        assert!(matches!(result, WitnessResult::Commit { safety_weakened: false, .. }));
+        assert!(matches!(
+            result,
+            WitnessResult::Commit {
+                safety_weakened: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -484,7 +505,10 @@ mod tests {
         let result = evaluate(&claim, &omega);
         assert!(matches!(
             result,
-            WitnessResult::Hold(Reason::MinApproversNotMet { distinct: 1, required: 2 })
+            WitnessResult::Hold(Reason::MinApproversNotMet {
+                distinct: 1,
+                required: 2
+            })
         ));
     }
 
@@ -518,8 +542,8 @@ mod tests {
     fn evaluate_custom_quorum() {
         // min_approvers=1, quorum=1.0 → tek MergeCommit Commit eder
         let claim = claim_with_author(100);
-        let omega = WitnessSet::new(vec![ev(1, "PR#1", WitnessKind::MergeCommit, 200)])
-            .with_quorum(1, 1.0);
+        let omega =
+            WitnessSet::new(vec![ev(1, "PR#1", WitnessKind::MergeCommit, 200)]).with_quorum(1, 1.0);
         let result = evaluate(&claim, &omega);
         assert!(matches!(result, WitnessResult::Commit { .. }));
     }
@@ -571,8 +595,13 @@ mod tests {
     #[test]
     fn witness_kind_weights_ordered() {
         assert!(WitnessKind::MergeCommit.default_weight() > WitnessKind::PRMerged.default_weight());
-        assert!(WitnessKind::PRMerged.default_weight() > WitnessKind::TrailerReviewed.default_weight());
-        assert!(WitnessKind::TrailerReviewed.default_weight() > WitnessKind::CoAuthored.default_weight());
+        assert!(
+            WitnessKind::PRMerged.default_weight() > WitnessKind::TrailerReviewed.default_weight()
+        );
+        assert!(
+            WitnessKind::TrailerReviewed.default_weight()
+                > WitnessKind::CoAuthored.default_weight()
+        );
     }
 
     // --- Intent invariant (yapısal — time_layer her zaman Gelecek) ---
@@ -588,12 +617,22 @@ mod tests {
     fn intent_serde_roundtrip_preserves_gelecek() {
         // serde #[serde(skip)] ile time_layer serialize edilmez, deserialize'da default (Gelecek)
         use crate::space::TimeLayer;
-        let intent = Intent::new(42, RawPosition { x: 0.5, ..Default::default() });
+        let intent = Intent::new(
+            42,
+            RawPosition {
+                x: 0.5,
+                ..Default::default()
+            },
+        );
         let json = serde_json::to_string(&intent).expect("serialize");
         // time_layer skip edildi → JSON'da yok
         assert!(!json.contains("time_layer"));
         let restored: Intent = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(restored.time_layer(), TimeLayer::Gelecek, "deserialize her zaman Gelecek");
+        assert_eq!(
+            restored.time_layer(),
+            TimeLayer::Gelecek,
+            "deserialize her zaman Gelecek"
+        );
         assert_eq!(restored.agent, 42);
         assert!((restored.target_raw.x - 0.5).abs() < 1e-9);
     }

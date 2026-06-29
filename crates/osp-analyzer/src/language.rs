@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use crate::contract::{ClassDef, ImportStatement, ResolvedImport};
 use crate::adapters::shared::{GoPackageIndex, ImportResolver};
+use crate::contract::{ClassDef, ImportStatement, ResolvedImport};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RepoContext (§10 #10 — Faz 3.3'te tam tanım)
@@ -33,7 +33,13 @@ impl RepoContext {
         let resolver = ImportResolver::build(&all_files);
         let go_module_path = crate::adapters::shared::detect_go_module_path(&repo_root);
         let go_package_index = GoPackageIndex::build(&repo_root, &all_files);
-        Self { repo_root, all_files, resolver, go_module_path, go_package_index }
+        Self {
+            repo_root,
+            all_files,
+            resolver,
+            go_module_path,
+            go_package_index,
+        }
     }
 }
 

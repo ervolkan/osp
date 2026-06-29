@@ -125,10 +125,9 @@ impl SnapshotStore {
         let mut t_cs: Vec<u64> = Vec::new();
         for entry in std::fs::read_dir(&self.milestones_dir)? {
             let entry = entry?;
-            if let Some(t_c) = parse_t_c_from_filename(
-                &entry.file_name().to_string_lossy(),
-                "milestone_t",
-            ) {
+            if let Some(t_c) =
+                parse_t_c_from_filename(&entry.file_name().to_string_lossy(), "milestone_t")
+            {
                 t_cs.push(t_c);
             }
         }
@@ -253,7 +252,10 @@ impl SnapshotStore {
 /// `milestone_t100.bincode` → `Some(100)`. `delta_t42.bincode` → `Some(42)`.
 fn parse_t_c_from_filename(filename: &str, prefix: &str) -> Option<u64> {
     let after_prefix = filename.strip_prefix(prefix)?;
-    let num_str: String = after_prefix.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num_str: String = after_prefix
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     num_str.parse().ok()
 }
 
@@ -361,7 +363,11 @@ mod tests {
         assert_eq!(restored.space.node_count(), 5); // {1,2} + {3,4,5}
         assert_eq!(restored.replayed_deltas, 3);
         for id in 1..=5 {
-            assert!(restored.space.nodes.contains_key(&id), "node {} mevcut olmalı", id);
+            assert!(
+                restored.space.nodes.contains_key(&id),
+                "node {} mevcut olmalı",
+                id
+            );
         }
     }
 
@@ -390,7 +396,9 @@ mod tests {
         let store = SnapshotStore::new(tmp.path()).unwrap();
 
         store.save_milestone(snapshot(0, &[])).unwrap();
-        store.save_delta(delta_record(1, &[10, 11], &[(10, 11)])).unwrap();
+        store
+            .save_delta(delta_record(1, &[10, 11], &[(10, 11)]))
+            .unwrap();
 
         let restored = store.restore(1).unwrap();
         assert_eq!(restored.space.edge_count(), 1);
@@ -425,7 +433,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = SnapshotStore::new(tmp.path()).unwrap();
         store.save_milestone(snapshot(10, &[1, 2])).unwrap();
-        store.save_milestone(snapshot(50, &[1, 2, 3, 4, 5])).unwrap();
+        store
+            .save_milestone(snapshot(50, &[1, 2, 3, 4, 5]))
+            .unwrap();
 
         // Restore t_c=30 → nearest milestone ≤ 30 is t_c=10 (not 50)
         let restored = store.restore(30).unwrap();
@@ -453,7 +463,10 @@ mod tests {
         let result = store.restore(1);
         assert!(matches!(
             result,
-            Err(PersistenceError::VersionMismatch { file: 999, expected: 1 })
+            Err(PersistenceError::VersionMismatch {
+                file: 999,
+                expected: 1
+            })
         ));
     }
 
@@ -461,10 +474,19 @@ mod tests {
 
     #[test]
     fn parse_t_c_from_filename_works() {
-        assert_eq!(parse_t_c_from_filename("milestone_t42.bincode", "milestone_t"), Some(42));
-        assert_eq!(parse_t_c_from_filename("delta_t100.bincode", "delta_t"), Some(100));
+        assert_eq!(
+            parse_t_c_from_filename("milestone_t42.bincode", "milestone_t"),
+            Some(42)
+        );
+        assert_eq!(
+            parse_t_c_from_filename("delta_t100.bincode", "delta_t"),
+            Some(100)
+        );
         assert_eq!(parse_t_c_from_filename("other.txt", "milestone_t"), None);
-        assert_eq!(parse_t_c_from_filename("milestone_t.bincode", "milestone_t"), None); // no digits
+        assert_eq!(
+            parse_t_c_from_filename("milestone_t.bincode", "milestone_t"),
+            None
+        ); // no digits
     }
 
     // --- list helpers ---

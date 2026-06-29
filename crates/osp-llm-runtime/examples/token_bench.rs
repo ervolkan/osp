@@ -32,10 +32,14 @@ fn read_snippet(path: &str, cap: usize) -> String {
 fn main() -> anyhow::Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let model = std::env::args().nth(1).unwrap_or_else(|| "gpt-4o-mini".to_string());
+    let model = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "gpt-4o-mini".to_string());
     let cfg = RuntimeConfig {
         model: model.clone(),
-        ..RuntimeConfig::default().with_env_api_key().map_err(|e| anyhow::anyhow!("{USAGE}: {e}"))?
+        ..RuntimeConfig::default()
+            .with_env_api_key()
+            .map_err(|e| anyhow::anyhow!("{USAGE}: {e}"))?
     };
     let runtime = Runtime::new(cfg)?;
 
@@ -84,8 +88,14 @@ fn main() -> anyhow::Result<()> {
             return Err(anyhow::anyhow!("osp call failed: {e}"));
         }
     };
-    println!("  prompt_tokens:     {}", osp_completion.usage.prompt_tokens);
-    println!("  completion_tokens: {}", osp_completion.usage.completion_tokens);
+    println!(
+        "  prompt_tokens:     {}",
+        osp_completion.usage.prompt_tokens
+    );
+    println!(
+        "  completion_tokens: {}",
+        osp_completion.usage.completion_tokens
+    );
     println!("  total_tokens:      {}", osp_completion.usage.total_tokens);
 
     println!("\n=== Calling OpenAI (Raw Source Dump) ===");
@@ -96,19 +106,33 @@ fn main() -> anyhow::Result<()> {
             return Err(anyhow::anyhow!("raw call failed: {e}"));
         }
     };
-    println!("  prompt_tokens:     {}", raw_completion.usage.prompt_tokens);
-    println!("  completion_tokens: {}", raw_completion.usage.completion_tokens);
+    println!(
+        "  prompt_tokens:     {}",
+        raw_completion.usage.prompt_tokens
+    );
+    println!(
+        "  completion_tokens: {}",
+        raw_completion.usage.completion_tokens
+    );
     println!("  total_tokens:      {}", raw_completion.usage.total_tokens);
 
     let ratio = raw_completion.usage.prompt_tokens as f64
         / osp_completion.usage.prompt_tokens.max(1) as f64;
     let savings = 100.0
-        * (1.0 - osp_completion.usage.prompt_tokens as f64 / raw_completion.usage.prompt_tokens as f64);
+        * (1.0
+            - osp_completion.usage.prompt_tokens as f64
+                / raw_completion.usage.prompt_tokens as f64);
     println!("\n========================================");
     println!("  RESULTS (real tokenizer)");
     println!("========================================");
-    println!("  OSP  prompt: {} tokens", osp_completion.usage.prompt_tokens);
-    println!("  Raw  prompt: {} tokens", raw_completion.usage.prompt_tokens);
+    println!(
+        "  OSP  prompt: {} tokens",
+        osp_completion.usage.prompt_tokens
+    );
+    println!(
+        "  Raw  prompt: {} tokens",
+        raw_completion.usage.prompt_tokens
+    );
     println!("  Ratio:       1:{ratio:.1} (OSP {ratio:.1}x smaller)");
     println!("  Savings:     {savings:.1}%");
 
@@ -152,6 +176,9 @@ fn main() -> anyhow::Result<()> {
 fn chrono_now() -> String {
     // Avoid pulling chrono for a single timestamp; RFC3339-ish via std.
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     format!("unix:{secs}")
 }

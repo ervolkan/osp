@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use crate::contract::{ClassDef, ImportStatement, ImportKind, ResolvedImport};
-use crate::language::{LanguageAdapter, RepoContext};
 use super::shared;
+use crate::contract::{ClassDef, ImportKind, ImportStatement, ResolvedImport};
+use crate::language::{LanguageAdapter, RepoContext};
 
 pub struct JavaScriptAdapter;
 
@@ -21,22 +21,20 @@ impl LanguageAdapter for JavaScriptAdapter {
     }
 
     fn extract_imports(&self, source: &str) -> Vec<ImportStatement> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_javascript::LANGUAGE.into(),
-        ) {
+        let tree = match shared::parse_root(source, tree_sitter_javascript::LANGUAGE.into()) {
             Some(t) => t,
             None => return Vec::new(),
         };
-        let paths = shared::walk_imports(
-            tree.root_node(),
-            source.as_bytes(),
-            &["import_statement"],
-        );
+        let paths =
+            shared::walk_imports(tree.root_node(), source.as_bytes(), &["import_statement"]);
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
+            .map(|(i, path)| ImportStatement {
+                path,
+                source_location: i,
+                is_type_only: false,
+            })
             .collect()
     }
 
@@ -67,10 +65,7 @@ impl LanguageAdapter for JavaScriptAdapter {
     }
 
     fn extract_class_defs(&self, source: &str) -> Vec<ClassDef> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_javascript::LANGUAGE.into(),
-        ) {
+        let tree = match shared::parse_root(source, tree_sitter_javascript::LANGUAGE.into()) {
             Some(t) => t,
             None => return Vec::new(),
         };
@@ -95,7 +90,11 @@ mod tests {
         let src = "import x from './foo';\nimport y from 'express';\n";
         let adapter = JavaScriptAdapter;
         let imports = adapter.extract_imports(src);
-        assert!(imports.iter().any(|i| i.path.contains("foo")), "{:?}", imports);
+        assert!(
+            imports.iter().any(|i| i.path.contains("foo")),
+            "{:?}",
+            imports
+        );
         assert!(imports.iter().any(|i| i.path == "express"));
     }
 
@@ -116,8 +115,14 @@ mod tests {
             vec![PathBuf::from("/repo/lib/util.js")],
         );
         let adapter = JavaScriptAdapter;
-        let import = ImportStatement { path: "./util".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.js"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "./util".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.js"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
     }
 }

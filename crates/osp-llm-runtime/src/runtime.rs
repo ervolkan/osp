@@ -42,8 +42,7 @@ impl Default for RuntimeConfig {
 impl RuntimeConfig {
     /// Read the API key from the `OPENAI_API_KEY` env var.
     pub fn with_env_api_key(mut self) -> Result<Self, LlmError> {
-        let key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| LlmError::MissingApiKey)?;
+        let key = std::env::var("OPENAI_API_KEY").map_err(|_| LlmError::MissingApiKey)?;
         if key.trim().is_empty() {
             return Err(LlmError::MissingApiKey);
         }
@@ -139,8 +138,14 @@ impl Runtime {
         let body = ChatRequest {
             model: &self.config.model,
             messages: vec![
-                ChatMessage { role: "system", content: &req.system },
-                ChatMessage { role: "user", content: &req.user },
+                ChatMessage {
+                    role: "system",
+                    content: &req.system,
+                },
+                ChatMessage {
+                    role: "user",
+                    content: &req.user,
+                },
             ],
             max_tokens: self.config.max_tokens,
             temperature: self.config.temperature,

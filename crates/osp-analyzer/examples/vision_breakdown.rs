@@ -43,7 +43,13 @@ enum Verdict {
     Inconclusive,
 }
 
-fn evaluate(theta: f64, theta_bound: f64, theta_warn: f64, is_support: bool, inconclusive: bool) -> Verdict {
+fn evaluate(
+    theta: f64,
+    theta_bound: f64,
+    theta_warn: f64,
+    is_support: bool,
+    inconclusive: bool,
+) -> Verdict {
     if inconclusive {
         return Verdict::Inconclusive;
     }
@@ -82,7 +88,10 @@ fn main() -> anyhow::Result<()> {
 
     let result = analyze_repo(repo)?;
     let total = result.space.nodes.len();
-    println!("=== Vision breakdown: {} ({} nodes, θ_bound={}, θ_warn={}) ===\n", name, total, theta_bound, theta_warn);
+    println!(
+        "=== Vision breakdown: {} ({} nodes, θ_bound={}, θ_warn={}) ===\n",
+        name, total, theta_bound, theta_warn
+    );
 
     // Global vision (frontend slider default ≈ nötr 0.5; builtin override kazanır)
     let gx = 0.5_f64;
@@ -123,7 +132,10 @@ fn main() -> anyhow::Result<()> {
         let theta = (dx * dx + dy * dy + dz * dz).sqrt() / 3.0_f64.sqrt();
 
         // Per-role gerçek değerleri topla (calibration için)
-        role_axis_values.entry(role).or_default().push((coupling, cohesion, instability));
+        role_axis_values
+            .entry(role)
+            .or_default()
+            .push((coupling, cohesion, instability));
         all_thetas.push(theta);
 
         // cohesion placeholder → inconclusive (frontend ile aynı)
@@ -163,7 +175,13 @@ fn main() -> anyhow::Result<()> {
     }
 
     println!("── Verdict distribution ──");
-    for v in [Verdict::Pass, Verdict::Warning, Verdict::Advisory, Verdict::Reject, Verdict::Inconclusive] {
+    for v in [
+        Verdict::Pass,
+        Verdict::Warning,
+        Verdict::Advisory,
+        Verdict::Reject,
+        Verdict::Inconclusive,
+    ] {
         let c = *verdict_counts.get(&v).or(Some(&0)).unwrap();
         let pct = pct(c, total);
         let label = match v {
@@ -185,7 +203,13 @@ fn main() -> anyhow::Result<()> {
         NodeRole::Runtime,
         NodeRole::Support,
     ];
-    let verdicts = [Verdict::Pass, Verdict::Warning, Verdict::Advisory, Verdict::Reject, Verdict::Inconclusive];
+    let verdicts = [
+        Verdict::Pass,
+        Verdict::Warning,
+        Verdict::Advisory,
+        Verdict::Reject,
+        Verdict::Inconclusive,
+    ];
     print!("  {:<12}", "");
     for v in verdicts {
         let s = match v {
@@ -223,7 +247,10 @@ fn main() -> anyhow::Result<()> {
         println!("  ⚠ {} TypeSurface reject var — production declaration dosyaları threshold'a takılıyor.", typesurface_rejects.len());
         println!("    Bu gerçek reject'ler (test değil). Profile rafine etmek için detaylar:");
         for (id, path, theta, dx, dy, dz) in typesurface_rejects.iter().take(15) {
-            println!("    Node {}: θ={:.3} Δx={:+.2} Δy={:+.2} Δz={:+.2} {}", id, theta, dx, dy, dz, path);
+            println!(
+                "    Node {}: θ={:.3} Δx={:+.2} Δy={:+.2} Δz={:+.2} {}",
+                id, theta, dx, dy, dz, path
+            );
         }
         if typesurface_rejects.len() > 15 {
             println!("    ... ({} more)", typesurface_rejects.len() - 15);
@@ -240,7 +267,10 @@ fn main() -> anyhow::Result<()> {
             Some(c) => format!("{:.3}", c),
             None => "None (placeholder→0.5)".to_string(),
         };
-        println!("  Node {:<4} coupling={:.2} cohesion={} instability={:.2}  {}", id, coupling, coh_str, instability, path);
+        println!(
+            "  Node {:<4} coupling={:.2} cohesion={} instability={:.2}  {}",
+            id, coupling, coh_str, instability, path
+        );
     }
 
     // ── Calibration teşhisi (#1): "0 pass" kök nedeni ──────────────────────
@@ -278,8 +308,15 @@ fn main() -> anyhow::Result<()> {
         let pass_count = sorted.iter().filter(|&&t| t <= bound).count();
         let pct = pct(pass_count, total);
         let bar = "█".repeat((pct / 2.0) as usize);
-        let marker = if (bound - theta_bound).abs() < 1e-9 { "  ← current θ_bound" } else { "" };
-        println!("  θ ≤ {:.2}: {:>5} / {} ({:>5}%) {}{}", bound, pass_count, total, pct, bar, marker);
+        let marker = if (bound - theta_bound).abs() < 1e-9 {
+            "  ← current θ_bound"
+        } else {
+            ""
+        };
+        println!(
+            "  θ ≤ {:.2}: {:>5} / {} ({:>5}%) {}{}",
+            bound, pass_count, total, pct, bar, marker
+        );
     }
     // Percentil tabanlı öneri: eğer θ_bound=0.30 → %0 pass ise, %50'yi yakalayan
     // θ yaklaşık nedir? (median θ). Bu, kalibre edilmiş eşiğin referansı.
@@ -287,9 +324,18 @@ fn main() -> anyhow::Result<()> {
         let median = sorted[sorted.len() / 2];
         let p25 = sorted[sorted.len() / 4];
         let p75 = sorted[3 * sorted.len() / 4];
-        println!("\n  θ percentiles: p25={:.3}  median(p50)={:.3}  p75={:.3}", p25, median, p75);
-        println!("  → mevcut θ_bound=0.30 iken {} pass.", sorted.iter().filter(|&&t| t <= 0.30).count());
-        println!("    median θ={:.3}, yani node'ların yarısı bu değerden düşük. Bu skala referans.", median);
+        println!(
+            "\n  θ percentiles: p25={:.3}  median(p50)={:.3}  p75={:.3}",
+            p25, median, p75
+        );
+        println!(
+            "  → mevcut θ_bound=0.30 iken {} pass.",
+            sorted.iter().filter(|&&t| t <= 0.30).count()
+        );
+        println!(
+            "    median θ={:.3}, yani node'ların yarısı bu değerden düşük. Bu skala referans.",
+            median
+        );
     }
 
     Ok(())

@@ -375,19 +375,15 @@ impl HallucinationType {
                 })
             }
             crate::engine::EngineCommitError::VisionViolation {
-                violation,
-                bound,
-                ..
+                violation, bound, ..
             } => Some(Self::Vision {
                 theta: violation.theta,
                 bound: *bound,
             }),
-            crate::engine::EngineCommitError::RuleViolation { violation, .. } => {
-                Some(Self::Rule {
-                    rule_id: violation.rule_id.clone(),
-                    detail: violation.detail.clone(),
-                })
-            }
+            crate::engine::EngineCommitError::RuleViolation { violation, .. } => Some(Self::Rule {
+                rule_id: violation.rule_id.clone(),
+                detail: violation.detail.clone(),
+            }),
             crate::engine::EngineCommitError::Witness(reason) => match reason {
                 crate::witness::Reason::HonestReject { witness } => {
                     Some(Self::Witness { witness: *witness })
@@ -534,7 +530,9 @@ impl EvidenceSummary {
     }
 
     pub fn with_required_nodes(nodes: Vec<NodeId>) -> Self {
-        Self { required_nodes: nodes }
+        Self {
+            required_nodes: nodes,
+        }
     }
 }
 
@@ -788,7 +786,10 @@ mod tests {
             ..Default::default()
         };
         let result = contract.validate(&proposal);
-        assert!(result.is_err(), "duplicate new_edges entry should be rejected");
+        assert!(
+            result.is_err(),
+            "duplicate new_edges entry should be rejected"
+        );
     }
 
     #[test]
@@ -929,7 +930,12 @@ mod tests {
             });
         }
         for (from, to) in [(1, 2), (2, 3), (3, 4), (4, 5)] {
-            space.insert_edge(Edge { from, to, kind: EdgeKind::Imports, ..Default::default() });
+            space.insert_edge(Edge {
+                from,
+                to,
+                kind: EdgeKind::Imports,
+                ..Default::default()
+            });
         }
         space
     }
@@ -1060,8 +1066,18 @@ mod tests {
                 ..Default::default()
             });
         }
-        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
-        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_edge(Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        space.insert_edge(Edge {
+            from: 2,
+            to: 3,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
 
         let rules: Vec<Box<dyn Rule>> = vec![];
         let mask = PermissionMask::full_access();
@@ -1099,8 +1115,14 @@ mod tests {
     fn permission_mask_hidden_node_not_readable() {
         let mut mask = PermissionMask::full_access();
         mask.hide_node(42);
-        assert!(!mask.has_read_permission(42), "hidden node should not be readable");
-        assert!(mask.has_read_permission(1), "non-hidden node should be readable");
+        assert!(
+            !mask.has_read_permission(42),
+            "hidden node should not be readable"
+        );
+        assert!(
+            mask.has_read_permission(1),
+            "non-hidden node should be readable"
+        );
     }
 
     #[test]
@@ -1108,7 +1130,10 @@ mod tests {
         let mut mask = PermissionMask::full_access();
         mask.set_read_only(10);
         assert!(mask.has_read_permission(10), "read-only node IS readable");
-        assert!(!mask.has_write_permission(10), "read-only node is NOT writable");
+        assert!(
+            !mask.has_write_permission(10),
+            "read-only node is NOT writable"
+        );
         assert!(mask.has_write_permission(1), "normal node is writable");
     }
 
@@ -1116,7 +1141,10 @@ mod tests {
     fn permission_mask_hidden_node_not_writable() {
         let mut mask = PermissionMask::full_access();
         mask.hide_node(99);
-        assert!(!mask.has_write_permission(99), "hidden node is not writable");
+        assert!(
+            !mask.has_write_permission(99),
+            "hidden node is not writable"
+        );
     }
 
     #[test]
@@ -1132,7 +1160,10 @@ mod tests {
     fn permission_mask_forbidden_edge_blocked() {
         let mut mask = PermissionMask::full_access();
         mask.forbidden_edge_kinds.insert(EdgeKind::Approves);
-        assert!(!mask.can_create_edge(EdgeKind::Approves), "forbidden edge blocked");
+        assert!(
+            !mask.can_create_edge(EdgeKind::Approves),
+            "forbidden edge blocked"
+        );
         assert!(mask.can_create_edge(EdgeKind::Imports), "allowed edge ok");
     }
 
@@ -1148,15 +1179,28 @@ mod tests {
                 ..Default::default()
             });
         }
-        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
-        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_edge(Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        space.insert_edge(Edge {
+            from: 2,
+            to: 3,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
 
         let mut mask = PermissionMask::full_access();
         mask.hide_node(2); // hide middle node
 
         let slice = compute_space_slice(&[1], &space, &[], &mask, &EvidenceSummary::empty(), 2);
 
-        assert!(!slice.node_ids.contains(&2), "hidden node 2 should be filtered from slice");
+        assert!(
+            !slice.node_ids.contains(&2),
+            "hidden node 2 should be filtered from slice"
+        );
         assert!(slice.node_ids.contains(&1), "node 1 should be visible");
     }
 
@@ -1240,11 +1284,17 @@ mod tests {
 
     #[test]
     fn hallucination_calibration_message_is_readable() {
-        let h = HallucinationType::Vision { theta: 0.35, bound: 0.25 };
+        let h = HallucinationType::Vision {
+            theta: 0.35,
+            bound: 0.25,
+        };
         let msg = h.calibration_message();
         assert!(msg.contains("0.350"), "message should include theta value");
         assert!(msg.contains("0.250"), "message should include bound value");
-        assert!(msg.contains("Vision"), "message should mention hallucination type");
+        assert!(
+            msg.contains("Vision"),
+            "message should mention hallucination type"
+        );
     }
 
     #[test]

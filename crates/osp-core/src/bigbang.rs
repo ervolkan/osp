@@ -136,7 +136,7 @@ mod tests {
         let repositioned = apply_delta(&mut space, &d);
         assert_eq!(space.node_count(), 3); // 1 + 10 + 11
         assert_eq!(space.edge_count(), 1); // 10→1
-        // repositioned = {10, 11} ∪ N₁({10,11}) = {10, 11, 1}
+                                           // repositioned = {10, 11} ∪ N₁({10,11}) = {10, 11, 1}
         assert!(repositioned.contains(&10), "ΔV dahil");
         assert!(repositioned.contains(&11), "ΔV dahil");
         assert!(repositioned.contains(&1), "N₁(ΔV) dahil (10→1)");

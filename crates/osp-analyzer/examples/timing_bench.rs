@@ -8,7 +8,9 @@ use osp_analyzer::pipeline::analyze_repo;
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let repo = args.get(1).expect("usage: timing_bench <repo-path> [runs=5]");
+    let repo = args
+        .get(1)
+        .expect("usage: timing_bench <repo-path> [runs=5]");
     let runs: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let path = Path::new(repo);
@@ -55,7 +57,13 @@ fn main() -> anyhow::Result<()> {
     if runs >= 10 {
         println!("  p90:    {:.2}s", p90);
     }
-    println!("  runs:   {:?}", times.iter().map(|t| format!("{:.2}", t)).collect::<Vec<_>>());
+    println!(
+        "  runs:   {:?}",
+        times
+            .iter()
+            .map(|t| format!("{:.2}", t))
+            .collect::<Vec<_>>()
+    );
 
     Ok(())
 }

@@ -14,8 +14,7 @@
 //! - **FAIL:** Agent self-import önerir → Q4 syntax gate reddeder
 
 use osp_core::agent::{
-    compute_space_slice, EvidenceSummary, NewNodeSpec, OutputContract, PermissionMask,
-    SpaceSlice,
+    compute_space_slice, EvidenceSummary, NewNodeSpec, OutputContract, PermissionMask, SpaceSlice,
 };
 use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
 use osp_core::coords::{CoordinateSystem, RawPosition};
@@ -52,8 +51,18 @@ fn make_project_space() -> Space {
         ..Default::default()
     });
     // main → config, main → utils
-    space.insert_edge(Edge { from: 3, to: 1, kind: EdgeKind::Imports, ..Default::default() });
-    space.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+    space.insert_edge(Edge {
+        from: 3,
+        to: 1,
+        kind: EdgeKind::Imports,
+        ..Default::default()
+    });
+    space.insert_edge(Edge {
+        from: 3,
+        to: 2,
+        kind: EdgeKind::Imports,
+        ..Default::default()
+    });
     space
 }
 
@@ -100,7 +109,12 @@ fn mock_llm_add_auth() -> (Vec<Node>, Vec<Edge>) {
         mass: 40.0,
         ..Default::default()
     };
-    let auth_import = Edge { from: 4, to: 1, kind: EdgeKind::Imports, ..Default::default() };
+    let auth_import = Edge {
+        from: 4,
+        to: 1,
+        kind: EdgeKind::Imports,
+        ..Default::default()
+    };
     (vec![auth_node], vec![auth_import])
 }
 
@@ -113,7 +127,12 @@ fn mock_llm_self_import() -> (Vec<Node>, Vec<Edge>) {
         ..Default::default()
     };
     // BUG: auth imports itself
-    let self_loop = Edge { from: 4, to: 4, kind: EdgeKind::Imports, ..Default::default() };
+    let self_loop = Edge {
+        from: 4,
+        to: 4,
+        kind: EdgeKind::Imports,
+        ..Default::default()
+    };
     (vec![auth_node], vec![self_loop])
 }
 
@@ -148,20 +167,29 @@ fn e2e_agent_adds_valid_module_passes_all_gates() {
     let contract = OutputContract::strict();
     // Build a minimal DeltaProposal for validation
     let proposal = osp_core::agent::DeltaProposal {
-        new_nodes: delta_nodes.iter().map(|n| NewNodeSpec {
-            kind: n.kind,
-            initial_mass: n.mass,
-            connected_to: vec![],
-        }).collect(),
+        new_nodes: delta_nodes
+            .iter()
+            .map(|n| NewNodeSpec {
+                kind: n.kind,
+                initial_mass: n.mass,
+                connected_to: vec![],
+            })
+            .collect(),
         reasoning: "Auth module needs config for settings".to_string(),
         ..Default::default()
     };
-    assert!(contract.validate(&proposal).is_ok(), "DeltaProposal should pass OutputContract");
+    assert!(
+        contract.validate(&proposal).is_ok(),
+        "DeltaProposal should pass OutputContract"
+    );
 
     // Step 5: Engine computes actual position (LLM never declares — inv #4)
     let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges);
     assert!(computed_raw.x.is_finite(), "coupling must be measured");
-    assert!(computed_raw.z >= 0.0 && computed_raw.z <= 1.0, "instability ∈ [0,1]");
+    assert!(
+        computed_raw.z >= 0.0 && computed_raw.z <= 1.0,
+        "instability ∈ [0,1]"
+    );
 
     // Step 6: Build Claim with engine-computed position
     let claim = osp_core::witness::Claim {
@@ -223,7 +251,11 @@ fn e2e_self_import_rejected_by_q4_syntax_gate() {
     );
 
     // NO mutation — Safety guarantee
-    assert_eq!(engine.space().node_count(), 3, "space unchanged after Q4 reject");
+    assert_eq!(
+        engine.space().node_count(),
+        3,
+        "space unchanged after Q4 reject"
+    );
     assert_eq!(engine.t_c(), 0, "time not advanced");
 }
 
@@ -260,7 +292,11 @@ fn e2e_vision_violation_rejected_by_q5() {
         "Zero-vector position should fail Q5 Vision Gate — got: {:?}",
         result.as_ref().err()
     );
-    assert_eq!(engine.space().node_count(), 3, "no mutation after Q5 reject");
+    assert_eq!(
+        engine.space().node_count(),
+        3,
+        "no mutation after Q5 reject"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -310,14 +346,29 @@ fn e2e_pipeline_diagnostic() {
 
     // 1. Space slice
     let mask = PermissionMask::full_access();
-    let slice = compute_space_slice(&[3], engine.space(), &[], &mask, &EvidenceSummary::empty(), 2);
+    let slice = compute_space_slice(
+        &[3],
+        engine.space(),
+        &[],
+        &mask,
+        &EvidenceSummary::empty(),
+        2,
+    );
     eprintln!("Step 1: compute_space_slice([main], k=2)");
-    eprintln!("  → Agent sees {} nodes, {} edges", slice.node_count(), slice.edge_count());
+    eprintln!(
+        "  → Agent sees {} nodes, {} edges",
+        slice.node_count(),
+        slice.edge_count()
+    );
 
     // 2. Mock LLM
     let (delta_nodes, delta_edges) = mock_llm_add_auth();
     eprintln!("\nStep 2: Mock LLM → DeltaProposal");
-    eprintln!("  → {} new node(s), {} new edge(s)", delta_nodes.len(), delta_edges.len());
+    eprintln!(
+        "  → {} new node(s), {} new edge(s)",
+        delta_nodes.len(),
+        delta_edges.len()
+    );
     eprintln!("  → NO positions declared (engine measures)");
 
     // 3. Position computation

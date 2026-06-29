@@ -29,7 +29,9 @@ use crate::space::Space;
 ///
 /// `confidence` alanı risk_score (§3.2, Faz 2 stub) için girdidir:
 /// UserLoaded=1.0, RoleProfile=0.9, GlobalDefault=0.5, BuiltinRole=0.6, None=0.0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum VisionSource {
     /// Vision yüklenmemiş. θ hesaplanmamalı (topology-only mod). "not loaded" UI etiketi.
     #[default]
@@ -106,7 +108,10 @@ impl VisionVector {
     /// Legacy constructor — source bilinmiyorsa `GlobalDefault` varsay.
     /// Yeni kod `with_source()` kullanmalı; vision yüklenmemişse `none()`.
     pub fn new(raw: RawPosition) -> Self {
-        Self { raw, source: VisionSource::GlobalDefault }
+        Self {
+            raw,
+            source: VisionSource::GlobalDefault,
+        }
     }
 
     /// Belirli bir provenance ile kur.
@@ -116,7 +121,10 @@ impl VisionVector {
 
     /// Vision yok (topology-only mod). raw = zero; θ hesaplanmamalı.
     pub fn none() -> Self {
-        Self { raw: RawPosition::default(), source: VisionSource::None }
+        Self {
+            raw: RawPosition::default(),
+            source: VisionSource::None,
+        }
     }
 
     /// Inner RawPosition'a erişim.
@@ -146,7 +154,6 @@ impl From<RawPosition> for VisionVector {
         Self::new(raw)
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DeviationMetric trait (inv #4 — compile-time dairesellik koruması)
@@ -310,11 +317,11 @@ impl VisionVerdict {
     /// UI rengi (frontend ile aynı değerler — tek kaynak).
     pub fn color_hex(self) -> &'static str {
         match self {
-            Self::Pass => "#3fb950",          // yeşil
-            Self::Warning => "#d29922",       // amber/sarı
-            Self::Advisory => "#d29922",      // amber (warning ile aynı aile, ama farklı anlam)
-            Self::Reject => "#f85149",        // kırmızı
-            Self::Inconclusive => "#8b949e",  // gri
+            Self::Pass => "#3fb950",         // yeşil
+            Self::Warning => "#d29922",      // amber/sarı
+            Self::Advisory => "#d29922",     // amber (warning ile aynı aile, ama farklı anlam)
+            Self::Reject => "#f85149",       // kırmızı
+            Self::Inconclusive => "#8b949e", // gri
         }
     }
 
@@ -458,7 +465,10 @@ mod verdict_tests {
         let production = evaluate_node_vision(0.50, 0.30, 0.40, false, false);
         assert_eq!(support, VisionVerdict::Advisory);
         assert_eq!(production, VisionVerdict::Reject);
-        assert_ne!(support, production, "same θ, different role → different verdict");
+        assert_ne!(
+            support, production,
+            "same θ, different role → different verdict"
+        );
     }
 }
 
@@ -573,7 +583,11 @@ mod tests {
         let vision = VisionVector::new(raw(1.0, 1.0, 1.0, 1.0, 1.0));
         // I=0.3, A=0.7 → A+I=1.0 → D=0
         let d = compute_derived(&r, &vision, &Space::new(), &CosineDeviation, 0.3, 0.7);
-        assert!(d.main_sequence_distance.abs() < 1e-9, "D = {}", d.main_sequence_distance);
+        assert!(
+            d.main_sequence_distance.abs() < 1e-9,
+            "D = {}",
+            d.main_sequence_distance
+        );
     }
 
     #[test]
@@ -602,7 +616,11 @@ mod tests {
         // instability param = 0.4 (raw.z ile aynı), abstractness = 0.3
         let d = compute_derived(&r, &vision, &Space::new(), &CosineDeviation, 0.4, 0.3);
         // D = |0.3 + 0.4 - 1| = 0.3
-        assert!((d.main_sequence_distance - 0.3).abs() < 1e-9, "D = {}", d.main_sequence_distance);
+        assert!(
+            (d.main_sequence_distance - 0.3).abs() < 1e-9,
+            "D = {}",
+            d.main_sequence_distance
+        );
         // z (raw) değişmedi — compute_derived raw'yı mutate etmez
         assert!((r.z - 0.4).abs() < 1e-9);
     }
@@ -624,7 +642,11 @@ mod tests {
     fn diffusion_deviation_is_faz2_stub() {
         // inv #5 — DiffusionDeviation commit path'inde değil; Faz 2 doldurana kadar todo!.
         let d = DiffusionDeviation { t: 1.0 };
-        let _ = d.theta(&raw(0.5, 0.5, 0.5, 0.5, 0.5), &VisionVector::new(raw(0.5, 0.5, 0.5, 0.5, 0.5)), &Space::new());
+        let _ = d.theta(
+            &raw(0.5, 0.5, 0.5, 0.5, 0.5),
+            &VisionVector::new(raw(0.5, 0.5, 0.5, 0.5, 0.5)),
+            &Space::new(),
+        );
     }
 
     // ── VisionSource provenance ──────────────────────────────────────────────
@@ -685,10 +707,8 @@ mod tests {
     #[test]
     fn vision_vector_with_source_preserves_provenance() {
         // with_source provenance'ı korur; new() GlobalDefault varsayar (legacy).
-        let user_vision = VisionVector::with_source(
-            raw(0.3, 0.7, 0.5, 0.5, 0.5),
-            VisionSource::UserLoaded,
-        );
+        let user_vision =
+            VisionVector::with_source(raw(0.3, 0.7, 0.5, 0.5, 0.5), VisionSource::UserLoaded);
         assert_eq!(user_vision.source(), VisionSource::UserLoaded);
         assert!(user_vision.is_evaluable());
 

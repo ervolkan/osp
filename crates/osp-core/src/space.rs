@@ -13,7 +13,9 @@ pub type NodeId = u64;
 ///
 /// Üst-ontoloji: yazılım-süreç modelini (Feature/Bug/Rule) + epistemolojik rolleri
 /// (Agent/Intent/Claim/Witness) birleştirir.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum NodeKind {
     /// Kaynak dosya / paket (Faz 0 spike seviyesi). Default tür.
     #[default]
@@ -46,7 +48,9 @@ pub enum NodeKind {
 /// Bu ayrım mimari yorum için kritiktir: bir test dosyasının `instability = 1.0`
 /// (incoming=0) olması doğaldır ve "risk" değildir; bir domain-core dosyasında aynı
 /// değer ciddi bir alarm üretir. UI bu bilgiyle context-aware vision uyarıları gösterir.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum NodeClassification {
     /// Domain/business logic (varsayılan). Yüksek instability burada ciddi alarm.
     #[default]
@@ -155,8 +159,7 @@ pub fn classify_path(path: &str) -> NodeClassification {
         || base == "package.json"
         || base == "tsconfig.json"
         || base == ".env"
-        || base.ends_with(".toml")
-        && (base == "config.toml" || base.contains("config"))
+        || base.ends_with(".toml") && (base == "config.toml" || base.contains("config"))
     {
         return NodeClassification::Config;
     }
@@ -195,7 +198,9 @@ pub fn classify_path(path: &str) -> NodeClassification {
 /// Role-aware vision her role için ayrı hedef vector kullanır — örn. TypeSurface
 /// için coupling düşük beklenir (declaration = runtime deps yok), Core için
 /// instability düşük beklenir (stable foundation).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum NodeRole {
     /// Declaration/type surface — .d.ts, types/, interfaces (coupling low, cohesion high).
     TypeSurface,
@@ -297,7 +302,9 @@ pub struct RoleMetrics {
 ///
 /// Klasik yazılım grafindan (yalnız `DependsOn`) farklı olarak OSP'de epistemolojik
 /// ilişkileri (`Witnesses`, `Approves`, `Violates`) de modeller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum EdgeKind {
     /// `from` modülü `to` modülünü import ediyor (modül-düzeyi bağımlılık).
     #[default]
@@ -511,8 +518,18 @@ mod tests {
         let mut s = Space::new();
         s.insert_node(mod_node(1, 100.0));
         s.insert_node(mod_node(2, 50.0));
-        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
-        s.insert_edge(Edge { from: 2, to: 1, kind: EdgeKind::Calls, ..Default::default() });
+        s.insert_edge(Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        s.insert_edge(Edge {
+            from: 2,
+            to: 1,
+            kind: EdgeKind::Calls,
+            ..Default::default()
+        });
         assert_eq!(s.node_count(), 2);
         assert_eq!(s.edge_count(), 2);
         assert_eq!(s.edge_count_of(EdgeKind::Imports), 1);
@@ -526,9 +543,24 @@ mod tests {
         s.insert_node(mod_node(2, 1.0));
         s.insert_node(mod_node(3, 1.0));
         // 1 → 2 (Imports), 3 → 2 (Imports), 1 → 3 (Calls)
-        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
-        s.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports, ..Default::default() });
-        s.insert_edge(Edge { from: 1, to: 3, kind: EdgeKind::Calls, ..Default::default() });
+        s.insert_edge(Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        s.insert_edge(Edge {
+            from: 3,
+            to: 2,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        s.insert_edge(Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Calls,
+            ..Default::default()
+        });
 
         assert_eq!(s.in_degree(2, EdgeKind::Imports), 2);
         assert_eq!(s.out_degree(1, EdgeKind::Imports), 1);
@@ -595,7 +627,10 @@ mod tests {
         assert!((n.mass).abs() < 1e-9);
         // Faz 1.4: position artık Position struct (raw + derived), ikisi de default
         assert_eq!(n.position.raw, crate::coords::RawPosition::default());
-        assert_eq!(n.position.derived, crate::coords::DerivedPosition::default());
+        assert_eq!(
+            n.position.derived,
+            crate::coords::DerivedPosition::default()
+        );
     }
 
     // ─── classify_path tests ───
@@ -604,10 +639,19 @@ mod tests {
     fn classify_path_test_files() {
         // Python conventions
         assert_eq!(classify_path("tests/test_foo.py"), NodeClassification::Test);
-        assert_eq!(classify_path("app/test_models.py"), NodeClassification::Test);
-        assert_eq!(classify_path("src/foo/test_bar.py"), NodeClassification::Test);
+        assert_eq!(
+            classify_path("app/test_models.py"),
+            NodeClassification::Test
+        );
+        assert_eq!(
+            classify_path("src/foo/test_bar.py"),
+            NodeClassification::Test
+        );
         // Go
-        assert_eq!(classify_path("handler/handler_test.go"), NodeClassification::Test);
+        assert_eq!(
+            classify_path("handler/handler_test.go"),
+            NodeClassification::Test
+        );
         // Rust
         assert_eq!(classify_path("src/lib_test.rs"), NodeClassification::Test);
         // TypeScript/JavaScript
@@ -619,36 +663,78 @@ mod tests {
 
     #[test]
     fn classify_path_fixtures_and_config() {
-        assert_eq!(classify_path("tests/conftest.py"), NodeClassification::Fixture);
-        assert_eq!(classify_path("tests/fixtures/user.py"), NodeClassification::Fixture);
-        assert_eq!(classify_path("src/__mocks__/db.ts"), NodeClassification::Fixture);
+        assert_eq!(
+            classify_path("tests/conftest.py"),
+            NodeClassification::Fixture
+        );
+        assert_eq!(
+            classify_path("tests/fixtures/user.py"),
+            NodeClassification::Fixture
+        );
+        assert_eq!(
+            classify_path("src/__mocks__/db.ts"),
+            NodeClassification::Fixture
+        );
         // Config
-        assert_eq!(classify_path("myapp/settings.py"), NodeClassification::Config);
+        assert_eq!(
+            classify_path("myapp/settings.py"),
+            NodeClassification::Config
+        );
         assert_eq!(classify_path("go.mod"), NodeClassification::Config);
         assert_eq!(classify_path("Cargo.toml"), NodeClassification::Config);
     }
 
     #[test]
     fn classify_path_migrations_scripts_generated() {
-        assert_eq!(classify_path("app/migrations/0001_initial.py"), NodeClassification::Migration);
-        assert_eq!(classify_path("alembic/versions/abc.py"), NodeClassification::Migration);
-        assert_eq!(classify_path("db/migrate/001_create.rb"), NodeClassification::Migration);
+        assert_eq!(
+            classify_path("app/migrations/0001_initial.py"),
+            NodeClassification::Migration
+        );
+        assert_eq!(
+            classify_path("alembic/versions/abc.py"),
+            NodeClassification::Migration
+        );
+        assert_eq!(
+            classify_path("db/migrate/001_create.rb"),
+            NodeClassification::Migration
+        );
         // Scripts
-        assert_eq!(classify_path("scripts/deploy.sh"), NodeClassification::Script);
+        assert_eq!(
+            classify_path("scripts/deploy.sh"),
+            NodeClassification::Script
+        );
         assert_eq!(classify_path("manage.py"), NodeClassification::Script);
         // Generated
-        assert_eq!(classify_path("api/foo.pb.go"), NodeClassification::Generated);
-        assert_eq!(classify_path("dist/bundle.min.js"), NodeClassification::Generated);
-        assert_eq!(classify_path("proto/foo.generated.rs"), NodeClassification::Generated);
+        assert_eq!(
+            classify_path("api/foo.pb.go"),
+            NodeClassification::Generated
+        );
+        assert_eq!(
+            classify_path("dist/bundle.min.js"),
+            NodeClassification::Generated
+        );
+        assert_eq!(
+            classify_path("proto/foo.generated.rs"),
+            NodeClassification::Generated
+        );
     }
 
     #[test]
     fn classify_path_production_default() {
         // Normal source files → Production (default)
-        assert_eq!(classify_path("src/models/user.py"), NodeClassification::Production);
-        assert_eq!(classify_path("handler/handler.go"), NodeClassification::Production);
+        assert_eq!(
+            classify_path("src/models/user.py"),
+            NodeClassification::Production
+        );
+        assert_eq!(
+            classify_path("handler/handler.go"),
+            NodeClassification::Production
+        );
         assert_eq!(classify_path("src/lib.rs"), NodeClassification::Production);
-        assert_eq!(classify_path("app/services/auth.ts"), NodeClassification::Production);
+        assert_eq!(
+            classify_path("app/services/auth.ts"),
+            NodeClassification::Production
+        );
     }
 
     #[test]
@@ -682,8 +768,7 @@ mod tests {
         // (elle yazmak Position struct tüm alanlarına bağımlı olur).
         let mut full = Node::default();
         full.id = 1;
-        let mut json_val: serde_json::Value =
-            serde_json::to_value(&full).expect("serialize");
+        let mut json_val: serde_json::Value = serde_json::to_value(&full).expect("serialize");
         // classification alanını çıkar → eski snapshot formatı
         json_val
             .as_object_mut()
@@ -749,10 +834,7 @@ mod tests {
     fn infer_role_runtime_default_for_production() {
         // Production + metrics yok + path pattern yok → Runtime (default).
         use super::{infer_role, NodeClassification as C, NodeRole as R};
-        assert_eq!(
-            infer_role("src/index.js", C::Production, None),
-            R::Runtime
-        );
+        assert_eq!(infer_role("src/index.js", C::Production, None), R::Runtime);
     }
 
     #[test]

@@ -36,7 +36,10 @@ fn main() -> anyhow::Result<()> {
 
     let result = analyze_repo(repo)?;
     let total = result.space.nodes.len();
-    println!("=== Role/Classification diagnostic: {} ({} nodes) ===\n", name, total);
+    println!(
+        "=== Role/Classification diagnostic: {} ({} nodes) ===\n",
+        name, total
+    );
 
     // Role dağılımı
     let mut role_counts: HashMap<NodeRole, usize> = HashMap::new();
@@ -93,7 +96,11 @@ fn main() -> anyhow::Result<()> {
 
     let support_total = *role_counts.get(&NodeRole::Support).unwrap_or(&0);
     println!("\n── Support role breakdown (which classifications feed it) ──");
-    println!("  Support total: {} ({}%)", support_total, pct(support_total, total));
+    println!(
+        "  Support total: {} ({}%)",
+        support_total,
+        pct(support_total, total)
+    );
     if support_total > 0 {
         for (cls, c) in support_by_cls.iter() {
             println!(
@@ -106,7 +113,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    println!("\n── Example paths per (role, classification) ──  (up to {} each)", sample_n);
+    println!(
+        "\n── Example paths per (role, classification) ──  (up to {} each)",
+        sample_n
+    );
     for ((role, cls), mut paths) in examples {
         // path'e göre sırala — grupları görmek için
         paths.sort();
@@ -137,11 +147,15 @@ fn main() -> anyhow::Result<()> {
     );
     println!(
         "    of which Test-origin: {:.1}% of repo ({} files, {:.0}% of Support)",
-        support_via_test_of_repo, support_via_test, support_test_ratio * 100.0
+        support_via_test_of_repo,
+        support_via_test,
+        support_test_ratio * 100.0
     );
     if support_test_ratio > 0.9 {
         println!("  ✓ Support çoğunlukla gerçek Test dosyaları — classifier geniş değil,");
-        println!("    repo test-heavy. advisory/vision-degrade mantığı burada asıl değerini verir.");
+        println!(
+            "    repo test-heavy. advisory/vision-degrade mantığı burada asıl değerini verir."
+        );
     } else {
         println!("  ◐ Support'a Test dışı (fixture/migration/script/config) karışımı yüksek —");
         println!("    path-pattern'leri bu repo için gözden geçir.");

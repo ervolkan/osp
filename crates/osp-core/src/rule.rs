@@ -159,15 +159,17 @@ impl Rule for EdgeTargetExistsRule {
         &self.id
     }
     fn evaluate(&self, nodes: &[Node], edges: &[Edge], space: &Space) -> Option<RuleViolation> {
-        let delta_ids: std::collections::HashSet<u64> =
-            nodes.iter().map(|n| n.id).collect();
+        let delta_ids: std::collections::HashSet<u64> = nodes.iter().map(|n| n.id).collect();
         for e in edges {
             let from_exists = space.nodes.contains_key(&e.from) || delta_ids.contains(&e.from);
             let to_exists = space.nodes.contains_key(&e.to) || delta_ids.contains(&e.to);
             if !from_exists {
                 return Some(RuleViolation {
                     rule_id: self.id.clone(),
-                    detail: format!("edge from={} does not exist (not in space or delta)", e.from),
+                    detail: format!(
+                        "edge from={} does not exist (not in space or delta)",
+                        e.from
+                    ),
                     severity: RuleSeverity::Hard,
                 });
             }

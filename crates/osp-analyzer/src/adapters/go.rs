@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use crate::contract::{ClassDef, ImportStatement, ImportKind, ResolvedImport};
-use crate::language::{LanguageAdapter, RepoContext};
 use super::shared;
+use crate::contract::{ClassDef, ImportKind, ImportStatement, ResolvedImport};
+use crate::language::{LanguageAdapter, RepoContext};
 
 pub struct GoAdapter;
 
@@ -25,11 +25,16 @@ impl LanguageAdapter for GoAdapter {
             Some(t) => t,
             None => return Vec::new(),
         };
-        let paths = shared::walk_imports(tree.root_node(), source.as_bytes(), &["import_declaration"]);
+        let paths =
+            shared::walk_imports(tree.root_node(), source.as_bytes(), &["import_declaration"]);
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
+            .map(|(i, path)| ImportStatement {
+                path,
+                source_location: i,
+                is_type_only: false,
+            })
             .collect()
     }
 
@@ -43,7 +48,10 @@ impl LanguageAdapter for GoAdapter {
         let path = &import.path;
         let is_stdlib = !path.contains('.') && !path.contains('/');
         if is_stdlib {
-            return Some(ResolvedImport { kind: ImportKind::StandardLibrary, target_path: None });
+            return Some(ResolvedImport {
+                kind: ImportKind::StandardLibrary,
+                target_path: None,
+            });
         }
         // Internal package? Check against go.mod module path.
         if let Some(module_path) = &repo.go_module_path {
@@ -60,11 +68,17 @@ impl LanguageAdapter for GoAdapter {
                     });
                 }
                 // Internal module path but no files found (empty/ excluded pkg) → Unknown.
-                return Some(ResolvedImport { kind: ImportKind::Unknown, target_path: None });
+                return Some(ResolvedImport {
+                    kind: ImportKind::Unknown,
+                    target_path: None,
+                });
             }
         }
         // Otherwise → external module (github.com/...).
-        Some(ResolvedImport { kind: ImportKind::External, target_path: None })
+        Some(ResolvedImport {
+            kind: ImportKind::External,
+            target_path: None,
+        })
     }
 
     fn extract_class_defs(&self, source: &str) -> Vec<ClassDef> {
@@ -94,7 +108,11 @@ import "github.com/gin-gonic/gin"
         let adapter = GoAdapter;
         let imports = adapter.extract_imports(src);
         assert!(imports.iter().any(|i| i.path == "fmt"), "{:?}", imports);
-        assert!(imports.iter().any(|i| i.path.contains("gin")), "{:?}", imports);
+        assert!(
+            imports.iter().any(|i| i.path.contains("gin")),
+            "{:?}",
+            imports
+        );
     }
 
     #[test]
@@ -102,16 +120,28 @@ import "github.com/gin-gonic/gin"
         let src = "package main\ntype Animal interface { Speak() }\ntype Dog struct {}\n";
         let adapter = GoAdapter;
         let defs = adapter.extract_class_defs(src);
-        assert!(defs.iter().any(|d| d.is_abstract), "interface should be abstract");
-        assert!(defs.iter().any(|d| !d.is_abstract), "struct should be concrete");
+        assert!(
+            defs.iter().any(|d| d.is_abstract),
+            "interface should be abstract"
+        );
+        assert!(
+            defs.iter().any(|d| !d.is_abstract),
+            "struct should be concrete"
+        );
     }
 
     #[test]
     fn go_resolve_stdlib() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
-        let import = ImportStatement { path: "fmt".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "fmt".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.go"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::StandardLibrary);
     }
 
@@ -119,8 +149,14 @@ import "github.com/gin-gonic/gin"
     fn go_resolve_external() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
-        let import = ImportStatement { path: "github.com/gin-gonic/gin".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "github.com/gin-gonic/gin".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.go"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
     }
 
@@ -136,7 +172,11 @@ import "github.com/gin-gonic/gin"
                 .as_nanos()
         ));
         std::fs::create_dir_all(dir.join("pkg/util")).unwrap();
-        std::fs::write(dir.join("go.mod"), "module github.com/example/foo\n\ngo 1.21\n").unwrap();
+        std::fs::write(
+            dir.join("go.mod"),
+            "module github.com/example/foo\n\ngo 1.21\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("main.go"), "package main\n").unwrap();
         std::fs::write(dir.join("pkg/util/util.go"), "package util\n").unwrap();
 
@@ -144,7 +184,10 @@ import "github.com/gin-gonic/gin"
             dir.clone(),
             vec![dir.join("main.go"), dir.join("pkg/util/util.go")],
         );
-        assert_eq!(repo.go_module_path.as_deref(), Some("github.com/example/foo"));
+        assert_eq!(
+            repo.go_module_path.as_deref(),
+            Some("github.com/example/foo")
+        );
 
         let adapter = GoAdapter;
         let import = ImportStatement {
@@ -156,7 +199,10 @@ import "github.com/gin-gonic/gin"
             .resolve_import(&import, dir.join("main.go").as_path(), &repo)
             .unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
-        assert_eq!(resolved.target_path.as_deref(), Some(dir.join("pkg/util/util.go").as_path()));
+        assert_eq!(
+            resolved.target_path.as_deref(),
+            Some(dir.join("pkg/util/util.go").as_path())
+        );
     }
 
     #[test]
@@ -164,8 +210,14 @@ import "github.com/gin-gonic/gin"
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
         for p in &["fmt", "os", "strings"] {
-            let import = ImportStatement { path: (*p).to_string(), source_location: 0, ..Default::default() };
-            let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
+            let import = ImportStatement {
+                path: (*p).to_string(),
+                source_location: 0,
+                ..Default::default()
+            };
+            let resolved = adapter
+                .resolve_import(&import, Path::new("/repo/main.go"), &repo)
+                .unwrap();
             assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
         }
     }

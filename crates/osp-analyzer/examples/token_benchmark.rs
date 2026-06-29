@@ -26,7 +26,10 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or("?".into());
 
     println!("╔══════════════════════════════════════════════════════╗");
-    println!("║  OSP Token Benchmark — {:<30} ║", &format!("{}/", repo_name));
+    println!(
+        "║  OSP Token Benchmark — {:<30} ║",
+        &format!("{}/", repo_name)
+    );
     println!("╚══════════════════════════════════════════════════════╝");
     println!();
 
@@ -45,18 +48,20 @@ fn main() -> anyhow::Result<()> {
     let mut full_text_size = 0usize;
     let mut file_count = 0usize;
 
-    fn walk_dir(
-        dir: &Path,
-        exts: &[&str],
-        total_size: &mut usize,
-        count: &mut usize,
-    ) {
+    fn walk_dir(dir: &Path, exts: &[&str], total_size: &mut usize, count: &mut usize) {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" {
+                    let name = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if name.starts_with('.')
+                        || name == "node_modules"
+                        || name == "target"
+                        || name == "__pycache__"
+                    {
                         continue;
                     }
                     walk_dir(&path, exts, total_size, count);
@@ -73,7 +78,12 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    walk_dir(path, &source_extensions, &mut full_text_size, &mut file_count);
+    walk_dir(
+        path,
+        &source_extensions,
+        &mut full_text_size,
+        &mut file_count,
+    );
 
     let baseline_tokens = full_text_size / 4;
     println!("── 1. Full Repo Baseline (all source files) ──");
@@ -118,8 +128,17 @@ fn main() -> anyhow::Result<()> {
     let context_2hop_tokens = context_2hop_size / 4;
 
     println!("── 2. 2-Hop Context Baseline (relevant files only) ──");
-    println!("   Target: node {} + {} neighbors (2-hop)", target_node, relevant_nodes.len() - 1);
-    println!("   Est. characters: {} ({} files × avg {} chars)", context_2hop_size, relevant_nodes.len(), avg_file_size);
+    println!(
+        "   Target: node {} + {} neighbors (2-hop)",
+        target_node,
+        relevant_nodes.len() - 1
+    );
+    println!(
+        "   Est. characters: {} ({} files × avg {} chars)",
+        context_2hop_size,
+        relevant_nodes.len(),
+        avg_file_size
+    );
     println!("   ≈ Tokens: {:>10}", format_num(context_2hop_tokens));
     println!();
 
@@ -141,9 +160,15 @@ fn main() -> anyhow::Result<()> {
     let osp_tokens = osp_total_bytes / 4;
 
     println!("── 3. OSP Coordinate Prompt (typed subgraph) ──");
-    println!("   Nodes: {} (coordinates: x,y,z,w,v per node)", relevant_nodes.len());
+    println!(
+        "   Nodes: {} (coordinates: x,y,z,w,v per node)",
+        relevant_nodes.len()
+    );
     println!("   Edges: {} (typed)", relevant_edges);
-    println!("   JSON est. characters: {} (120/node + 40/edge + 500 overhead)", osp_total_bytes);
+    println!(
+        "   JSON est. characters: {} (120/node + 40/edge + 500 overhead)",
+        osp_total_bytes
+    );
     println!("   ≈ Tokens: {:>10}", format_num(osp_tokens));
     println!();
 
@@ -156,17 +181,25 @@ fn main() -> anyhow::Result<()> {
         let full_ratio = osp_tokens as f64 / baseline_tokens as f64;
         let full_savings = (1.0 - full_ratio) * 100.0;
         println!();
-        println!("  vs Full Repo:      {:>6} → {:>6} = {:.2}% savings (1:{:.0})",
-            format_num(baseline_tokens), format_num(osp_tokens),
-            full_savings, baseline_tokens as f64 / osp_tokens as f64);
+        println!(
+            "  vs Full Repo:      {:>6} → {:>6} = {:.2}% savings (1:{:.0})",
+            format_num(baseline_tokens),
+            format_num(osp_tokens),
+            full_savings,
+            baseline_tokens as f64 / osp_tokens as f64
+        );
     }
 
     if osp_tokens > 0 && context_2hop_tokens > 0 {
         let ctx_ratio = osp_tokens as f64 / context_2hop_tokens as f64;
         let ctx_savings = (1.0 - ctx_ratio) * 100.0;
-        println!("  vs 2-Hop Context:  {:>6} → {:>6} = {:.2}% savings (1:{:.0})",
-            format_num(context_2hop_tokens), format_num(osp_tokens),
-            ctx_savings, context_2hop_tokens as f64 / osp_tokens as f64);
+        println!(
+            "  vs 2-Hop Context:  {:>6} → {:>6} = {:.2}% savings (1:{:.0})",
+            format_num(context_2hop_tokens),
+            format_num(osp_tokens),
+            ctx_savings,
+            context_2hop_tokens as f64 / osp_tokens as f64
+        );
     }
 
     println!();

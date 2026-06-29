@@ -254,7 +254,9 @@ impl VisionConfig {
     pub fn builtin_role_override(role: NodeRole) -> Option<RoleVisionOverride> {
         use NodeRole as R;
         let ovr = |x: f64, y: f64, z: f64| RoleVisionOverride {
-            x: Some(x), y: Some(y), z: Some(z),
+            x: Some(x),
+            y: Some(y),
+            z: Some(z),
         };
         match role {
             R::TypeSurface => Some(ovr(0.05, 0.80, 0.50)), // coupling relaxed (type-only ayrımı yapıldı)
@@ -392,7 +394,10 @@ v = 0.5
         let result = VisionConfig::from_str(toml);
         assert!(matches!(
             result,
-            Err(VisionConfigError::OutOfRange { field: "x", value: 1.5 })
+            Err(VisionConfigError::OutOfRange {
+                field: "x",
+                value: 1.5
+            })
         ));
     }
 

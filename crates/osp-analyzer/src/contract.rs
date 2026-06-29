@@ -91,16 +91,16 @@ pub struct AnalysisDiagnostic {
 /// Per-module (dosya) metrik paketi.
 #[derive(Debug, Clone)]
 pub struct ModuleMetrics {
-    pub coupling: MetricValue,     // x
-    pub cohesion: MetricValue,     // y (SCIP ise gerçek LCOM4; yoksa Placeholder)
-    pub instability: MetricValue,  // z (Martin I saf)
+    pub coupling: MetricValue,    // x
+    pub cohesion: MetricValue,    // y (SCIP ise gerçek LCOM4; yoksa Placeholder)
+    pub instability: MetricValue, // z (Martin I saf)
 }
 
 /// Repo-level metrik paketi.
 #[derive(Debug, Clone)]
 pub struct RepoMetrics {
-    pub abstractness: MetricValue,              // A — Tier 1 keyword check
-    pub main_sequence_distance: MetricValue,    // D = |A + I − 1|
+    pub abstractness: MetricValue,           // A — Tier 1 keyword check
+    pub main_sequence_distance: MetricValue, // D = |A + I − 1|
     /// Package-level breakdown (opsiyonel — rapor için).
     pub abstractness_by_package: Option<HashMap<String, f64>>,
 }

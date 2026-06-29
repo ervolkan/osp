@@ -28,8 +28,8 @@ pub fn osp_system_prompt() -> &'static str {
 /// The packet is pretty-printed JSON so the model can read coordinates at a
 /// glance; this is also what we measure token cost against.
 pub fn osp_user_prompt(prompt: &OspPrompt) -> String {
-    let json = serde_json::to_string_pretty(prompt)
-        .unwrap_or_else(|_| "<serialize failed>".to_string());
+    let json =
+        serde_json::to_string_pretty(prompt).unwrap_or_else(|_| "<serialize failed>".to_string());
     format!("OspPrompt:\n{json}\n\nProduce a DeltaProposal for this intent.")
 }
 

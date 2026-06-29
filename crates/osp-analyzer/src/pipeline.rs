@@ -14,8 +14,8 @@ use crate::contract::{
     DiagnosticSeverity, MetricValue, ModuleMetrics, RepoMetrics, SemanticCoverage,
 };
 use crate::language::{AdapterRegistry, RepoContext};
-use crate::scip::{load_scip_index, SemanticIndex};
 use crate::scip::lcom4::{compute_lcom4, module_cohesion, Lcom4Result};
+use crate::scip::{load_scip_index, SemanticIndex};
 
 /// Bir reponun tam analizini yap → AnalysisResult (gerçek A ile).
 pub fn analyze_repo(repo: &Path) -> anyhow::Result<AnalysisResult> {
@@ -124,7 +124,9 @@ pub fn analyze_repo_with_config(
                                     continue;
                                 }
                                 // Value-wins dedup: existing type-only + new value → false.
-                                let entry = seen_edges.entry((from_id, to_id)).or_insert(imp.is_type_only);
+                                let entry = seen_edges
+                                    .entry((from_id, to_id))
+                                    .or_insert(imp.is_type_only);
                                 if *entry && !imp.is_type_only {
                                     *entry = false;
                                 }
@@ -136,7 +138,13 @@ pub fn analyze_repo_with_config(
                             severity: DiagnosticSeverity::Info,
                             code: DiagnosticCode::UnknownImport,
                             message: format!("Unknown import: {}", imp.path),
-                            file: Some(fd.path.strip_prefix(&repo).unwrap_or(&fd.path).to_string_lossy().into_owned()),
+                            file: Some(
+                                fd.path
+                                    .strip_prefix(&repo)
+                                    .unwrap_or(&fd.path)
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            ),
                         });
                     }
                     _ => {}
@@ -236,7 +244,8 @@ pub fn analyze_repo_with_config(
                         .unwrap_or_else(|_| p.to_string_lossy().replace('\\', "/"))
                 })
                 .unwrap_or_default();
-            let refined = osp_core::space::infer_role(&rel_path, node.classification, Some(metrics));
+            let refined =
+                osp_core::space::infer_role(&rel_path, node.classification, Some(metrics));
             // infer_role Runtime dönerse (metric eşleşmezse) olduğu gibi kalsın;
             // Core/Adapter/Utility dönerse yükselt.
             if refined != osp_core::space::NodeRole::Runtime {
@@ -291,15 +300,11 @@ pub fn analyze_repo_with_config(
                     .classes_by_file
                     .get(rel_path)
                     .map(|classes| {
-                        let method_count: usize =
-                            classes.iter().map(|c| c.methods.len()).sum();
-                        let field_count: usize =
-                            classes.iter().map(|c| c.fields.len()).sum();
+                        let method_count: usize = classes.iter().map(|c| c.methods.len()).sum();
+                        let field_count: usize = classes.iter().map(|c| c.fields.len()).sum();
                         let max_lcom4 = classes
                             .iter()
-                            .map(|c| {
-                                crate::scip::lcom4::compute_lcom4(c).lcom4 as u32
-                            })
+                            .map(|c| crate::scip::lcom4::compute_lcom4(c).lcom4 as u32)
                             .max()
                             .unwrap_or(0);
                         crate::contract::NodeSemanticSummary {
@@ -440,7 +445,11 @@ fn collect_source_files(repo: &Path, registry: &AdapterRegistry) -> anyhow::Resu
     Ok(files)
 }
 
-fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, registry: &AdapterRegistry) -> anyhow::Result<()> {
+fn walk_dir(
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+    registry: &AdapterRegistry,
+) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -449,8 +458,17 @@ fn walk_dir(dir: &Path, files: &mut Vec<PathBuf>, registry: &AdapterRegistry) ->
             if name.starts_with('.')
                 || matches!(
                     name.as_str(),
-                    "node_modules" | "target" | "__pycache__" | "venv" | ".venu"
-                        | "env" | "build" | "dist" | "site-packages" | "vendor" | ".git"
+                    "node_modules"
+                        | "target"
+                        | "__pycache__"
+                        | "venv"
+                        | ".venu"
+                        | "env"
+                        | "build"
+                        | "dist"
+                        | "site-packages"
+                        | "vendor"
+                        | ".git"
                 )
             {
                 continue;
@@ -547,7 +565,11 @@ mod tests {
 
         // main → utils, utils → models = 2 internal edges
         assert_eq!(result.space.edge_count(), 2, "2 internal import edges");
-        assert!(result.space.edges.iter().all(|e| e.kind == EdgeKind::Imports));
+        assert!(result
+            .space
+            .edges
+            .iter()
+            .all(|e| e.kind == EdgeKind::Imports));
     }
 
     #[test]
@@ -616,7 +638,13 @@ mod tests {
             .space
             .nodes
             .values()
-            .find(|n| result2.node_paths.get(&n.id).map(|p| p.contains("test_")).unwrap_or(false))
+            .find(|n| {
+                result2
+                    .node_paths
+                    .get(&n.id)
+                    .map(|p| p.contains("test_"))
+                    .unwrap_or(false)
+            })
             .expect("test node should exist");
         assert_eq!(
             test_node.classification,
@@ -661,8 +689,14 @@ mod tests {
         // Every module has coupling + instability metrics (from CouplingAxis/InstabilityAxis)
         assert_eq!(result.module_metrics.len(), 3);
         for (_id, m) in &result.module_metrics {
-            assert!(m.coupling.value >= 0.0 && m.coupling.value < 1.0, "coupling ∈ [0,1)");
-            assert!(m.instability.value >= 0.0 && m.instability.value <= 1.0, "instability ∈ [0,1]");
+            assert!(
+                m.coupling.value >= 0.0 && m.coupling.value < 1.0,
+                "coupling ∈ [0,1)"
+            );
+            assert!(
+                m.instability.value >= 0.0 && m.instability.value <= 1.0,
+                "instability ∈ [0,1]"
+            );
             assert_eq!(m.coupling.source, MetricSource::TreeSitter);
             // Cohesion placeholder (SCIP pending)
             assert_eq!(m.cohesion.source, MetricSource::Placeholder);
@@ -705,7 +739,10 @@ mod tests {
         let dir = make_fixture();
         let result = analyze_repo(dir.path()).expect("analyze succeeded");
 
-        assert_eq!(result.repo_metrics.abstractness.source, MetricSource::TreeSitter);
+        assert_eq!(
+            result.repo_metrics.abstractness.source,
+            MetricSource::TreeSitter
+        );
         assert_eq!(
             result.repo_metrics.main_sequence_distance.source,
             MetricSource::TreeSitter
@@ -723,28 +760,59 @@ mod tests {
         // 2 nodes: node 0 (mass=10, ce=2, ca=0 → I=1.0), node 1 (mass=10, ce=0, ca=2 → I=0.0)
         // weighted = (1.0×10 + 0.0×10) / 20 = 0.5
         let mut space = Space::new();
-        space.insert_node(CoreNode { id: 0, kind: NodeKind::Module, mass: 10.0, ..Default::default() });
-        space.insert_node(CoreNode { id: 1, kind: NodeKind::Module, mass: 10.0, ..Default::default() });
-        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports, ..Default::default() });
-        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_node(CoreNode {
+            id: 0,
+            kind: NodeKind::Module,
+            mass: 10.0,
+            ..Default::default()
+        });
+        space.insert_node(CoreNode {
+            id: 1,
+            kind: NodeKind::Module,
+            mass: 10.0,
+            ..Default::default()
+        });
+        space.insert_edge(Edge {
+            from: 0,
+            to: 1,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
+        space.insert_edge(Edge {
+            from: 0,
+            to: 1,
+            kind: EdgeKind::Imports,
+            ..Default::default()
+        });
         let i = compute_repo_instability(&space);
         // node 0: ce=2, ca=0 → I=1.0; node 1: ce=0, ca=2 → I=0.0
         // weighted = (1.0×10 + 0.0×10)/20 = 0.5
-        assert!((i - 0.5).abs() < 1e-9, "mass-weighted instability should be 0.5, got {i}");
+        assert!(
+            (i - 0.5).abs() < 1e-9,
+            "mass-weighted instability should be 0.5, got {i}"
+        );
     }
 
     // --- SCIP integration: compute_module_cohesion ---
 
     use crate::scip::index::{ClassSemanticInfo, FieldAccess};
 
-    fn make_class(name: &str, methods: &[&str], fields: &[&str], accesses: &[(&str, &str)]) -> ClassSemanticInfo {
+    fn make_class(
+        name: &str,
+        methods: &[&str],
+        fields: &[&str],
+        accesses: &[(&str, &str)],
+    ) -> ClassSemanticInfo {
         ClassSemanticInfo {
             name: name.to_string(),
             methods: methods.iter().map(|s| s.to_string()).collect(),
             fields: fields.iter().map(|s| s.to_string()).collect(),
             field_access: accesses
                 .iter()
-                .map(|(m, f)| FieldAccess { method: m.to_string(), field: f.to_string() })
+                .map(|(m, f)| FieldAccess {
+                    method: m.to_string(),
+                    field: f.to_string(),
+                })
                 .collect(),
         }
     }
@@ -752,7 +820,11 @@ mod tests {
     #[test]
     fn compute_module_cohesion_without_scip_returns_placeholder() {
         let idx = SemanticIndex::empty();
-        let cohesion = compute_module_cohesion(std::path::Path::new("repo/foo.py"), std::path::Path::new("repo"), &idx);
+        let cohesion = compute_module_cohesion(
+            std::path::Path::new("repo/foo.py"),
+            std::path::Path::new("repo"),
+            &idx,
+        );
         assert_eq!(cohesion.source, MetricSource::Placeholder);
         assert!((cohesion.value - 0.5).abs() < 1e-9);
         assert_eq!(cohesion.confidence, 0.0);
@@ -764,27 +836,52 @@ mod tests {
         let class = make_class("Foo", &["m1", "m2"], &["f1"], &[("m1", "f1"), ("m2", "f1")]);
         let mut idx = SemanticIndex::empty();
         idx.classes.push(class.clone());
-        idx.classes_by_file.insert("foo.py".to_string(), vec![class]);
+        idx.classes_by_file
+            .insert("foo.py".to_string(), vec![class]);
         idx.files_indexed = 1;
 
-        let cohesion = compute_module_cohesion(std::path::Path::new("repo/foo.py"), std::path::Path::new("repo"), &idx);
-        assert_eq!(cohesion.source, MetricSource::Scip, "should be SCIP-sourced");
-        assert!((cohesion.value - 1.0).abs() < 1e-9, "cohesive class → cohesion=1.0");
+        let cohesion = compute_module_cohesion(
+            std::path::Path::new("repo/foo.py"),
+            std::path::Path::new("repo"),
+            &idx,
+        );
+        assert_eq!(
+            cohesion.source,
+            MetricSource::Scip,
+            "should be SCIP-sourced"
+        );
+        assert!(
+            (cohesion.value - 1.0).abs() < 1e-9,
+            "cohesive class → cohesion=1.0"
+        );
         assert!(cohesion.confidence > 0.0, "SCIP → confidence > 0");
     }
 
     #[test]
     fn compute_module_cohesion_fragmented_class_returns_low_cohesion() {
         // Fragmented: m1→f1 only, m2→f2 only → 2 components → LCOM4=2 → cohesion=0.5
-        let class = make_class("Bar", &["m1", "m2"], &["f1", "f2"], &[("m1", "f1"), ("m2", "f2")]);
+        let class = make_class(
+            "Bar",
+            &["m1", "m2"],
+            &["f1", "f2"],
+            &[("m1", "f1"), ("m2", "f2")],
+        );
         let mut idx = SemanticIndex::empty();
         idx.classes.push(class.clone());
-        idx.classes_by_file.insert("bar.py".to_string(), vec![class]);
+        idx.classes_by_file
+            .insert("bar.py".to_string(), vec![class]);
         idx.files_indexed = 1;
 
-        let cohesion = compute_module_cohesion(std::path::Path::new("repo/bar.py"), std::path::Path::new("repo"), &idx);
+        let cohesion = compute_module_cohesion(
+            std::path::Path::new("repo/bar.py"),
+            std::path::Path::new("repo"),
+            &idx,
+        );
         assert_eq!(cohesion.source, MetricSource::Scip);
-        assert!((cohesion.value - 0.5).abs() < 1e-9, "LCOM4=2 → cohesion=0.5");
+        assert!(
+            (cohesion.value - 0.5).abs() < 1e-9,
+            "LCOM4=2 → cohesion=0.5"
+        );
     }
 
     #[test]
@@ -793,11 +890,20 @@ mod tests {
         let class = make_class("Foo", &["m1"], &["f1"], &[("m1", "f1")]);
         let mut idx = SemanticIndex::empty();
         idx.classes.push(class.clone());
-        idx.classes_by_file.insert("other.py".to_string(), vec![class]);
+        idx.classes_by_file
+            .insert("other.py".to_string(), vec![class]);
         idx.files_indexed = 1;
 
-        let cohesion = compute_module_cohesion(std::path::Path::new("repo/missing.py"), std::path::Path::new("repo"), &idx);
-        assert_eq!(cohesion.source, MetricSource::Placeholder, "file not in SCIP → placeholder");
+        let cohesion = compute_module_cohesion(
+            std::path::Path::new("repo/missing.py"),
+            std::path::Path::new("repo"),
+            &idx,
+        );
+        assert_eq!(
+            cohesion.source,
+            MetricSource::Placeholder,
+            "file not in SCIP → placeholder"
+        );
     }
 
     #[test]
@@ -806,7 +912,8 @@ mod tests {
         let class = make_class("Baz", &["m1"], &["f1"], &[("m1", "f1")]);
         let mut idx = SemanticIndex::empty();
         idx.classes.push(class.clone());
-        idx.classes_by_file.insert("src/baz.py".to_string(), vec![class]);
+        idx.classes_by_file
+            .insert("src/baz.py".to_string(), vec![class]);
         idx.files_indexed = 1;
 
         // Pipeline gives "repo\src\baz.py" on Windows, strip_prefix → "src\baz.py"
@@ -816,7 +923,11 @@ mod tests {
             std::path::Path::new("repo"),
             &idx,
         );
-        assert_eq!(cohesion.source, MetricSource::Scip, "normalized path should match");
+        assert_eq!(
+            cohesion.source,
+            MetricSource::Scip,
+            "normalized path should match"
+        );
     }
 
     // --- build_semantic_coverage ---
@@ -836,7 +947,8 @@ mod tests {
         let mut idx = SemanticIndex::empty();
         idx.files_indexed = 8;
         idx.files_total = 8;
-        idx.classes.push(make_class("A", &["m1"], &["f1"], &[("m1", "f1")]));
+        idx.classes
+            .push(make_class("A", &["m1"], &["f1"], &[("m1", "f1")]));
 
         let cov = build_semantic_coverage(&idx, 10, "abc123".to_string());
         assert!((cov.coverage_ratio - 0.8).abs() < 1e-9, "8/10 = 0.8");
@@ -871,7 +983,8 @@ mod tests {
             ..Default::default()
         };
         // Should not error — fall back to placeholder
-        let result = analyze_repo_with_config(dir.path(), &registry, &config).expect("graceful fallback");
+        let result =
+            analyze_repo_with_config(dir.path(), &registry, &config).expect("graceful fallback");
         for m in result.module_metrics.values() {
             assert_eq!(m.cohesion.source, MetricSource::Placeholder);
         }

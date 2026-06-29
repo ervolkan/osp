@@ -87,7 +87,9 @@ fn strip_code_fence(s: &str) -> String {
     let s = s.trim();
     if let Some(rest) = s.strip_prefix("```") {
         // skip optional language tag on the opening fence line
-        let rest = rest.trim_start_matches(['j', 's', 'o', 'n']).trim_start_matches('\n');
+        let rest = rest
+            .trim_start_matches(['j', 's', 'o', 'n'])
+            .trim_start_matches('\n');
         if let Some(inner) = rest.strip_suffix("```") {
             return inner.trim().to_string();
         }
@@ -161,7 +163,8 @@ mod tests {
 
     #[test]
     fn parse_raw_missing_choices_is_bad_response() {
-        let body = r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"#;
+        let body =
+            r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}"#;
         assert!(matches!(parse_raw(body), Err(LlmError::BadResponse(_))));
     }
 

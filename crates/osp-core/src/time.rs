@@ -21,12 +21,7 @@ use crate::witness::{evaluate, Claim, WitnessResult, WitnessSet};
 /// `advance()` bir Claim'i değerlendirir (Q1-Q3) + (Commit ise) `apply_delta` ile
 /// space'i mutasyona uğratır. Dönüş: `WitnessResult` (Commit/Reject/Hold).
 pub trait TimeMachine {
-    fn advance(
-        &mut self,
-        space: &mut Space,
-        claim: &Claim,
-        omega: &WitnessSet,
-    ) -> WitnessResult;
+    fn advance(&mut self, space: &mut Space, claim: &Claim, omega: &WitnessSet) -> WitnessResult;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -42,12 +37,7 @@ pub trait TimeMachine {
 pub struct TimeFSM;
 
 impl TimeMachine for TimeFSM {
-    fn advance(
-        &mut self,
-        space: &mut Space,
-        claim: &Claim,
-        omega: &WitnessSet,
-    ) -> WitnessResult {
+    fn advance(&mut self, space: &mut Space, claim: &Claim, omega: &WitnessSet) -> WitnessResult {
         match evaluate(claim, omega) {
             WitnessResult::Commit {
                 mut delta,
@@ -144,8 +134,9 @@ mod tests {
         let mut space = Space::new();
         let claim = claim_with(100, 42);
         let omega = WitnessSet::new(vec![ev(1, 200), ev(2, 300)]);
-        if let WitnessResult::Commit { safety_weakened, .. } =
-            fsm.advance(&mut space, &claim, &omega)
+        if let WitnessResult::Commit {
+            safety_weakened, ..
+        } = fsm.advance(&mut space, &claim, &omega)
         {
             // Faz 1.5 evaluate hep false (admin override Faz 1.11+)
             assert!(!safety_weakened);
@@ -177,7 +168,10 @@ mod tests {
         for i in 1..=5 {
             let claim = claim_with(100, i);
             let r = fsm.advance(&mut space, &claim, &omega);
-            assert!(matches!(r, WitnessResult::Commit { .. }), "advance #{i} Commit olmalı");
+            assert!(
+                matches!(r, WitnessResult::Commit { .. }),
+                "advance #{i} Commit olmalı"
+            );
         }
         assert_eq!(space.node_count(), 5, "5 commit → 5 node");
     }

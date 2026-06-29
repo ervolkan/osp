@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use crate::contract::{ClassDef, ImportStatement, ImportKind, ResolvedImport};
-use crate::language::{LanguageAdapter, RepoContext};
 use super::shared;
+use crate::contract::{ClassDef, ImportKind, ImportStatement, ResolvedImport};
+use crate::language::{LanguageAdapter, RepoContext};
 
 pub struct RustAdapter;
 
@@ -29,7 +29,11 @@ impl LanguageAdapter for RustAdapter {
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
+            .map(|(i, path)| ImportStatement {
+                path,
+                source_location: i,
+                is_type_only: false,
+            })
             .collect()
     }
 
@@ -48,21 +52,36 @@ impl LanguageAdapter for RustAdapter {
             || import.path == "self";
         if is_internal {
             if let Some(target) = shared::resolve_rust_use(&import.path, &repo.resolver).cloned() {
-                return Some(ResolvedImport { kind: ImportKind::Internal, target_path: Some(target) });
+                return Some(ResolvedImport {
+                    kind: ImportKind::Internal,
+                    target_path: Some(target),
+                });
             }
             // crate::/super::/self:: that didn't resolve → Unknown (likely same-crate
             // module we couldn't map to a file, e.g. inline mod).
-            return Some(ResolvedImport { kind: ImportKind::Unknown, target_path: None });
+            return Some(ResolvedImport {
+                kind: ImportKind::Unknown,
+                target_path: None,
+            });
         }
         // std:: → standard library
-        if import.path.starts_with("std::") || import.path == "std"
-            || import.path.starts_with("alloc::") || import.path == "alloc"
-            || import.path.starts_with("core::") || import.path == "core"
+        if import.path.starts_with("std::")
+            || import.path == "std"
+            || import.path.starts_with("alloc::")
+            || import.path == "alloc"
+            || import.path.starts_with("core::")
+            || import.path == "core"
         {
-            return Some(ResolvedImport { kind: ImportKind::StandardLibrary, target_path: None });
+            return Some(ResolvedImport {
+                kind: ImportKind::StandardLibrary,
+                target_path: None,
+            });
         }
         // Otherwise → external crate (serde, tokio, ...)
-        Some(ResolvedImport { kind: ImportKind::External, target_path: None })
+        Some(ResolvedImport {
+            kind: ImportKind::External,
+            target_path: None,
+        })
     }
 
     fn extract_class_defs(&self, source: &str) -> Vec<ClassDef> {
@@ -86,9 +105,21 @@ mod tests {
         let src = "use std::collections::HashMap;\nuse crate::foo::Bar;\nuse serde::Serialize;\n";
         let adapter = RustAdapter;
         let imports = adapter.extract_imports(src);
-        assert!(imports.iter().any(|i| i.path.contains("std")), "{:?}", imports);
-        assert!(imports.iter().any(|i| i.path.contains("crate")), "{:?}", imports);
-        assert!(imports.iter().any(|i| i.path.contains("serde")), "{:?}", imports);
+        assert!(
+            imports.iter().any(|i| i.path.contains("std")),
+            "{:?}",
+            imports
+        );
+        assert!(
+            imports.iter().any(|i| i.path.contains("crate")),
+            "{:?}",
+            imports
+        );
+        assert!(
+            imports.iter().any(|i| i.path.contains("serde")),
+            "{:?}",
+            imports
+        );
     }
 
     #[test]
@@ -96,16 +127,28 @@ mod tests {
         let src = "trait Animal { fn speak(&self); }\nstruct Dog;\nimpl Animal for Dog { fn speak(&self) {} }\n";
         let adapter = RustAdapter;
         let defs = adapter.extract_class_defs(src);
-        assert!(defs.iter().any(|d| d.is_abstract), "trait should be abstract");
-        assert!(defs.iter().any(|d| !d.is_abstract), "struct should be concrete");
+        assert!(
+            defs.iter().any(|d| d.is_abstract),
+            "trait should be abstract"
+        );
+        assert!(
+            defs.iter().any(|d| !d.is_abstract),
+            "struct should be concrete"
+        );
     }
 
     #[test]
     fn rust_resolve_stdlib() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "std::collections::HashMap".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "std::collections::HashMap".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.rs"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::StandardLibrary);
     }
 
@@ -113,8 +156,14 @@ mod tests {
     fn rust_resolve_external() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "serde::Serialize".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "serde::Serialize".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.rs"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
     }
 
@@ -123,13 +172,25 @@ mod tests {
         // crate::models::User → drop "User" → resolve to /repo/models.rs
         let repo = RepoContext::new(
             PathBuf::from("/repo"),
-            vec![PathBuf::from("/repo/models.rs"), PathBuf::from("/repo/main.rs")],
+            vec![
+                PathBuf::from("/repo/models.rs"),
+                PathBuf::from("/repo/main.rs"),
+            ],
         );
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "crate::models::User".into(), source_location: 0, ..Default::default() };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "crate::models::User".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/main.rs"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
-        assert_eq!(resolved.target_path.as_deref(), Some(std::path::Path::new("/repo/models.rs")));
+        assert_eq!(
+            resolved.target_path.as_deref(),
+            Some(std::path::Path::new("/repo/models.rs"))
+        );
     }
 
     #[test]
@@ -148,8 +209,14 @@ mod tests {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
         for p in ["alloc::sync::Arc", "core::fmt::Debug"] {
-            let import = ImportStatement { path: p.into(), source_location: 0, ..Default::default() };
-            let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
+            let import = ImportStatement {
+                path: p.into(),
+                source_location: 0,
+                ..Default::default()
+            };
+            let resolved = adapter
+                .resolve_import(&import, Path::new("/repo/main.rs"), &repo)
+                .unwrap();
             assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
         }
     }

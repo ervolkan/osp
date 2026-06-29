@@ -142,7 +142,11 @@ fn scenario_2_q5_vision_rejection() {
         "Q5 vision violation must reject"
     );
     // NO mutation — Safety guarantee
-    assert_eq!(engine.space().node_count(), 0, "no mutation after Q5 reject");
+    assert_eq!(
+        engine.space().node_count(),
+        0,
+        "no mutation after Q5 reject"
+    );
     assert_eq!(engine.t_c(), 0, "t_c unchanged after Q5 reject");
 
     // Now commit a GOOD claim — should succeed (space still clean)

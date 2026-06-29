@@ -12,7 +12,11 @@ use crate::model::WitnessProfile;
 
 /// Bir reponun git geçmişini analiz eder ve şahitlik profili üretir.
 pub fn analyze(repo: &Path) -> Result<WitnessProfile> {
-    anyhow::ensure!(repo.join(".git").exists(), "repo .git içermiyor: {:?}", repo);
+    anyhow::ensure!(
+        repo.join(".git").exists(),
+        "repo .git içermiyor: {:?}",
+        repo
+    );
 
     let default_branch = detect_default_branch(repo)?;
     // #3 (güvenlik): default_branch dış `git` çıktısından geldiği için
@@ -81,7 +85,10 @@ fn validate_ref_name(name: &str) -> Result<()> {
 /// Default branch'i tespit eder: `git symbolic-ref refs/remotes/origin/HEAD`.
 /// Başarısız olursa `main`, o da yoksa `master` dener.
 fn detect_default_branch(repo: &Path) -> Result<String> {
-    if let Ok(out) = run_git(repo, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]) {
+    if let Ok(out) = run_git(
+        repo,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    ) {
         let trimmed = out.trim();
         // Çıktı genelde `origin/main` biçiminde; prefix'i ayıkla.
         let name = trimmed.rsplit_once('/').map(|(_, n)| n).unwrap_or(trimmed);
@@ -105,13 +112,16 @@ fn rev_list_count(repo: &Path, args: &[&str]) -> Result<usize> {
     let mut full = vec!["rev-list", "--count"];
     full.extend_from_slice(args);
     let out = run_git(repo, &full)?;
-    out.trim().parse::<usize>().context("rev-list --count sayı değil")
+    out.trim()
+        .parse::<usize>()
+        .context("rev-list --count sayı değil")
 }
 
 /// Bir `git log --format=...` çıktısındaki distinct satır sayısını sayar.
 fn distinct_values(repo: &Path, args: &[&str]) -> Result<usize> {
     let out = run_git(repo, args)?;
-    let set: std::collections::BTreeSet<&str> = out.lines().filter(|l| !l.trim().is_empty()).collect();
+    let set: std::collections::BTreeSet<&str> =
+        out.lines().filter(|l| !l.trim().is_empty()).collect();
     Ok(set.len())
 }
 
@@ -137,7 +147,10 @@ fn shannon_entropy(counts: &[u32]) -> f64 {
 fn commit_entropy(repo: &Path) -> Result<f64> {
     // --no-merges: gerçek "iş" commit'leri; --name-only: dokunulan dosyalar;
     // --format='': commit başlık satırını baskıla, yalnızca dosya listesi kalsın.
-    let out = run_git(repo, &["log", "--all", "--no-merges", "--name-only", "--format="])?;
+    let out = run_git(
+        repo,
+        &["log", "--all", "--no-merges", "--name-only", "--format="],
+    )?;
     let mut counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
     for line in out.lines() {
         let l = line.trim();

@@ -194,7 +194,11 @@ pub fn run_v2_pipeline(analysis: &RepoAnalysis) -> V2Report {
     let (sample_id, sample_mass, sample_raw) = space
         .nodes
         .iter()
-        .max_by(|(_, a), (_, b)| a.mass.partial_cmp(&b.mass).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|(_, a), (_, b)| {
+            a.mass
+                .partial_cmp(&b.mass)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(id, node)| {
             let raw = cs.raw_position_of(node, &space);
             (*id, node.mass, raw)
@@ -273,8 +277,12 @@ pub fn print_v2_comparison(reports: &[V2Report]) -> anyhow::Result<()> {
         );
     }
     println!();
-    println!("Sample node = highest-mass (LOC). Vision = (0.4, 0.7, 0.5, 0.5, 0.5) declared ideal.");
-    println!("y (cohesion) = 0.5 placeholder (LCOM4 → Faz 3 SCIP). A (abstractness) = 0.5 placeholder.");
+    println!(
+        "Sample node = highest-mass (LOC). Vision = (0.4, 0.7, 0.5, 0.5, 0.5) declared ideal."
+    );
+    println!(
+        "y (cohesion) = 0.5 placeholder (LCOM4 → Faz 3 SCIP). A (abstractness) = 0.5 placeholder."
+    );
     println!();
     Ok(())
 }
@@ -413,11 +421,29 @@ mod tests {
         // Bu, squash kör-noktasının çözüldüğünün kanıtıdır.
         let cases = &[
             // (name, total_commits, merge_commits, distinct_authors, expected)
-            ("worms-supabase", 50_usize, 0_usize, 1_usize, WitnessStatus::Unwitnessed),
+            (
+                "worms-supabase",
+                50_usize,
+                0_usize,
+                1_usize,
+                WitnessStatus::Unwitnessed,
+            ),
             ("click", 3242, 1141, 30, WitnessStatus::Witnessed),
             ("fastapi", 7336, 13, 100, WitnessStatus::UnobservableLocally),
-            ("django", 34704, 591, 100, WitnessStatus::UnobservableLocally),
-            ("date-fns", 2588, 152, 50, WitnessStatus::UnobservableLocally),
+            (
+                "django",
+                34704,
+                591,
+                100,
+                WitnessStatus::UnobservableLocally,
+            ),
+            (
+                "date-fns",
+                2588,
+                152,
+                50,
+                WitnessStatus::UnobservableLocally,
+            ),
         ];
         for (name, total, merges, authors, expected) in cases {
             let w = profile(*total, *merges, *authors);
@@ -443,14 +469,20 @@ mod tests {
         assert_eq!(spike_witness_classify(&w), WitnessStatus::Witnessed);
         // %9 → squash şüphesi (multi-author)
         let w2 = profile(100, 9, 5); // 9/100 = %9
-        assert_eq!(spike_witness_classify(&w2), WitnessStatus::UnobservableLocally);
+        assert_eq!(
+            spike_witness_classify(&w2),
+            WitnessStatus::UnobservableLocally
+        );
     }
 
     #[test]
     fn classify_two_authors_low_merge_still_unobservable() {
         // 2 author + düşük merge → hala UnobservableLocally (≤1 değil)
         let w = profile(1000, 5, 2);
-        assert_eq!(spike_witness_classify(&w), WitnessStatus::UnobservableLocally);
+        assert_eq!(
+            spike_witness_classify(&w),
+            WitnessStatus::UnobservableLocally
+        );
     }
 
     // --- Faz 1.10: run_v2_pipeline (full integration) ---
@@ -503,7 +535,11 @@ mod tests {
         // raw_x: node 1 has 1 import → 1/(1+1) = 0.5
         assert!((r.raw_x - 0.5).abs() < 1e-9, "raw_x = {}", r.raw_x);
         // raw_z: node 1 Ce=1, Ca=0 → I = 1.0 (pure unstable leaf)
-        assert!((r.raw_z - 1.0).abs() < 1e-9, "raw_z (instability) = {}", r.raw_z);
+        assert!(
+            (r.raw_z - 1.0).abs() < 1e-9,
+            "raw_z (instability) = {}",
+            r.raw_z
+        );
         // derived θ ve D finite
         assert!(r.derived_theta.is_finite());
         assert!(r.derived_d.is_finite());

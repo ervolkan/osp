@@ -124,9 +124,7 @@ fn has_statement_level_type_qualifier(node: &Node, source: &[u8]) -> bool {
                 let gap_text = std::str::from_utf8(gap).unwrap_or("").trim();
                 // gap = "import type" veya "import typeof" (import keyword + qualifier)
                 // "import" kelimesini çıkar, kalanı kontrol et
-                let after_import = gap_text
-                    .trim_start_matches("import")
-                    .trim();
+                let after_import = gap_text.trim_start_matches("import").trim();
                 return after_import == "type" || after_import == "typeof";
             }
         }
@@ -251,7 +249,7 @@ fn extract_import_path(node: &Node, source: &[u8], imports: &mut Vec<String>) {
 pub fn walk_class_defs(
     root: Node,
     source: &str,
-    _class_node_kind: &str,  // ignored — uses contains("class") for robustness
+    _class_node_kind: &str, // ignored — uses contains("class") for robustness
     abstract_patterns: &[&str],
 ) -> Vec<ClassDef> {
     let source_bytes = source.as_bytes();
@@ -268,10 +266,10 @@ pub fn walk_class_defs(
             || k == "struct_item"                           // Rust concrete
             || k == "trait_item"                            // Rust abstract (trait)
             || k == "enum_item"                             // Rust concrete (enum)
-            || k == "type_declaration";                     // Go
-        // TS interface/type_alias abstract sayılır (Martin: interface = abstract contract).
-        // extract_class_def abstract_patterns'e bakar ama biz bu node kind'lerini
-        // doğrudan abstract işaretliyoruz — TS adapter'da pattern gerekmez.
+            || k == "type_declaration"; // Go
+                                        // TS interface/type_alias abstract sayılır (Martin: interface = abstract contract).
+                                        // extract_class_def abstract_patterns'e bakar ama biz bu node kind'lerini
+                                        // doğrudan abstract işaretliyoruz — TS adapter'da pattern gerekmez.
         let force_abstract = k == "interface_declaration" || k == "type_alias_declaration";
         if is_class_def {
             if let Some(mut def) = extract_class_def(&n, source_bytes, abstract_patterns) {
@@ -290,11 +288,7 @@ pub fn walk_class_defs(
     defs
 }
 
-fn extract_class_def(
-    node: &Node,
-    source: &[u8],
-    abstract_patterns: &[&str],
-) -> Option<ClassDef> {
+fn extract_class_def(node: &Node, source: &[u8], abstract_patterns: &[&str]) -> Option<ClassDef> {
     let full_text = node.utf8_text(source).ok()?.to_string();
     let is_abstract = abstract_patterns.iter().any(|&p| full_text.contains(p));
 
@@ -548,11 +542,7 @@ impl GoPackageIndex {
     ///
     /// `import_path` must already be confirmed internal (starts with `module_path`).
     /// Returns None if the target package directory contains no indexed `.go` files.
-    pub fn resolve(
-        &self,
-        import_path: &str,
-        module_path: &str,
-    ) -> Option<&std::path::PathBuf> {
+    pub fn resolve(&self, import_path: &str, module_path: &str) -> Option<&std::path::PathBuf> {
         // Strip module prefix + '/'. import_path uses forward slashes.
         let rest = import_path
             .strip_prefix(module_path)
@@ -566,11 +556,17 @@ impl GoPackageIndex {
         let pkg_name = pkg_dir.rsplit('/').next().unwrap_or(&pkg_dir);
         // Priority 1: <pkg>/<pkgname>.go (conventional primary file).
         let primary = format!("/{pkg_name}.go");
-        if let Some(p) = files.iter().find(|f| f.to_string_lossy().ends_with(&primary)) {
+        if let Some(p) = files
+            .iter()
+            .find(|f| f.to_string_lossy().ends_with(&primary))
+        {
             return Some(p);
         }
         // Priority 2: first non-test .go file.
-        if let Some(p) = files.iter().find(|f| !f.to_string_lossy().ends_with("_test.go")) {
+        if let Some(p) = files
+            .iter()
+            .find(|f| !f.to_string_lossy().ends_with("_test.go"))
+        {
             return Some(p);
         }
         // Priority 3: any file (only test files exist).
@@ -588,7 +584,8 @@ impl GoPackageIndex {
 #[derive(Debug, Clone)]
 pub struct ImportResolver {
     map: std::collections::HashMap<String, std::path::PathBuf>,
-}impl ImportResolver {
+}
+impl ImportResolver {
     /// Tüm dosyalardan HashMap kur. O(N × avg_depth).
     pub fn build(all_files: &[std::path::PathBuf]) -> Self {
         let mut map = std::collections::HashMap::new();
@@ -621,8 +618,13 @@ pub struct ImportResolver {
 
 /// Eski linear resolver — geri uyumluluk için (deprecated, ImportResolver kullanın).
 #[deprecated(note = "ImportResolver::build + resolve kullanın — O(1) lookup")]
-pub fn try_resolve_internal(import_path: &str, all_files: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
-    ImportResolver::build(all_files).resolve(import_path).cloned()
+pub fn try_resolve_internal(
+    import_path: &str,
+    all_files: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    ImportResolver::build(all_files)
+        .resolve(import_path)
+        .cloned()
 }
 
 fn path_normalized_dotted(s: &str) -> String {
@@ -672,7 +674,10 @@ mod tests {
         let files = vec![pb("/repo/src/models/user.py")];
         let resolver = ImportResolver::build(&files);
         // All suffix keys: "user", "models.user", "src.models.user", "repo.src.models.user"
-        assert_eq!(resolver.resolve("models.user"), Some(&pb("/repo/src/models/user.py")));
+        assert_eq!(
+            resolver.resolve("models.user"),
+            Some(&pb("/repo/src/models/user.py"))
+        );
         assert_eq!(
             resolver.resolve("src.models.user"),
             Some(&pb("/repo/src/models/user.py"))
@@ -684,8 +689,14 @@ mod tests {
         // Import paths use / or \ — resolver normalizes to dots
         let files = vec![pb("/repo/src/foo/bar.py")];
         let resolver = ImportResolver::build(&files);
-        assert_eq!(resolver.resolve("src/foo/bar"), Some(&pb("/repo/src/foo/bar.py")));
-        assert_eq!(resolver.resolve("src\\foo\\bar"), Some(&pb("/repo/src/foo/bar.py")));
+        assert_eq!(
+            resolver.resolve("src/foo/bar"),
+            Some(&pb("/repo/src/foo/bar.py"))
+        );
+        assert_eq!(
+            resolver.resolve("src\\foo\\bar"),
+            Some(&pb("/repo/src/foo/bar.py"))
+        );
     }
 
     #[test]
@@ -730,7 +741,10 @@ mod tests {
         assert_eq!(resolver.resolve("main"), Some(&pb("/repo/main.py")));
         assert_eq!(resolver.resolve("utils"), Some(&pb("/repo/utils.py")));
         assert_eq!(resolver.resolve("user"), Some(&pb("/repo/models/user.py")));
-        assert_eq!(resolver.resolve("models.user"), Some(&pb("/repo/models/user.py")));
+        assert_eq!(
+            resolver.resolve("models.user"),
+            Some(&pb("/repo/models/user.py"))
+        );
     }
 
     #[test]
@@ -776,7 +790,10 @@ mod tests {
     #[test]
     fn path_normalized_dotted_extracts_parents_and_stem() {
         // Relative paths (cross-platform — absolute paths include root prefix on Windows)
-        assert_eq!(path_normalized_dotted("repo/src/models/user.py"), "repo.src.models.user");
+        assert_eq!(
+            path_normalized_dotted("repo/src/models/user.py"),
+            "repo.src.models.user"
+        );
         assert_eq!(path_normalized_dotted("user.py"), "user");
         assert_eq!(path_normalized_dotted("a/b/c.py"), "a.b.c");
     }
@@ -833,7 +850,10 @@ mod tests {
     fn resolve_rust_use_returns_none_for_unresolvable() {
         let files = vec![pb("/repo/main.rs")];
         let resolver = ImportResolver::build(&files);
-        assert_eq!(resolve_rust_use("crate::nonexistent::Thing", &resolver), None);
+        assert_eq!(
+            resolve_rust_use("crate::nonexistent::Thing", &resolver),
+            None
+        );
     }
 
     // --- expand_rust_use_group (grouped + nested imports) ---
@@ -856,10 +876,7 @@ mod tests {
     fn expand_rust_use_group_handles_nested_group() {
         let mut out = Vec::new();
         expand_rust_use_group("", "foo::bar::{A, B::{C, D}}", &mut out);
-        assert_eq!(
-            out,
-            vec!["foo::bar::A", "foo::bar::B::C", "foo::bar::B::D"]
-        );
+        assert_eq!(out, vec!["foo::bar::A", "foo::bar::B::C", "foo::bar::B::D"]);
     }
 
     #[test]
@@ -874,7 +891,11 @@ mod tests {
     #[test]
     fn detect_go_module_path_reads_go_mod() {
         let dir = tempdir();
-        std::fs::write(dir.join("go.mod"), "module github.com/example/foo\n\ngo 1.21\n").unwrap();
+        std::fs::write(
+            dir.join("go.mod"),
+            "module github.com/example/foo\n\ngo 1.21\n",
+        )
+        .unwrap();
         assert_eq!(
             detect_go_module_path(&dir),
             Some("github.com/example/foo".to_string())
@@ -905,7 +926,10 @@ mod tests {
     fn go_package_index_falls_back_to_first_non_test() {
         // No primary file (no baz.go) → first non-test file (sorted: util.go).
         let root = pb("/repo");
-        let files = vec![pb("/repo/pkg/baz/util.go"), pb("/repo/pkg/baz/util_test.go")];
+        let files = vec![
+            pb("/repo/pkg/baz/util.go"),
+            pb("/repo/pkg/baz/util_test.go"),
+        ];
         let idx = GoPackageIndex::build(&root, &files);
         let target = idx.resolve("github.com/example/foo/pkg/baz", "github.com/example/foo");
         assert_eq!(target, Some(&pb("/repo/pkg/baz/util.go")));
@@ -947,9 +971,14 @@ mod tests {
         // Import of pkg/util must NOT resolve into internal/pkg/util.
         let target = idx.resolve("github.com/example/foo/pkg/util", "github.com/example/foo");
         assert_eq!(target, Some(&pb("/repo/pkg/util/util.go")));
-        let target2 =
-            idx.resolve("github.com/example/foo/internal/pkg/util", "github.com/example/foo");
-        assert_eq!(target2, Some(&pb("/repo/internal/pkg/util/internal_util.go")));
+        let target2 = idx.resolve(
+            "github.com/example/foo/internal/pkg/util",
+            "github.com/example/foo",
+        );
+        assert_eq!(
+            target2,
+            Some(&pb("/repo/internal/pkg/util/internal_util.go"))
+        );
     }
 
     fn tempdir() -> std::path::PathBuf {

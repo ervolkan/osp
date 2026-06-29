@@ -25,7 +25,10 @@ use std::path::{Path, PathBuf};
 use osp_analyzer::{analyze_repo, AnalysisResult};
 use osp_core::space::EdgeKind;
 
-use osp_llm_runtime::{osp_system_prompt, raw_dump_user_prompt, raw_system_prompt, CompletionRequest, Runtime, RuntimeConfig};
+use osp_llm_runtime::{
+    osp_system_prompt, raw_dump_user_prompt, raw_system_prompt, CompletionRequest, Runtime,
+    RuntimeConfig,
+};
 
 /// Number of modules to include per prompt. Fixed across repos so token
 /// comparisons isolate representation quality, not prompt scale.
@@ -49,8 +52,7 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("no repos found. {USAGE}");
     }
 
-    let model =
-        std::env::var("OSP_BENCH_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+    let model = std::env::var("OSP_BENCH_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
     let cfg = RuntimeConfig {
         model: model.clone(),
         max_tokens: 300,
@@ -66,7 +68,11 @@ fn main() -> anyhow::Result<()> {
 
     let mut results: Vec<RepoResult> = Vec::new();
     for repo in &repos {
-        let name = repo.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+        let name = repo
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
         match run_one(&runtime, repo, &name) {
             Ok(r) => {
                 println!(
@@ -182,12 +188,15 @@ fn build_prompts(
         let node = analysis.space.nodes.get(id);
         let mass = node.map(|n| n.mass).unwrap_or(0.0);
         let (x, y, z) = (m.coupling.value, m.cohesion.value, m.instability.value);
-        osp_nodes_json.push(serde_json::json!({
-            "id": id,
-            "kind": "Module",
-            "mass": (mass as u64),
-            "position": {"x": round3(x), "y": round3(y), "z": round3(z), "w": 0.55, "v": 0.60}
-        }).to_string());
+        osp_nodes_json.push(
+            serde_json::json!({
+                "id": id,
+                "kind": "Module",
+                "mass": (mass as u64),
+                "position": {"x": round3(x), "y": round3(y), "z": round3(z), "w": 0.55, "v": 0.60}
+            })
+            .to_string(),
+        );
         let _ = i;
     }
 
@@ -195,9 +204,13 @@ fn build_prompts(
     let sample_set: std::collections::HashSet<_> = sample_ids.iter().copied().collect();
     let mut osp_edges_json = Vec::new();
     for e in &analysis.space.edges {
-        if e.kind != EdgeKind::Imports { continue; }
+        if e.kind != EdgeKind::Imports {
+            continue;
+        }
         if sample_set.contains(&e.from) && sample_set.contains(&e.to) {
-            osp_edges_json.push(serde_json::json!({"from": e.from, "to": e.to, "kind": "Imports"}).to_string());
+            osp_edges_json.push(
+                serde_json::json!({"from": e.from, "to": e.to, "kind": "Imports"}).to_string(),
+            );
         }
     }
 
@@ -225,8 +238,7 @@ fn build_prompts(
             Some((Box::leak(name.into_boxed_str()) as &str, capped))
         })
         .collect();
-    let snippet_refs: Vec<(&str, &str)> =
-        snippets.iter().map(|(n, b)| (*n, b.as_str())).collect();
+    let snippet_refs: Vec<(&str, &str)> = snippets.iter().map(|(n, b)| (*n, b.as_str())).collect();
     let raw_user = raw_dump_user_prompt(
         &snippet_refs,
         "Refactor the highest-coupling module to reduce its coupling.",
@@ -247,7 +259,9 @@ fn collect_source_files(repo: &Path) -> anyhow::Result<Vec<PathBuf>> {
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -255,8 +269,17 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             if name.starts_with('.')
                 || matches!(
                     name.as_str(),
-                    "node_modules" | "target" | "__pycache__" | "venv" | ".venu"
-                        | "env" | "build" | "dist" | "site-packages" | "vendor" | ".git"
+                    "node_modules"
+                        | "target"
+                        | "__pycache__"
+                        | "venv"
+                        | ".venu"
+                        | "env"
+                        | "build"
+                        | "dist"
+                        | "site-packages"
+                        | "vendor"
+                        | ".git"
                 )
             {
                 continue;
