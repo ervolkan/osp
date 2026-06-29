@@ -7,8 +7,15 @@ fn main() -> anyhow::Result<()> {
     let idx = load_scip_index(std::path::Path::new(path))?;
 
     println!("=== SemanticIndex: {} ===", path);
-    println!("classes: {}, files_indexed: {}", idx.classes.len(), idx.files_indexed);
-    println!("classes_by_file keys: {:?}", idx.classes_by_file.keys().collect::<Vec<_>>());
+    println!(
+        "classes: {}, files_indexed: {}",
+        idx.classes.len(),
+        idx.files_indexed
+    );
+    println!(
+        "classes_by_file keys: {:?}",
+        idx.classes_by_file.keys().collect::<Vec<_>>()
+    );
     println!();
 
     for class in &idx.classes {

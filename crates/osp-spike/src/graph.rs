@@ -24,7 +24,8 @@ pub fn extract(repo: &Path) -> Result<DepGraph> {
     tracing::info!(files = files.len(), "kaynak dosya bulundu");
 
     let mut nodes: Vec<Node> = Vec::with_capacity(files.len());
-    let mut path_to_id: std::collections::HashMap<PathBuf, NodeId> = std::collections::HashMap::new();
+    let mut path_to_id: std::collections::HashMap<PathBuf, NodeId> =
+        std::collections::HashMap::new();
     let mut imports_per_file: Vec<Vec<String>> = Vec::with_capacity(files.len());
 
     for (i, file) in files.iter().enumerate() {
@@ -120,13 +121,17 @@ fn walk(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 
 /// Bir dosyayı AST çöüzmler; LOC (`mass`) + import yolu listesi döner.
 fn analyze_file(path: &Path) -> Result<(usize, Vec<String>)> {
-    let source = std::fs::read_to_string(path)
-        .with_context(|| format!("dosya okunamadı: {:?}", path))?;
+    let source =
+        std::fs::read_to_string(path).with_context(|| format!("dosya okunamadı: {:?}", path))?;
     let mass = source.lines().count().max(1);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let imports = match ext {
-        "py" => extract_imports(&source, tree_sitter_python::LANGUAGE.into(), LangKind::Python)
-            .with_context(|| format!("python parse: {:?}", path))?,
+        "py" => extract_imports(
+            &source,
+            tree_sitter_python::LANGUAGE.into(),
+            LangKind::Python,
+        )
+        .with_context(|| format!("python parse: {:?}", path))?,
         "js" | "jsx" => extract_imports(
             &source,
             tree_sitter_javascript::LANGUAGE.into(),
@@ -272,12 +277,8 @@ mod tests {
     #[test]
     fn python_imports_extracted() {
         let src = "import os\nimport foo.bar\nfrom baz.qux import x\nimport a, b.c\n";
-        let imps = extract_imports(
-            src,
-            tree_sitter_python::LANGUAGE.into(),
-            LangKind::Python,
-        )
-        .expect("python parse");
+        let imps = extract_imports(src, tree_sitter_python::LANGUAGE.into(), LangKind::Python)
+            .expect("python parse");
         // foo.bar ve baz.qux iç modüller; os/a/b.c de çıkarılır (resolve aşaması elem yapar)
         assert!(imps.contains(&"foo.bar".to_string()), "imps: {:?}", imps);
         assert!(imps.contains(&"baz.qux".to_string()), "imps: {:?}", imps);

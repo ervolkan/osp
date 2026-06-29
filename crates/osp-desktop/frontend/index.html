@@ -30,6 +30,15 @@
   .sidebar { width: 280px; border-left: 1px solid #30363d; padding: 16px; overflow-y: auto; }
   .sidebar h3 { font-size: 13px; color: #58a6ff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
   .metric { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  /* #4: Collapsible sidebar sections. Review'in "sağ panel çok yoğun" önerisi.
+     Her section tıklanabilir header + body. Inspector ayrıca node seçilince görünür. */
+  .collapsible-section { margin-bottom: 16px; }
+  .section-toggle { cursor: pointer; user-select: none; margin-top: 12px; display: flex; align-items: center; gap: 4px; }
+  .section-toggle:hover { color: #79c0ff; }
+  .section-toggle.collapsed { color: #6e7681; }
+  .section-toggle.collapsed::after { content: ''; }
+  .section-body { margin-top: 8px; }
+  .section-body.hidden { display: none; }
   .metric .label { color: #8b949e; }
   .metric .value { color: #c9d1d9; font-family: monospace; }
   /* Status badge */
@@ -150,7 +159,7 @@
           <option value="cohesion">Cohesion</option>
           <option value="mass">Mass</option>
         </select></label>
-        <label>Color: <select id="colorBy" onchange="render()">
+        <label>Color metric: <select id="colorBy" onchange="render()" disabled>
           <option value="cohesion">Cohesion</option>
           <option value="instability">Instability</option>
           <option value="coupling">Coupling</option>
@@ -159,7 +168,7 @@
           <option value="linear" selected>Linear</option>
           <option value="log">Log (mass)</option>
         </select></label>
-        <label>Color mode: <select id="colorMode" onchange="render()">
+        <label>Color mode: <select id="colorMode" onchange="onColorModeChange()">
           <option value="role" selected>Role (architectural topology)</option>
           <option value="risk">Risk (vision deviation θ)</option>
           <option value="metric">Metric (high=green)</option>
@@ -169,14 +178,26 @@
     </div>
   </div>
   <div class="sidebar">
-    <h3>Repository Metrics</h3>
-    <div id="repoMetrics"><div class="metric"><span class="label">Analyze a repo</span></div></div>
-    <h3 style="margin-top:20px;">SCIP Coverage</h3>
-    <div id="scipInfo"><div class="metric"><span class="label">No SCIP data</span></div></div>
-    <h3 style="margin-top:20px;">Confidence</h3>
-    <div id="confidencePanel"><div class="metric"><span class="label">Analyze a repo</span></div></div>
-    <h3 style="margin-top:20px;">Node Inspector</h3>
-    <div id="nodeInspector"><div class="metric"><span class="label">Click a node to inspect</span></div></div>
+    <div class="collapsible-section">
+      <h3 class="section-toggle" onclick="toggleSection(this)">▾ Repository Metrics</h3>
+      <div class="section-body" id="repoMetrics"><div class="metric"><span class="label">Analyze a repo</span></div></div>
+    </div>
+    <div class="collapsible-section">
+      <h3 class="section-toggle" onclick="toggleSection(this)">▾ SCIP Coverage</h3>
+      <div class="section-body" id="scipInfo"><div class="metric"><span class="label">No SCIP data</span></div></div>
+    </div>
+    <div class="collapsible-section">
+      <h3 class="section-toggle" onclick="toggleSection(this)">▾ Confidence</h3>
+      <div class="section-body" id="confidencePanel"><div class="metric"><span class="label">Analyze a repo</span></div></div>
+    </div>
+    <div class="collapsible-section">
+      <h3 class="section-toggle" onclick="toggleSection(this)">▾ Role Distribution</h3>
+      <div class="section-body" id="roleDistribution"><div class="metric"><span class="label">Analyze a repo</span></div></div>
+    </div>
+    <div class="collapsible-section">
+      <h3 class="section-toggle" id="inspectorToggle" onclick="toggleSection(this)" style="display:none;">▾ Node Inspector</h3>
+      <div class="section-body" id="nodeInspector"><div class="metric"><span class="label">Click a node to inspect</span></div></div>
+    </div>
   </div>
 </div>
 
@@ -185,6 +206,20 @@
   <div class="vision-panel">
     <div class="vision-section">
       <h3>Vision Vector (target position)</h3>
+      <div class="slider-row" style="margin-bottom:12px;">
+        <label>Architecture preset</label>
+        <select id="visionPreset" onchange="applyVisionPreset()" style="flex:1;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px;">
+          <option value="custom" selected>Custom (manual)</option>
+          <option value="balanced">Balanced (general default)</option>
+          <option value="ddd">DDD (layered domain)</option>
+          <option value="microservice">Microservice (service boundaries)</option>
+          <option value="library">Library (stable public API)</option>
+          <option value="framework">Framework (extension points)</option>
+          <option value="compiler">Compiler (pipeline stages)</option>
+          <option value="legacy">Legacy refactoring (lenient)</option>
+        </select>
+      </div>
+      <div id="visionPresetNote" style="font-size:11px;color:#8b949e;margin-bottom:10px;"></div>
       <div id="visionSliders"></div>
     </div>
     <div class="vision-section">
@@ -198,6 +233,22 @@
         </select>
       </div>
       <div id="thresholdSliders"></div>
+    </div>
+    <div class="vision-section">
+      <h3>Analysis Scope</h3>
+      <div class="slider-row" style="margin-bottom:16px;">
+        <label>Scope</label>
+        <select id="analysisScope" onchange="updateVisionPreview()" style="flex:1;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px;">
+          <option value="all" selected>All nodes (full population)</option>
+          <option value="architectural">Architectural (Production + TypeSurface, exclude Support)</option>
+          <option value="production">Production only (Core/Runtime/Adapter/Utility)</option>
+          <option value="support">Support only (Test/Fixture/Migration)</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:#8b949e;margin-bottom:8px;">
+        Support-heavy repo'larda "All nodes" özeti production sağlığını boğabilir.
+        Architectural scope gerçek mimari riski gösterir.
+      </div>
     </div>
     <div class="vision-preview" id="visionPreview">
       <div style="font-size:12px;color:#8b949e;margin-bottom:8px;">Default vision config loaded</div>
@@ -274,6 +325,18 @@ function switchTab(name) {
   document.getElementById('panel-' + name).classList.add('active');
   if (name === 'vision') loadVisionConfig();
   if (name === 'witness') loadWitnessData();
+}
+
+// #4: Collapsible section toggle. Review'in "sağ panel çok yoğun" önerisi.
+// Header tıklanınca body gizle/göster, caret (▾/▸) güncelle.
+function toggleSection(headerEl) {
+  const body = headerEl.nextElementSibling;
+  if (!body) return;
+  const collapsed = body.classList.toggle('hidden');
+  headerEl.classList.toggle('collapsed', collapsed);
+  // Caret güncelle: ▾ (açık) / ▸ (kapalı)
+  const text = headerEl.textContent.replace(/^[▾▸]\s*/, '');
+  headerEl.textContent = (collapsed ? '▸ ' : '▾ ') + text;
 }
 
 // ═══ Status helper ═══
@@ -421,6 +484,81 @@ function applyThetaPreset() {
   updateVisionPreview();
 }
 
+// ── #2 Vision preset'leri — review'in "DDD/Microservice/Library/..." önerisi ─
+// PROVENANCE-AWARE: preset = başlangıç noktası, sensible heuristic. Slider'lar
+// doldurulur ama locked DEĞİL — kullanıcı düzenler. Etiket "sensible default,
+// edit to calibrate" — §3.3 "V_vision hand-declared" ile uyumlu (preset evrensel
+// doğru değil, mimari normlardan türetilmiş başlangıç).
+//
+// Değerler mimari normlardan türetilmiştir (coupling/cohesion/instability/entropy/
+// witness-depth). Her preset bir "mimari stili" temsil eder:
+//   - balanced: nötr, her eksen 0.5 (genel başlangıç)
+//   - ddd: düşük coupling (layer boundaries), yüksek cohesion (domain),
+//          düşük instability (stable core)
+//   - microservice: yüksek coupling (servis içi), düşük instability (bounded ctx),
+//          yüksek entropy (dağıtık değişim)
+//   - library: düşük coupling (minimal deps), yüksek cohesion, düşük instability (stable API)
+//   - framework: orta coupling (extension points), orta cohesion, düşük instability (stable core)
+//   - compiler: düşük coupling (pipeline stages), düşük cohesion (her stage ayrı),
+//          düşük instability (stable passes)
+//   - legacy: yüksek tümü (lenient — mevcut karmaşıklığı kabul et)
+const VISION_PRESETS = {
+  balanced:     { x: 0.50, y: 0.50, z: 0.50, w: 0.50, v: 0.50,
+    note: 'General default — neutral targets. Edit to calibrate for your architecture.' },
+  ddd:          { x: 0.25, y: 0.75, z: 0.30, w: 0.50, v: 0.60,
+    note: 'Layered domain — low coupling (layer boundaries), high cohesion (domain), low instability (stable core).' },
+  microservice: { x: 0.65, y: 0.55, z: 0.35, w: 0.70, v: 0.55,
+    note: 'Service boundaries — high intra-service coupling, low instability (bounded context), high entropy (distributed churn).' },
+  library:      { x: 0.20, y: 0.70, z: 0.25, w: 0.40, v: 0.65,
+    note: 'Stable public API — low coupling (minimal deps), high cohesion, low instability (stable contract).' },
+  framework:    { x: 0.45, y: 0.60, z: 0.30, w: 0.55, v: 0.60,
+    note: 'Extension points — moderate coupling (plugins/hooks), stable core (low instability).' },
+  compiler:     { x: 0.30, y: 0.40, z: 0.25, w: 0.45, v: 0.55,
+    note: 'Pipeline stages — low coupling (stage boundaries), each stage separate (lower cohesion), stable passes.' },
+  legacy:       { x: 0.70, y: 0.45, z: 0.65, w: 0.70, v: 0.40,
+    note: 'Lenient — accepts existing complexity. Use during refactoring to avoid false-reject flood; tighten gradually.' },
+};
+
+function applyVisionPreset() {
+  const key = document.getElementById('visionPreset').value;
+  const noteEl = document.getElementById('visionPresetNote');
+  if (key === 'custom') {
+    if (noteEl) noteEl.innerHTML = '';
+    return; // manuel — slider'ları dokunma
+  }
+  const preset = VISION_PRESETS[key];
+  if (!preset) return;
+  // Slider'ları doldur (locked DEĞİL — kullanıcı sonradan düzenleyebilir)
+  const setSlider = (axisKey, value) => {
+    const slider = document.getElementById('vis_' + axisKey);
+    const display = document.getElementById('visval_' + axisKey);
+    if (slider) slider.value = value;
+    if (display) display.textContent = axisKey === 'min_approvers' ? value : value.toFixed(2);
+  };
+  setSlider('x', preset.x);
+  setSlider('y', preset.y);
+  setSlider('z', preset.z);
+  setSlider('w', preset.w);
+  setSlider('v', preset.v);
+  // Provenance etiketi — preset sensible default, edit-to-calibrate
+  if (noteEl) {
+    noteEl.innerHTML = `<span style="color:#d29922;">↳ preset: ${key}</span> — <span style="color:#8b949e;">${preset.note}</span>`;
+  }
+  updateVisionPreview();
+}
+
+// Slider manuel değişince preset dropdown'ı "custom"a döndür — preset locked değil,
+// kullanıcı düzenledi. Provenance: artık preset değil, manual config.
+function onVisionSliderManual() {
+  const presetSelect = document.getElementById('visionPreset');
+  const noteEl = document.getElementById('visionPresetNote');
+  if (presetSelect && presetSelect.value !== 'custom') {
+    presetSelect.value = 'custom';
+    if (noteEl) noteEl.innerHTML = '<span style="color:#8b949e;">manual config (edited from preset)</span>';
+  }
+  updateVisionPreview();
+}
+
 function renderVisionSliders(config) {
   const renderSlider = (axis, container) => {
     const val = config[axis.key];
@@ -428,7 +566,7 @@ function renderVisionSliders(config) {
     row.className = 'slider-row';
     row.innerHTML = `
       <label>${axis.label}</label>
-      <input type="range" id="vis_${axis.key}" min="${axis.min}" max="${axis.max}" step="${axis.step}" value="${val}" oninput="updateVisionPreview()">
+      <input type="range" id="vis_${axis.key}" min="${axis.min}" max="${axis.max}" step="${axis.step}" value="${val}" oninput="onVisionSliderManual()">
       <span class="val" id="visval_${axis.key}">${axis.step < 1 ? val.toFixed(2) : val}</span>
     `;
     container.appendChild(row);
@@ -445,6 +583,134 @@ function renderVisionSliders(config) {
   updateVisionPreview();
 }
 
+// ── #1 Deterministik recommendation ────────────────────────────────────────
+// Review'in #7 "8 reject → neden + öneri" önerisinin DETERMİNİSTİK karşılığı.
+// Breakdown verisinden (roleBreakdown + axisRejects + scope) pattern'leri tanır
+// ve insan-okur template mesajlar üretir. LLM DEĞİL — OSP §9.5 "hallucination as
+// epistemik data" ile uyumlu: pattern'leri insan diline çevirir, tahmin üretmez.
+//
+// Recommendation kategorileri (her biri bir örüntü tanır):
+// 1. role-axis mismatch — çoğu reject tek role+eksende → "threshold bu rol için sert"
+// 2. placeholder dilution — çoğu warning placeholder cohesion'dan → "SCIP gerekli"
+// 3. scope suggestion — Support çoğunluk → "Architectural scope dene"
+// 4. axis dominance — reject'ler tek eksende yoğun → "bu ekseni incele"
+//
+// Her recommendation: { severity, title, body } — severity renk ve sıralama için.
+function generateRecommendations(roleBreakdown, axisRejects, scope, pass, warning, reject, total, allTotal) {
+  const recs = [];
+  const rejectTotal = reject;
+
+  // 1. Role-axis mismatch: en çok reject üreten role'ü bul, hangi eksende yoğun.
+  // Örn: TypeSurface + coupling reject çoğunluk → "coupling threshold TypeSurface için sert".
+  if (rejectTotal > 0) {
+    const roleRejects = Object.entries(roleBreakdown)
+      .map(([role, c]) => ({ role, count: c.r.length }))
+      .sort((a, b) => b.count - a.count);
+    const topRole = roleRejects[0];
+    if (topRole && topRole.count / rejectTotal > 0.5) {
+      // Bu role reject'lerin çoğunluğu — hangi eksen baskın?
+      const topAxis = Object.entries(axisRejects).sort((a, b) => b[1].length - a[1].length)[0];
+      const axisName = topAxis[0];
+      const roleProfile = {
+        TypeSurface: 'declaration files (low runtime deps expected)',
+        Core: 'domain core (stable foundation expected)',
+        Adapter: 'integration boundary (high coupling tolerated)',
+        Utility: 'leaf helpers (low coupling expected)',
+        Runtime: 'implementation modules',
+        Support: 'test/fixture files',
+      }[topRole.role] || 'modules';
+      recs.push({
+        severity: 'warn',
+        title: `${topRole.role} threshold may be too strict`,
+        body: `${topRole.count} of ${rejectTotal} rejects (${Math.round(topRole.count/rejectTotal*100)}%) are ${topRole.role} — ${roleProfile}. ` +
+              `Worst axis: ${axisName}. Consider relaxing the ${axisName} target for ${topRole.role} in [role_overrides], or check these nodes via the breakdown.`,
+      });
+    }
+  }
+
+  // 2. Axis dominance: reject'lerin çoğu tek eksende → o ekseni incele.
+  if (rejectTotal > 0) {
+    const axisEntries = Object.entries(axisRejects).sort((a, b) => b[1].length - a[1].length);
+    const topAxis = axisEntries[0];
+    if (topAxis && topAxis[1].length / rejectTotal > 0.7) {
+      const axisHint = {
+        coupling: 'Coupling (x) measures out-degree of imports. High coupling = many dependencies.',
+        cohesion: 'Cohesion (y) is 1/LCOM4 from SCIP field-access. Low cohesion = fragmented responsibilities.',
+        instability: 'Instability (z) = Ce/(Ca+Ce). High instability = outgoing > incoming (volatile).',
+      }[topAxis[0]] || '';
+      recs.push({
+        severity: 'info',
+        title: `${topAxis[0]} dominates rejections (${topAxis[1].length}/${rejectTotal})`,
+        body: `Most rejects come from the ${topAxis[0]} axis. ${axisHint} Click the axis breakdown to inspect these nodes.`,
+      });
+    }
+  }
+
+  // 3. Scope suggestion: Support çoğunluk iken scope=all → Architectural dene.
+  if (scope === 'all' && allTotal > 0) {
+    // Support sayısını tahmin et: total - non-support (architectural scope'ta görünür)
+    // Daha doğrudan: roleBreakdown'ta Support var mı, çoğunluk mu?
+    const supportEntry = roleBreakdown['Support'];
+    const supportWarnRej = supportEntry ? supportEntry.w.length + supportEntry.r.length : 0;
+    if (supportWarnRej / Math.max(total, 1) > 0.5) {
+      recs.push({
+        severity: 'info',
+        title: 'Support-heavy repo — try Architectural scope',
+        body: `Support role (test/fixture/migration) accounts for most of the population (${supportWarnRej}/${total}). ` +
+              `Switch scope to "Architectural" to see production-only risk, which reflects real architecture health rather than test volume.`,
+      });
+    }
+  }
+
+  // 4. Placeholder dilution: çok warning + SCIP coverage düşük → cohesion placeholder.
+  // Cohesion placeholder node'ları inconclusive olur (evaluate_node_vision), yani
+  // warning'in çoğu placeholder ise aslında "ölçülmemiş" demek. SCIP coverage'a bak.
+  if (warning > total * 0.3 && analysisData) {
+    const coverage = analysisData.semantic_coverage?.coverage_ratio ?? 0;
+    if (coverage < 0.3) {
+      recs.push({
+        severity: 'warn',
+        title: 'Low SCIP coverage — cohesion is mostly placeholder',
+        body: `SCIP coverage is ${(coverage * 100).toFixed(0)}%. Without SCIP field-access data, cohesion (y) falls back to 0.5 (placeholder, confidence 0.0), ` +
+              `which inflates θ and produces warnings that don't reflect real cohesion. Re-analyze with a SCIP index for accurate vision evaluation.`,
+      });
+    }
+  }
+
+  // 5. All-pass ama hiç reject yok → mimari sağlıklı (olumlu feedback).
+  if (reject === 0 && warning === 0 && total > 0) {
+    recs.push({
+      severity: 'ok',
+      title: 'All nodes within vision bounds',
+      body: `${total} nodes, all pass θ ≤ ${'(current θ_bound)'}. No architectural drift detected for this scope and vision.`,
+    });
+  }
+
+  return recs;
+}
+
+// Recommendation → HTML render (preview'ın altında).
+function renderRecommendations(recs) {
+  if (!recs || recs.length === 0) return '';
+  const sevMeta = {
+    warn: { color: '#d29922', icon: '⚠', label: 'review' },
+    info: { color: '#58a6ff', icon: '→', label: 'tip' },
+    ok:   { color: '#3fb950', icon: '✓', label: 'good' },
+  };
+  const rows = recs.map(r => {
+    const m = sevMeta[r.severity] || sevMeta.info;
+    return `<div style="margin-top:8px;padding:8px 10px;background:#161b22;border-left:3px solid ${m.color};border-radius:4px;">
+      <div style="font-size:12px;color:${m.color};font-weight:600;">${m.icon} ${r.title}</div>
+      <div style="font-size:11px;color:#c9d1d9;margin-top:3px;line-height:1.4;">${r.body}</div>
+    </div>`;
+  }).join('');
+  return `
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid #30363d;">
+      <div style="font-size:11px;color:#58a6ff;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Recommendations (deterministic, pattern-based)</div>
+      ${rows}
+    </div>`;
+}
+
 function updateVisionPreview() {
   const get = key => parseFloat(document.getElementById('vis_' + key)?.value || 0);
   const fmt = key => {
@@ -455,16 +721,34 @@ function updateVisionPreview() {
 
   const preview = document.getElementById('visionPreview');
   if (analysisData && analysisData.space.nodes.length > 0) {
+    // Analysis scope (#A): Support-heavy repo'larda "All nodes" özeti production
+    // sağlığını boğar. Review'in önerisi: iki ayrı özet (All + Architectural).
+    // Scope filtresi: all | architectural | production | support.
+    const scope = document.getElementById('analysisScope')?.value || 'all';
     // Üç seviye karar: pass / warning / reject. Değerlendirmenin "0 reject çok
     // yumuşak" tespitini adresler. pass = θ_bound slider'dan, reject bound preset'ten.
     const thetaBound = get('theta_bound');
     const rejectBound = currentRejectBound;
     const gx = get('x'), gy = get('y'), gz = get('z');
     let pass = 0, warning = 0, reject = 0;
+    // Scope filtresi — bir node'un mevcut scope'a dahil olup olmadığı.
+    // architectural: TypeSurface + Core + Adapter + Utility + Runtime (Support hariç)
+    // production: sadece Production classification (Core/Runtime/Adapter/Utility + TypeSurface)
+    // support: sadece Support role (test/fixture/migration)
+    const inScope = (n, scope) => {
+      const role = n.role || 'Runtime';
+      if (scope === 'all') return true;
+      if (scope === 'architectural') return role !== 'Support';
+      if (scope === 'production') return role !== 'Support'; // production = non-support rolleri
+      if (scope === 'support') return role === 'Support';
+      return true;
+    };
     // Axis breakdown — hangi eksende en çok sapma var (reject'ler için)
-    const axisRejects = { coupling: 0, cohesion: 0, instability: 0 };
-    // Role breakdown — hangi role'den kaç warning/reject
+    const axisRejects = { coupling: [], cohesion: [], instability: [] }; // #6: node ID'leri sakla
+    // Role breakdown — hangi role'den kaç warning/reject (+ node ID'leri)
     const roleBreakdown = {};
+    // All-nodes sayaçları (scope'dan bağımsız — her zaman gösterilir)
+    let allPass = 0, allWarn = 0, allRej = 0;
     analysisData.space.nodes.forEach(n => {
       // Role-aware: her node kendi rolünün vision'ı ile değerlendirilir (backend
       // vision_for_claim ile aynı mantık). Core node artık global z=0.50 değil z=0.20.
@@ -473,30 +757,41 @@ function updateVisionPreview() {
       const dy = (n.cohesion ?? 0.5) - rv.y;
       const dz = (n.instability ?? 0.5) - rv.z;
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
+      // All-nodes sayaç (her zaman hesapla — alt özet için)
+      if (dist <= thetaBound) allPass++;
+      else if (dist <= rejectBound) allWarn++;
+      else allRej++;
+      // Scope filtresi — sadece scope içindekiler scope sayaçlarına/breakdown'a girer
+      if (!inScope(n, scope)) return;
       if (dist <= thetaBound) pass++;
       else if (dist <= rejectBound) {
         warning++;
         const r = n.role || 'Runtime';
-        roleBreakdown[r] = roleBreakdown[r] || { w: 0, r: 0 };
-        roleBreakdown[r].w++;
+        roleBreakdown[r] = roleBreakdown[r] || { w: [], r: [] }; // #6: node ID listesi
+        roleBreakdown[r].w.push(n.id);
       }
       else {
         reject++;
         const r = n.role || 'Runtime';
-        roleBreakdown[r] = roleBreakdown[r] || { w: 0, r: 0 };
-        roleBreakdown[r].r++;
-        // En çok sapma olan ekseni say
+        roleBreakdown[r] = roleBreakdown[r] || { w: [], r: [] };
+        roleBreakdown[r].r.push(n.id);
+        // En çok sapma olan ekseni say (+ node ID)
         const absDx = Math.abs(dx), absDy = Math.abs(dy), absDz = Math.abs(dz);
-        if (absDx >= absDy && absDx >= absDz) axisRejects.coupling++;
-        else if (absDy >= absDz) axisRejects.cohesion++;
-        else axisRejects.instability++;
+        if (absDx >= absDy && absDx >= absDz) axisRejects.coupling.push(n.id);
+        else if (absDy >= absDz) axisRejects.cohesion.push(n.id);
+        else axisRejects.instability.push(n.id);
       }
     });
     const total = pass + warning + reject;
-    const passPct = (pass/total*100).toFixed(0);
-    const warnPct = (warning/total*100).toFixed(0);
-    const rejPct = (reject/total*100).toFixed(0);
+    const passPct = total > 0 ? (pass/total*100).toFixed(0) : '0';
+    const warnPct = total > 0 ? (warning/total*100).toFixed(0) : '0';
+    const rejPct = total > 0 ? (reject/total*100).toFixed(0) : '0';
+    const allTotal = allPass + allWarn + allRej;
+    // #6: Tıklanabilir breakdown — kliklenen segment node listesi gösterir.
+    // click: window.showBreakdownNodes(role, verdict) → modal'da node listesi.
+    // node klik → Topology panel + node select (showNodeInspector).
     preview.innerHTML = `
+      <div style="font-size:11px;color:#58a6ff;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Scope: ${scope === 'all' ? 'All nodes' : scope === 'architectural' ? 'Architectural (excl. Support)' : scope === 'production' ? 'Production' : 'Support'} · ${total} nodes</div>
       <div style="font-size:13px;margin-bottom:10px;">
         <span style="color:#3fb950;">${pass} pass</span> ·
         <span style="color:#d29922;">${warning} warning</span> ·
@@ -508,24 +803,35 @@ function updateVisionPreview() {
         <div style="height:100%;width:${warnPct}%;background:#d29922;"></div>
         <div style="height:100%;width:${rejPct}%;background:#f85149;"></div>
       </div>
+      ${scope !== 'all' ? `
+      <div style="font-size:10px;color:#8b949e;margin-top:8px;padding-top:6px;border-top:1px solid #30363d;">
+        All nodes (for comparison): <span style="color:#3fb950;">${allPass} pass</span> · <span style="color:#d29922;">${allWarn} warn</span> · <span style="color:#f85149;">${allRej} reject</span> (n=${allTotal})
+      </div>` : ''}
       ${reject > 0 ? `
       <div style="font-size:11px;color:#8b949e;margin-top:10px;">Rejected by worst axis:</div>
       <div style="font-size:11px;margin-top:4px;">
-        <span style="color:#f85149;">coupling ${axisRejects.coupling}</span> ·
-        <span style="color:#f85149;">cohesion ${axisRejects.cohesion}</span> ·
-        <span style="color:#f85149;">instability ${axisRejects.instability}</span>
+        <a style="color:#f85149;cursor:pointer;text-decoration:underline;" onclick="showBreakdownNodes('coupling', 'reject')">coupling ${axisRejects.coupling.length}</a> ·
+        <a style="color:#f85149;cursor:pointer;text-decoration:underline;" onclick="showBreakdownNodes('cohesion', 'reject')">cohesion ${axisRejects.cohesion.length}</a> ·
+        <a style="color:#f85149;cursor:pointer;text-decoration:underline;" onclick="showBreakdownNodes('instability', 'reject')">instability ${axisRejects.instability.length}</a>
       </div>` : ''}
       ${(warning + reject) > 0 ? `
       <div style="font-size:11px;color:#8b949e;margin-top:10px;">Warning/reject by role:</div>
       <div style="font-size:11px;margin-top:4px;">
-        ${Object.entries(roleBreakdown).sort((a,b) => (b[1].w+b[1].r)-(a[1].w+a[1].r)).map(([role, counts]) =>
-          `<span style="color:#d29922;">${role}: ${counts.w}w/${counts.r}r</span>`
-        ).join(' · ')}
+        ${Object.entries(roleBreakdown).sort((a,b) => (b[1].w.length+b[1].r.length)-(a[1].w.length+a[1].r.length)).map(([role, counts]) => {
+          const wLink = counts.w.length > 0
+            ? `<a style="color:#d29922;cursor:pointer;text-decoration:underline;" onclick="showBreakdownNodes('${role}', 'warning')">${counts.w.length}w</a>`
+            : '0w';
+          const rLink = counts.r.length > 0
+            ? `<a style="color:#f85149;cursor:pointer;text-decoration:underline;" onclick="showBreakdownNodes('${role}', 'reject')">${counts.r.length}r</a>`
+            : '0r';
+          return `<span style="color:#d29922;">${role}: ${wLink}/${rLink}</span>`;
+        }).join(' · ')}
       </div>` : ''}
       <div style="font-size:11px;color:#8b949e;margin-top:8px;">
         Vision: x=${fmt('x')} y=${fmt('y')} z=${fmt('z')} w=${fmt('w')} v=${fmt('v')} |
         θ_bound=${fmt('theta_bound')} quorum=${fmt('theta_quorum')} min_approvers=${fmt('min_approvers')}
-      </div>`;
+      </div>
+      ${renderRecommendations(generateRecommendations(roleBreakdown, axisRejects, scope, pass, warning, reject, total, allTotal))}`;
   } else {
     preview.innerHTML = `<div style="font-size:12px;color:#8b949e;">
       x=${fmt('x')} y=${fmt('y')} z=${fmt('z')} w=${fmt('w')} v=${fmt('v')} |
@@ -804,8 +1110,9 @@ function renderSidebar(data) {
     ${!scipActive ? '<div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">No --scip index provided; re-analyze with a SCIP index for LCOM4 cohesion + class semantics.</span></div>' : ''}`;
   // Confidence panel — toplanmış epistemik durum (Structural/SCIP/Cohesion/Vision).
   // Değerlendirmenin "kullanıcı sistemin ne kadar güvenilir olduğunu tek yerde görmeli" önerisi.
-  const visX2 = parseFloat(document.getElementById('vis_x')?.value);
-  const visionLoaded2 = !isNaN(visX2);
+  // #2: Vision provenance artık getVisionState() üzerinden — "not loaded" iken θ
+  // hesaplanması çelişkisi çözüldü. builtin role override → "role-default (builtin)".
+  const vs = getVisionState();
   const scipConf = c.coverage_ratio >= 0.7 ? '<span style="color:#3fb950;">full</span>'
     : c.coverage_ratio >= 0.3 ? '<span style="color:#d29922;">partial</span>'
     : c.coverage_ratio > 0 ? '<span style="color:#f85149;">low ('+(c.coverage_ratio*100).toFixed(0)+'%)</span>'
@@ -814,8 +1121,111 @@ function renderSidebar(data) {
     <div class="metric"><span class="label">Structural graph</span><span class="value"><span style="color:#3fb950;">● high</span> <span style="color:#8b949e;font-size:10px;">(tree-sitter)</span></span></div>
     <div class="metric"><span class="label">SCIP semantics</span><span class="value">${scipConf}</span></div>
     <div class="metric"><span class="label">Cohesion</span><span class="value">${scipActive ? '<span style="color:#3fb950;">measured</span> <span style="color:#8b949e;font-size:10px;">(partial)</span>' : '<span style="color:#f85149;">placeholder</span>'}</span></div>
-    <div class="metric"><span class="label">Vision</span><span class="value">${visionLoaded2 ? '<span style="color:#3fb950;">loaded</span>' : '<span style="color:#8b949e;">not loaded</span>'}</span></div>
-    <div class="metric" style="font-size:11px;color:#8b949e;margin-top:4px;"><span class="label">Mode: ${visionLoaded2 ? 'Vision evaluation' : 'Topology only'}</span></div>`;
+    <div class="metric" style="font-size:10px;color:#8b949e;"><span class="label">● solid=measured · ○ hollow=placeholder · ⌑ dashed=heuristic</span></div>
+    <div class="metric"><span class="label">Vision</span><span class="value"><span style="color:${vs.color};">${vs.label}</span></span></div>
+    <div class="metric" style="font-size:11px;color:#8b949e;margin-top:4px;"><span class="label">Mode: ${vs.evaluable ? 'Vision evaluation' : 'Topology only'}</span></div>`;
+
+  // Role distribution + legend — #3: classifier kalitesini görünür kılar.
+  // Kullanıcı "Support 2829 classifier hatası mı?" diye şüphelenirse bu panel
+  // "hayır, %X'i gerçek Test" der (#1 diagnostic'in bulgusu). Aynı zamanda renk→rol
+  // legend'ı: scatter'da renk seçimi role mode ise buradaki renklerle eşleşir.
+  renderRoleDistribution();
+}
+
+// Role distribution + legend render — backend role/classification dağılımını döker.
+// #1 diagnostic sonucu: Support yüksek = classifier hatası DEĞİL, repo test-heavy.
+// Bu panel o gerçeği kullanıcıya gösterir. Renkler render() içindeki rolePalette
+// ile birebir aynı (tek kaynak — tutarlılık).
+const ROLE_LEGEND = [
+  { role: 'TypeSurface', color: '#a371f7', desc: 'declaration/type surface' },
+  { role: 'Core',        color: '#58a6ff', desc: 'domain core (stabil)' },
+  { role: 'Adapter',     color: '#f0883e', desc: 'integration boundary' },
+  { role: 'Utility',     color: '#3fb950', desc: 'leaf helper' },
+  { role: 'Runtime',     color: '#8b949e', desc: 'implementation (default)' },
+  { role: 'Support',     color: '#d29922', desc: 'test/fixture/migration' },
+  { role: 'Unknown',     color: '#6e7681', desc: 'unclassified' },
+];
+
+function renderRoleDistribution() {
+  const el = document.getElementById('roleDistribution');
+  if (!el) return;
+  if (!analysisData || !analysisData.space.nodes.length) {
+    el.innerHTML = '<div class="metric"><span class="label">Analyze a repo</span></div>';
+    return;
+  }
+  // Role + classification say (classification, Support'ün kaynağını gösterir)
+  const roleCount = {};
+  const clsCount = {};
+  let total = 0;
+  analysisData.space.nodes.forEach(n => {
+    const r = n.role || 'Runtime';
+    roleCount[r] = (roleCount[r] || 0) + 1;
+    const c = n.classification || 'Production';
+    clsCount[c] = (clsCount[c] || 0) + 1;
+    total++;
+  });
+
+  // Legend + count (renk sol tarafta, rol ortada, count sağda)
+  // Sadece var olan rolleri göster (count > 0)
+  const legendRows = ROLE_LEGEND
+    .filter(l => (roleCount[l.role] || 0) > 0)
+    .map(l => {
+      const cnt = roleCount[l.role] || 0;
+      const pct = ((cnt / total) * 100).toFixed(1);
+      return `<div class="metric" style="font-size:11px;">
+        <span class="label" style="display:flex;align-items:center;gap:6px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${l.color};flex-shrink:0;"></span>
+          ${l.role}
+        </span>
+        <span class="value">${cnt} <span style="color:#8b949e;font-size:10px;">(${pct}%)</span></span>
+      </div>`;
+    }).join('');
+
+  // Support kaynak kırılımı — Support yüksekse "hangisinden geliyor?" cevabı.
+  // #1 bulgusu: Support çoğunlukla Test'ten gelir. Burada görünür.
+  const supportTotal = roleCount['Support'] || 0;
+  let supportBreakdown = '';
+  if (supportTotal > 0) {
+    const supportSources = ['Test', 'Fixture', 'Migration', 'Generated', 'Config', 'Script'];
+    const srcCounts = supportSources
+      .map(s => ({ s, c: clsCount[s] || 0 }))
+      .filter(x => x.c > 0)
+      .sort((a, b) => b.c - a.c);
+    if (srcCounts.length > 0) {
+      const lines = srcCounts.map(x => {
+        const pctOfSupport = ((x.c / supportTotal) * 100).toFixed(0);
+        return `${x.s}: ${x.c} <span style="color:#8b949e;">(${pctOfSupport}% of Support)</span>`;
+      }).join(' · ');
+      // #1 diagnostic verdict: Support > %90 Test ise "classifier doğru, repo test-heavy"
+      const testShare = (clsCount['Test'] || 0) / supportTotal;
+      const verdict = testShare > 0.9
+        ? '<span style="color:#3fb950;">✓ repo test-heavy</span>'
+        : '<span style="color:#d29922;">◐ mixed sources</span>';
+      supportBreakdown = `
+        <div class="metric" style="font-size:10px;color:#8b949e;margin-top:6px;padding-top:6px;border-top:1px solid #30363d;">
+          <span class="label">Support sources ${verdict}</span>
+        </div>
+        <div class="metric" style="font-size:10px;color:#8b949e;">${lines}</div>`;
+    }
+  }
+
+  el.innerHTML = legendRows + supportBreakdown;
+}
+
+// #D: Color mode değişince colorBy dropdown'ını toggle et. Review'in "Role mode'da
+// Color: Cohesion etkisiz, kafa karıştırıcı" tespiti. Metric mode → colorBy aktif;
+// Role/Risk mode → colorBy disabled (anlamlı değil).
+function onColorModeChange() {
+  const colorMode = document.getElementById('colorMode').value;
+  const colorBy = document.getElementById('colorBy');
+  if (colorMode === 'metric') {
+    colorBy.disabled = false;
+    colorBy.style.opacity = '1';
+  } else {
+    colorBy.disabled = true;
+    colorBy.style.opacity = '0.4';
+  }
+  render();
 }
 
 function render() {
@@ -853,13 +1263,14 @@ function render() {
     Support:     '#d29922', // amber — test/fixture/migration
     Unknown:     '#6e7681', // koyu gri
   };
-  // Vision yüklü mü? (slider'lardan oku — vis_x varsa vision loaded)
-  const visX = parseFloat(document.getElementById('vis_x')?.value);
-  const visionLoaded = !isNaN(visX);
-  const gx = visX, gy = parseFloat(document.getElementById('vis_y')?.value), gz = parseFloat(document.getElementById('vis_z')?.value);
+  // Vision provenance — getVisionState() artık tek kaynak (#2). builtin role override
+  // aktifken θ anlamlıdır (role-default), slider NaN olsa bile risk mode geçerli.
+  const vs = getVisionState();
+  const gv = readGlobalVision(); // slider yoksa nötr 0.5 — roleVision override kazanır
   const thetaBound = parseFloat(document.getElementById('vis_theta_bound')?.value) || 0.30;
-  // Effective color mode: risk ancak vision varsa geçerli, yoksa metric'e düş
-  const effectiveMode = (colorMode === 'risk' && !visionLoaded) ? 'metric' : colorMode;
+  // Effective color mode: risk ancak vision evaluable ise geçerli (builtin dahil),
+  // yoksa metric'e düş. "none" = gerçekten topology-only (builtin disabled).
+  const effectiveMode = (colorMode === 'risk' && !vs.evaluable) ? 'metric' : colorMode;
   const color = (d) => {
     if (effectiveMode === 'role') {
       return rolePalette[d.role || 'Runtime'] || rolePalette.Runtime;
@@ -867,7 +1278,7 @@ function render() {
     if (effectiveMode === 'risk') {
       // Gerçek risk: node'un rolünün vision'ından θ deviation → renk.
       // θ=0 yeşil (hedefte), θ>=rejectBound kırmızı (uzak). role-aware.
-      const rv = roleVision(d.role || 'Runtime', gx, gy, gz);
+      const rv = roleVision(d.role || 'Runtime', gv.x, gv.y, gv.z);
       const dx = (d.coupling ?? 0.5) - rv.x;
       const dy = (d.cohesion ?? 0.5) - rv.y;
       const dz = (d.instability ?? 0.5) - rv.z;
@@ -888,12 +1299,130 @@ function render() {
   g.append('text').attr('x',w/2).attr('y',h+40).attr('text-anchor','middle').attr('fill','#8b949e').attr('font-size','13px').text(`${xKey} (view axis)`);
   g.append('text').attr('transform','rotate(-90)').attr('x',-h/2).attr('y',-45).attr('text-anchor','middle').attr('fill','#8b949e').attr('font-size','13px').text(`${yKey} (view axis)`);
 
+  // #6: Vision accept zone gölgeleme — KOŞULLU. θ 3-boyutlu (coupling/cohesion/
+  // instability); scatter 2-boyutlu. Zone ancak X/Y vision-relevant eksenler ise
+  // anlamlı (coupling/cohesion/instability). mass hariç — θ mass'ten bağımsız.
+  // Bu durumda zone vision target etrafında radius=θ_bound daire (2D projection).
+  // "projection, not full θ" uyarısı: zone dışı node reject DEĞİL, sadece 2D'de
+  // target'tan uzak. Gerçek verdict 3D θ ile (Node Inspector / breakdown).
+  const visionAxes = ['coupling', 'cohesion', 'instability'];
+  const canShowZone = vs.evaluable && visionAxes.includes(xKey) && visionAxes.includes(yKey);
+  if (canShowZone) {
+    // Vision target bu iki eksendeki değer (global vision + builtin role override
+    // Runtime default — role-specific değil, global görsel referans).
+    const targetX = gv[ {coupling:'x', cohesion:'y', instability:'z'}[xKey] ];
+    const targetY = gv[ {coupling:'x', cohesion:'y', instability:'z'}[yKey] ];
+    // Daire radius: θ_bound'ı piksel'e çevir (scale range'den).
+    // θ = euclidean / sqrt(3) → euclidean = θ * sqrt(3). 2D için sqrt(2).
+    const radiusData = thetaBound * Math.sqrt(2); // 2D projection radius
+    const radiusPx = Math.abs(x(targetX + radiusData) - x(targetX));
+    const cx = x(targetX), cy = y(targetY);
+    // Accept zone (yeşil, hafif)
+    g.append('circle').attr('cx', cx).attr('cy', cy).attr('r', radiusPx)
+      .attr('fill', '#3fb950').attr('fill-opacity', 0.06)
+      .attr('stroke', '#3fb950').attr('stroke-width', 1).attr('stroke-dasharray', '4,3');
+    // Vision target noktası (× işareti)
+    g.append('line').attr('x1', cx-5).attr('y1', cy).attr('x2', cx+5).attr('y2', cy)
+      .attr('stroke', '#3fb950').attr('stroke-width', 2);
+    g.append('line').attr('x1', cx).attr('y1', cy-5).attr('x2', cx).attr('y2', cy+5)
+      .attr('stroke', '#3fb950').attr('stroke-width', 2);
+    // Uyarı etiketi — projection, not full θ
+    g.append('text').attr('x', cx).attr('y', cy - radiusPx - 4).attr('text-anchor', 'middle')
+      .attr('fill', '#3fb950').attr('font-size', '9px').attr('opacity', 0.7)
+      .text(`accept zone (2D projection, θ≤${thetaBound.toFixed(2)})`);
+  } else if (vs.evaluable) {
+    // Vision aktif ama eksenler vision-relevant değil — zone anlamsız, uyarı göster.
+    g.append('text').attr('x', w/2).attr('y', 14).attr('text-anchor', 'middle')
+      .attr('fill', '#8b949e').attr('font-size', '10px').attr('opacity', 0.6)
+      .text('(vision zone: select coupling/cohesion/instability on both axes to see accept zone)');
+  }
+
+  // #E: Compact in-graph legend — grafik scroll/kaydırma olsa bile renk→anlam
+  // görünür kalır. Mode'a göre değişir (role/risk/metric). Sağ-üst köşede.
+  const legendBox = g.append('g').attr('transform', `translate(${w - 130}, 8)`);
+  legendBox.append('rect').attr('width', 128).attr('height', effectiveMode === 'role' ? 92 : 36)
+    .attr('fill', '#0d1117').attr('stroke', '#30363d').attr('rx', 4).attr('opacity', 0.92);
+  if (effectiveMode === 'role') {
+    const roleLegend = ['TypeSurface', 'Core', 'Adapter', 'Utility', 'Runtime', 'Support'];
+    roleLegend.forEach((role, i) => {
+      const ly = 14 + i * 13;
+      legendBox.append('circle').attr('cx', 12).attr('cy', ly).attr('r', 4)
+        .attr('fill', rolePalette[role] || '#8b949e');
+      legendBox.append('text').attr('x', 22).attr('y', ly + 3).attr('fill', '#c9d1d9')
+        .attr('font-size', '10px').text(role);
+    });
+  } else if (effectiveMode === 'risk') {
+    legendBox.append('text').attr('x', 10).attr('y', 16).attr('fill', '#3fb950')
+      .attr('font-size', '10px').text('● low θ (near vision)');
+    legendBox.append('text').attr('x', 10).attr('y', 30).attr('fill', '#f85149')
+      .attr('font-size', '10px').text('● high θ (deviation)');
+  } else {
+    legendBox.append('text').attr('x', 10).attr('y', 16).attr('fill', '#3fb950')
+      .attr('font-size', '10px').text('● high ' + colorKey);
+    legendBox.append('text').attr('x', 10).attr('y', 30).attr('fill', '#f85149')
+      .attr('font-size', '10px').text('● low ' + colorKey);
+  }
+  // Cohesion görsel ayırt legend'ı (alt köşede kompakt)
+  const cohesionLegend = g.append('g').attr('transform', `translate(${w - 130}, ${h - 50})`);
+  cohesionLegend.append('rect').attr('width', 128).attr('height', 46)
+    .attr('fill', '#0d1117').attr('stroke', '#30363d').attr('rx', 4).attr('opacity', 0.92);
+  cohesionLegend.append('text').attr('x', 10).attr('y', 15).attr('fill', '#8b949e')
+    .attr('font-size', '9px').text('cohesion source:');
+  cohesionLegend.append('circle').attr('cx', 14).attr('cy', 28).attr('r', 4)
+    .attr('fill', '#58a6ff').attr('fill-opacity', 0.85);
+  cohesionLegend.append('text').attr('x', 24).attr('y', 31).attr('fill', '#c9d1d9')
+    .attr('font-size', '9px').text('solid = measured');
+  cohesionLegend.append('circle').attr('cx', 14).attr('cy', 40).attr('r', 4)
+    .attr('fill', 'none').attr('stroke', '#d29922').attr('stroke-width', 1.5);
+  cohesionLegend.append('text').attr('x', 24).attr('y', 43).attr('fill', '#c9d1d9')
+    .attr('font-size', '9px').text('hollow = placeholder');
+
+  // Cohesion görsel ayırtı (#4): measured / placeholder / heuristic üç durumu
+  // SVG'de ayırt edilir — review'in "solid / hollow / dashed" önerisi.
+  //   - measured (SCIP LCOM4) → solid circle (fill=color, opacity 0.85)
+  //   - placeholder (no SCIP) → hollow circle (fill=none, stroke=color) — ölçülmemiş
+  //   - heuristic               → dashed ring (fill yarım, dashed stroke)
+  // Bu, OSP'nin "ölçmedik = bilmiyoruz" epistemolojik iddiasının görsel kanıtı.
+  // Cohesion ekseninin (y) gerçek mi yoksa 0.5 fallback mi olduğunu scatter'da gör.
+  const cohesionShape = (d) => {
+    const src = d.cohesion_source;
+    if (src === 'placeholder') return { fill: 'none', stroke: color(d), dash: null, opacity: 1.0 };
+    if (src === 'heuristic') return { fill: color(d), stroke: color(d), dash: '3,2', opacity: 0.5 };
+    // measured (scip) veya source yok ama cohesion var → solid
+    return { fill: color(d), stroke: '#30363d', dash: null, opacity: 0.85 };
+  };
+
+  // #5: Reject node halo — review'in "reject node dikkat çeksin" önerisi. Vision
+  // evaluable iken her node'un verdict'ini hesapla; reject'lere ince kırmızı stroke.
+  // Öncelik: selected (mavi) > reject (kırmızı halo) > cohesionShape (placeholder hollow).
+  const isRejectNode = (d) => {
+    if (!vs.evaluable) return false;
+    const rv = roleVision(d.role || 'Runtime', gv.x, gv.y, gv.z);
+    const dx = (d.coupling ?? 0.5) - rv.x;
+    const dy = (d.cohesion ?? 0.5) - rv.y;
+    const dz = (d.instability ?? 0.5) - rv.z;
+    const theta = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
+    const thetaWarn = thetaBound + 0.10;
+    const cohesionPlaceholder = d.cohesion_source === 'placeholder' || d.cohesion_source === 'heuristic';
+    const verdict = evaluateNodeVerdict(theta, thetaBound, thetaWarn, d.role === 'Support', cohesionPlaceholder);
+    return verdict === 'reject';
+  };
+
   g.selectAll('.dot').data(nodes).enter().append('circle')
     .attr('cx',d=>x(getVal(d,xKey))).attr('cy',d=>y(getVal(d,yKey)))
-    .attr('r',d=>size(d.mass)).attr('fill',d=>color(d))
-    .attr('stroke',d=>d.id===selectedNodeId?'#58a6ff':"#30363d")
-    .attr('stroke-width',d=>d.id===selectedNodeId?3:1)
-    .attr('fill-opacity',d=>(d.cohesion_source==='placeholder'||d.cohesion_source==='heuristic')?0.35:0.85)
+    .attr('r',d=>size(d.mass)).attr('fill',d=>cohesionShape(d).fill)
+    .attr('fill-opacity',d=>cohesionShape(d).opacity)
+    .attr('stroke',d=>{
+      if (d.id===selectedNodeId) return '#58a6ff';     // seçili — mavi (en yüksek öncelik)
+      if (isRejectNode(d)) return '#f85149';            // #5: reject — kırmızı halo
+      const s=cohesionShape(d); return s.stroke;        // cohesion shape default
+    })
+    .attr('stroke-width',d=>{
+      if (d.id===selectedNodeId) return 3;
+      if (isRejectNode(d)) return 2.5;                  // #5: reject halo kalın
+      return d.cohesion_source==='placeholder'?2:1;
+    })
+    .attr('stroke-dasharray',d=>{ const s=cohesionShape(d); return s.dash||'none'; })
     .style('cursor','pointer')
     .on('mouseover',(e,d)=>{tt.style('opacity',1).html(`<b>Node ${d.id}</b> <span style="color:${rolePalette[d.role||'Runtime']||'#8b949e'}">[${d.role||'Runtime'}]</span><br>${d.path?`<span style="color:#8b949e;font-size:11px;">${d.path}</span><br>`:''}kind: ${d.kind}<br>mass: ${d.mass}<br>coupling: ${d.coupling!=null?d.coupling.toFixed(3):'—'}<br>cohesion: ${d.cohesion!=null?d.cohesion.toFixed(3):'—'}${d.cohesion_source==='placeholder'?' <span style="color:#8b949e;font-size:10px;">⚠ placeholder</span>':''}<br>instability: ${d.instability!=null?d.instability.toFixed(3):'—'}`).style('left',(e.clientX+14)+'px').style('top',(e.clientY-10)+'px');})
     .on('mouseout',()=>tt.style('opacity',0))
@@ -908,7 +1437,7 @@ let selectedNodeId = null;
 // Değerlendirmenin "DetectedCore hâlâ global z=0.50 ile fail" tespitini adresler:
 // backend role-aware ama frontend global kullanıyordu — artık aynı override.
 const BUILTIN_ROLE_VISION = {
-  TypeSurface: { x: 0.05, y: 0.80, z: 0.50 }, // coupling relaxed (declaration = no runtime deps)
+  TypeSurface: { x: 0.05, y: 0.80, z: 0.50 }, // coupling relaxed (type-only ayrımı yapıldı)
   Core:        { x: 0.60, y: 0.75, z: 0.20 }, // instability low (stabil foundation)
   Adapter:     { x: 0.80, y: 0.50, z: 0.80 }, // instability tolerated (integration boundary)
   Utility:     { x: 0.20, y: 0.60, z: 0.50 }, // coupling low (leaf helper)
@@ -928,6 +1457,211 @@ function roleVision(role, globalX, globalY, globalZ) {
   };
 }
 
+// ── Vision provenance state (backend VisionSource enum'una mirror) ──────────
+// #2 görevi: "Vision: not loaded" iken θ hesaplanması çelişkisini çözer.
+// Backend'deki VisionSource hiyerarşisini frontend'de temsil eder:
+//   - 'none'         → kullanıcı vision ayarlamadı; θ HESAPLANMAZ (topology-only)
+//   - 'userGlobal'   → kullanıcı Vision Editor slider'larıyla global vision belirledi
+//   - 'builtinRole'  → builtin role override aktif (slider'dan bağımsız her zaman)
+//
+// Kural: builtin role override vision "loaded" sayılır (θ anlamlı). Çünkü bir Core
+// node'u builtin z=0.20 hedefine göre değerlendirilir — slider NaN olsa bile bu
+// gerçek bir mimari hedeftir. "Topology only" yalnızca kullanıcı builtin'leri
+// açıkça disable etmediği sürece geçerli değildir (şimdilik disable seçeneği yok;
+// builtin her zaman aktif). Backend ile tutarlılık: VisionSource::BuiltinRole.label()
+// = "role-default (builtin)".
+//
+// Slider değerleri: kullanıcı Vision Editor'a girdiyse DOM'da var (default dolu);
+// girmediyse undefined → NaN. Bu yüzden slider varlığı "userGlobal" sinyalidir.
+const BUILTIN_ROLE_OVERRIDE_ENABLED = true; // gelecek: kullanıcı disable edebilir
+
+function getVisionState() {
+  // Slider DOM var mı? (Vision Editor render edildi mi?)
+  const visXEl = document.getElementById('vis_x');
+  const visX = parseFloat(visXEl?.value);
+  const sliderPresent = visXEl != null && !isNaN(visX);
+
+  if (sliderPresent) {
+    return { state: 'userGlobal', label: 'user loaded', evaluable: true, color: '#3fb950' };
+  }
+  if (BUILTIN_ROLE_OVERRIDE_ENABLED) {
+    return { state: 'builtinRole', label: 'role-default (builtin)', evaluable: true, color: '#d29922' };
+  }
+  return { state: 'none', label: 'not loaded', evaluable: false, color: '#8b949e' };
+}
+
+// Global slider değerlerini oku — userGlobal state için. Slider yoksa builtin
+// role override'lar yine de roleVision içinde kullanılır (fallback global = 0.5).
+function readGlobalVision() {
+  const x = parseFloat(document.getElementById('vis_x')?.value);
+  const y = parseFloat(document.getElementById('vis_y')?.value);
+  const z = parseFloat(document.getElementById('vis_z')?.value);
+  // Slider yoksa (builtinRole mode) global = nötr (0.5) — roleVision override'ı kazanır.
+  return {
+    x: isNaN(x) ? 0.5 : x,
+    y: isNaN(y) ? 0.5 : y,
+    z: isNaN(z) ? 0.5 : z,
+  };
+}
+
+// ── VisionVerdict (#5) — backend osp_core::vision::evaluate_node_vision mirror ─// Node analiz seviyesi karar semantiği. Review'in #4 "advisory ayrı state" önerisi.
+// Frontend eskiden soft-coded `advisoryTypes` + `isAdvisory` ile yapıyordu; artık
+// backend ile aynı karar hiyerarşisi (tek kaynak).
+//
+// Karar hiyerarşisi (backend ile birebir aynı):
+// 1. inconclusive (cohesion placeholder / vision none) → 'inconclusive'
+// 2. theta ≤ thetaBound → 'pass'
+// 3. theta ≤ thetaWarn → 'warning'
+// 4. theta > thetaWarn + Support role → 'advisory' (downgrade)
+// 5. theta > thetaWarn + other role → 'reject'
+//
+// Advisory, warning'den farklıdır: warning "dikkat" der, advisory "rol bağlamında
+// normal olabilir" der. OSP'nin "aynı metrik farklı rolde farklı anlam" iddiası.
+function evaluateNodeVerdict(theta, thetaBound, thetaWarn, isSupportRole, isInconclusive) {
+  if (isInconclusive) return 'inconclusive';
+  if (theta <= thetaBound) return 'pass';
+  if (theta <= thetaWarn) return 'warning';
+  return isSupportRole ? 'advisory' : 'reject';
+}
+
+// VisionVerdict → {label, color, isHardReject} (backend VisionVerdict impl mirror)
+const VERDICT_META = {
+  pass:         { label: '✓ pass',         color: '#3fb950', hard: false },
+  warning:      { label: '⚠ warning',      color: '#d29922', hard: false },
+  advisory:     { label: '⚠ advisory',     color: '#d29922', hard: false },
+  reject:       { label: '✗ fail',         color: '#f85149', hard: true  },
+  inconclusive: { label: '◐ inconclusive', color: '#8b949e', hard: false },
+};
+
+// ── #6: Tıklanabilir breakdown — kliklenen segment için node listesi modal ────
+// Review'in #3 önerisi: "TypeSurface 8r → click → filtered topology". Breakdown
+// satırları artık tıklanabilir; kliklenen segment (role×verdict veya axis×verdict)
+// için o node'ların listesi modal'da gösterilir. Her node'a tıklanınca Topology
+// paneline geç + node select (showNodeInspector).
+//
+// `segmentKey` iki formda gelir:
+//   - role adı ('Core', 'TypeSurface', 'Support', ...) + verdict ('warning'|'reject')
+//   - axis adı ('coupling'|'cohesion'|'instability') + verdict ('reject')
+function showBreakdownNodes(segmentKey, verdict) {
+  if (!analysisData) return;
+  // Breakdown'ı yeniden hesapla (preview render node ID saklamıyor — bağımsız hesap).
+  // Mevcut scope'a göre filtrele (#A) — Vision Editor'da hangi scope seçiliyse
+  // breakdown da o scope'tan node gösterir.
+  const scope = document.getElementById('analysisScope')?.value || 'all';
+  const inScope = (n) => {
+    const role = n.role || 'Runtime';
+    if (scope === 'all') return true;
+    if (scope === 'architectural') return role !== 'Support';
+    if (scope === 'production') return role !== 'Support';
+    if (scope === 'support') return role === 'Support';
+    return true;
+  };
+  const thetaBound = parseFloat(document.getElementById('vis_theta_bound')?.value) || 0.30;
+  const rejectBound = currentRejectBound;
+  const gx = parseFloat(document.getElementById('vis_x')?.value) || 0.5;
+  const gy = parseFloat(document.getElementById('vis_y')?.value) || 0.5;
+  const gz = parseFloat(document.getElementById('vis_z')?.value) || 0.5;
+
+  const matched = [];
+  analysisData.space.nodes.forEach(n => {
+    if (!inScope(n)) return;
+    const rv = roleVision(n.role || 'Runtime', gx, gy, gz);
+    const dx = (n.coupling ?? 0.5) - rv.x;
+    const dy = (n.cohesion ?? 0.5) - rv.y;
+    const dz = (n.instability ?? 0.5) - rv.z;
+    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
+    let nodeVerdict;
+    if (dist <= thetaBound) nodeVerdict = 'pass';
+    else if (dist <= rejectBound) nodeVerdict = 'warning';
+    else nodeVerdict = 'reject';
+
+    if (nodeVerdict !== verdict) return;
+
+    // Role segment mi, axis segment mi?
+    const isAxis = ['coupling', 'cohesion', 'instability'].includes(segmentKey);
+    if (isAxis) {
+      // Sadece reject'ler worst-axis'e girer — en çok sapma ekseni eşleşmeli
+      if (nodeVerdict !== 'reject') return;
+      const absDx = Math.abs(dx), absDy = Math.abs(dy), absDz = Math.abs(dz);
+      let worstAxis;
+      if (absDx >= absDy && absDx >= absDz) worstAxis = 'coupling';
+      else if (absDy >= absDz) worstAxis = 'cohesion';
+      else worstAxis = 'instability';
+      if (worstAxis === segmentKey) {
+        matched.push({ n, theta: dist, dx, dy, dz });
+      }
+    } else {
+      // Role segment
+      if ((n.role || 'Runtime') === segmentKey) {
+        matched.push({ n, theta: dist, dx, dy, dz });
+      }
+    }
+  });
+
+  // θ'ya göre sırala (en yüksek sapma üstte)
+  matched.sort((a, b) => b.theta - a.theta);
+
+  // Modal HTML — node listesi. Her satır tıklanabilir → Topology + inspector.
+  const meta = VERDICT_META[verdict] || VERDICT_META.warning;
+  const rolePalette = {
+    TypeSurface: '#a371f7', Core: '#58a6ff', Runtime: '#8b949e',
+    Adapter: '#f0883e', Utility: '#3fb950', Support: '#d29922', Unknown: '#6e7681',
+  };
+  const rows = matched.slice(0, 200).map(({ n, theta, dx, dy, dz }) => {
+    const roleColor = rolePalette[n.role || 'Runtime'] || '#8b949e';
+    const path = n.path ? `<span style="color:#8b949e;font-size:10px;word-break:break-all;">${n.path}</span>` : '';
+    return `<div onclick="selectNodeFromBreakdown(${n.id})" style="padding:6px 8px;border:1px solid #30363d;border-radius:4px;margin-bottom:4px;cursor:pointer;background:#161b22;" onmouseover="this.style.background='#21262d'" onmouseout="this.style.background='#161b22'">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span><span style="color:${roleColor};">●</span> Node ${n.id} <span style="color:${roleColor};font-size:11px;">[${n.role || 'Runtime'}]</span></span>
+        <span style="color:${meta.color};font-size:11px;">θ=${theta.toFixed(3)}</span>
+      </div>
+      ${path}
+      <div style="font-size:10px;color:#8b949e;margin-top:2px;">
+        coupling=${(n.coupling ?? 0.5).toFixed(2)} (Δ${dx>=0?'+':''}${dx.toFixed(2)}) ·
+        cohesion=${(n.cohesion ?? 0.5).toFixed(2)} (Δ${dy>=0?'+':''}${dy.toFixed(2)}) ·
+        instability=${(n.instability ?? 0.5).toFixed(2)} (Δ${dz>=0?'+':''}${dz.toFixed(2)})
+      </div>
+    </div>`;
+  }).join('');
+
+  const headerLabel = ['coupling', 'cohesion', 'instability'].includes(segmentKey)
+    ? `${segmentKey} axis · ${verdict}`
+    : `${segmentKey} role · ${verdict}`;
+
+  // Modal overlay
+  const overlay = document.createElement('div');
+  overlay.id = 'breakdownModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:20px;max-width:600px;width:100%;max-height:80vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="color:#58a6ff;font-size:15px;margin:0;">${headerLabel} · ${matched.length} node${matched.length===1?'':'s'}</h3>
+      <button onclick="document.getElementById('breakdownModal').remove()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px 10px;cursor:pointer;">✕</button>
+    </div>
+    <div style="font-size:11px;color:#8b949e;margin-bottom:10px;">Click a node to inspect in Topology panel.</div>
+    ${matched.length === 0 ? '<div style="color:#8b949e;padding:20px;text-align:center;">No nodes in this segment.</div>' : rows}
+    ${matched.length > 200 ? `<div style="font-size:11px;color:#8b949e;margin-top:8px;text-align:center;">Showing top 200 by θ (sorted highest deviation first).</div>` : ''}
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+// Modal'dan node seç → Topology paneline geç + node select + inspector.
+function selectNodeFromBreakdown(nodeId) {
+  // Modal kapat
+  const modal = document.getElementById('breakdownModal');
+  if (modal) modal.remove();
+  // Topology paneline geç
+  switchTab('topology');
+  // Node select + inspector
+  const node = analysisData.space.nodes.find(n => n.id === nodeId);
+  if (node) {
+    selectedNodeId = nodeId;
+    render();
+    showNodeInspector(node);
+  }
+}
+
+
 // Mimari rol badge'i — role-aware vision'da hangi hedef vector'un uygulandığını göster.
 function roleBadge(role) {
   const desc = {
@@ -939,7 +1673,107 @@ function roleBadge(role) {
     Support: 'test/fixture/migration · advisory mode',
   };
   const d = desc[role] || 'global vision';
-  return `${role} <span style="color:#8b949e;font-weight:400;">(${d})</span>`;
+  // #C: tıklanabilir — role profile modal'ını aç (override değerleri + açıklama).
+  return `<a style="color:#58a6ff;cursor:pointer;text-decoration:underline;" onclick="showRoleProfile('${role}')">${role}</a> <span style="color:#8b949e;font-weight:400;">(${d})</span>`;
+}
+
+// #C: Role profile modal — BUILTIN_ROLE_VISION override değerlerini + mimari
+// açıklamayı göster. Review'in "show role profile" önerisi. Backend
+// VisionConfig::builtin_role_override ile birebilir aynı değerler.
+function showRoleProfile(role) {
+  const profiles = {
+    TypeSurface: {
+      vision: { x: 0.05, y: 0.80, z: 0.50 },
+      desc: 'Declaration/type surface (.d.ts, interfaces). Coupling düşük beklenir — type-only import\'lar artık coupling\'e girmiyor (value-only degree).',
+      expectations: [
+        'coupling (x): 0.05 — relaxed (type-only import\'lar hariç, declaration = no runtime deps)',
+        'cohesion (y): 0.80 — yüksek (tip tanımları kohezyonlu)',
+        'instability (z): 0.50 — nötr (stable/instable kararsız)',
+      ],
+    },
+    Core: {
+      vision: { x: 0.60, y: 0.75, z: 0.20 },
+      desc: 'Domain core (business logic, stable foundation). Instability düşük beklenir — diğer modüller buna bağlı.',
+      expectations: [
+        'coupling (x): 0.60 — orta (core çoğu şeye bağlı olabilir)',
+        'cohesion (y): 0.75 — yüksek (tek sorumluluk)',
+        'instability (z): 0.20 — düşük (stabil foundation, incoming > outgoing)',
+      ],
+    },
+    Adapter: {
+      vision: { x: 0.80, y: 0.50, z: 0.80 },
+      desc: 'Integration boundary (API clients, external adapters). Instability yüksek toleranslı — external değişimlere açık.',
+      expectations: [
+        'coupling (x): 0.80 — yüksek (external API\'lere bağlı)',
+        'cohesion (y): 0.50 — nötr',
+        'instability (z): 0.80 — yüksek (outgoing > incoming, değişken)',
+      ],
+    },
+    Utility: {
+      vision: { x: 0.20, y: 0.60, z: 0.50 },
+      desc: 'Leaf helper (low coupling, low incoming). Küçük, bağımsız yardımcı fonksiyonlar.',
+      expectations: [
+        'coupling (x): 0.20 — düşük (leaf, az import eder)',
+        'cohesion (y): 0.60 — orta-yüksek',
+        'instability (z): 0.50 — nötr',
+      ],
+    },
+    Runtime: {
+      vision: { x: 0.40, y: 0.60, z: 0.35 },
+      desc: 'Implementation (default Production). Global vision\'a yakın ama instability biraz düşük.',
+      expectations: [
+        'coupling (x): 0.40 — orta',
+        'cohesion (y): 0.60 — orta-yüksek',
+        'instability (z): 0.35 — biraz düşük (stabil implementation)',
+      ],
+    },
+    Support: {
+      vision: null,
+      desc: 'Test/fixture/migration/generated. Advisory mode — vision relaxation yok, ama θ aşımı hard fail yerine advisory.',
+      expectations: [
+        'No vision override (advisory mode)',
+        'θ > θ_warn → Advisory (hard reject DEĞİL)',
+        'Yüksek coupling/instability rol bağlamında normal',
+      ],
+    },
+  };
+  const p = profiles[role];
+  if (!p) return;
+  const rolePalette = {
+    TypeSurface: '#a371f7', Core: '#58a6ff', Runtime: '#8b949e',
+    Adapter: '#f0883e', Utility: '#3fb950', Support: '#d29922', Unknown: '#6e7681',
+  };
+  const roleColor = rolePalette[role] || '#8b949e';
+  const visionRows = p.vision
+    ? `<div style="margin-top:12px;padding:10px;background:#161b22;border-radius:4px;border:1px solid #30363d;">
+        <div style="font-size:11px;color:#8b949e;margin-bottom:6px;">Built-in vision override (role-specific target):</div>
+        <div style="font-family:monospace;font-size:12px;color:#c9d1d9;">
+          x (coupling) = <span style="color:#3fb950;">${p.vision.x}</span> ·
+          y (cohesion) = <span style="color:#58a6ff;">${p.vision.y}</span> ·
+          z (instability) = <span style="color:#d29922;">${p.vision.z}</span>
+        </div>
+      </div>`
+    : '';
+  const expRows = p.expectations.map(e => `<div style="font-size:11px;color:#8b949e;padding:3px 0;">• ${e}</div>`).join('');
+
+  const overlay = document.createElement('div');
+  overlay.id = 'roleProfileModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:20px;max-width:520px;width:100%;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="margin:0;font-size:16px;"><span style="color:${roleColor};">●</span> ${role} role profile</h3>
+      <button onclick="document.getElementById('roleProfileModal').remove()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px 10px;cursor:pointer;">✕</button>
+    </div>
+    <div style="font-size:12px;color:#c9d1d9;margin-bottom:8px;">${p.desc}</div>
+    ${visionRows}
+    <div style="margin-top:12px;font-size:11px;color:#58a6ff;text-transform:uppercase;letter-spacing:0.5px;">Expectations</div>
+    ${expRows}
+    <div style="font-size:10px;color:#8b949e;margin-top:12px;padding-top:8px;border-top:1px solid #30363d;">
+      Values mirror backend <code style="color:#c9d1d9;">VisionConfig::builtin_role_override</code>. User TOML <code style="color:#c9d1d9;">[role_overrides]</code> varsa o kazanır.
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
 }
 
 // Cohesion source/confidence rozeti — placeholder cohesion (0.5, SCIP yok) ile
@@ -960,6 +1794,64 @@ function cohesionBadge(d) {
     return ` <span style="color:#3fb950;font-size:10px;" title="SCIP LCOM4, confidence ${(conf*100).toFixed(0)}%">● ${label}</span>`;
   }
   return '';
+}
+
+// ── #3 Per-axis bar — provenance-aware (score DEĞİL) ─────────────────────────
+// Review'in #5 "Vision Score 84/100" önerisinin EPİSTEMOLOJİK olarak doğru hali.
+// "84/100" scalar'ı MetricValue provenance'ını (§3.2) eritir ve gamification'a davet
+// eder. Bunun yerine: her eksen için değer bar + provenance etiketi. Bu, "ne kadar
+// iyi" değil "her eksenin değeri ve güven seviyesi nedir" sorusunu yanıtlar.
+//
+// Bar doluluk = değer [0,1] (yeşil). Provenance etiketi:
+//   - coupling/instability: "measured (tree-sitter)" — graf'ten compute, yüksek güven
+//   - cohesion: source/confidence'a göre (scip high/partial/placeholder/heuristic)
+// Bu, MetricValue modelinin görsel karşılığıdır (value + source + confidence).
+function renderAxisBars(d) {
+  const coupling = d.coupling ?? 0.5;
+  const cohesion = d.cohesion ?? 0.5;
+  const instability = d.instability ?? 0.5;
+  const clamp = v => Math.max(0, Math.min(1, v));
+
+  // Bar: 10 hücre, dolu = round(value * 10), renk = eksen rengi
+  const bar = (value, color, filledColor) => {
+    const filled = Math.round(clamp(value) * 10);
+    const cells = Array.from({ length: 10 }, (_, i) =>
+      i < filled
+        ? `<span style="color:${filledColor};">█</span>`
+        : `<span style="color:#30363d;">░</span>`
+    ).join('');
+    return cells;
+  };
+
+  // Provenance etiketleri
+  const tsLabel = '<span style="color:#3fb950;font-size:9px;">measured (tree-sitter)</span>';
+  let cohLabel;
+  const src = d.cohesion_source;
+  if (src === 'scip') {
+    const conf = d.cohesion_confidence ?? 0;
+    cohLabel = `<span style="color:#3fb950;font-size:9px;">SCIP LCOM4 (${(conf * 100).toFixed(0)}%)</span>`;
+  } else if (src === 'heuristic') {
+    cohLabel = '<span style="color:#d29922;font-size:9px;">heuristic</span>';
+  } else if (src === 'placeholder') {
+    cohLabel = '<span style="color:#8b949e;font-size:9px;">placeholder (no SCIP)</span>';
+  } else {
+    cohLabel = '<span style="color:#8b949e;font-size:9px;">unknown</span>';
+  }
+
+  return `<div style="margin-top:6px;padding:8px;background:#161b22;border-radius:4px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;margin-bottom:2px;">
+      <span style="color:#8b949e;">x · coupling</span><span>${tsLabel}</span>
+    </div>
+    <div style="font-family:monospace;font-size:11px;letter-spacing:-1px;">${bar(coupling, '#58a6ff', '#58a6ff')} <span style="color:#c9d1d9;font-family:default;">${coupling.toFixed(2)}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;margin:4px 0 2px;">
+      <span style="color:#8b949e;">y · cohesion</span><span>${cohLabel}</span>
+    </div>
+    <div style="font-family:monospace;font-size:11px;letter-spacing:-1px;">${bar(cohesion, '#3fb950', '#3fb950')} <span style="color:#c9d1d9;font-family:default;">${cohesion.toFixed(2)}</span></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;margin:4px 0 2px;">
+      <span style="color:#8b949e;">z · instability</span><span>${tsLabel}</span>
+    </div>
+    <div style="font-family:monospace;font-size:11px;letter-spacing:-1px;">${bar(instability, '#d29922', '#d29922')} <span style="color:#c9d1d9;font-family:default;">${instability.toFixed(2)}</span></div>
+  </div>`;
 }
 
 // SCIP semantic özeti — bu dosyada kaç class/method/field var?
@@ -985,7 +1877,15 @@ function renderScipSemantics(d) {
 
 function showNodeInspector(d) {
   const el = document.getElementById('nodeInspector');
-  if (!d) { el.innerHTML = '<div class="metric"><span class="label">Click a node to inspect</span></div>'; return; }
+  const toggle = document.getElementById('inspectorToggle');
+  if (!d) {
+    // Deselect — inspector section'ı gizle (#4: conditional).
+    el.innerHTML = '<div class="metric"><span class="label">Click a node to inspect</span></div>';
+    if (toggle) toggle.style.display = 'none';
+    return;
+  }
+  // Node seçildi — inspector section görünür (#4: conditional).
+  if (toggle) toggle.style.display = 'flex';
 
   const fmt = v => v != null ? v.toFixed(3) : '—';
   const edges = analysisData ? analysisData.space.edges : [];
@@ -998,10 +1898,8 @@ function showNodeInspector(d) {
   // Mimari rol (TypeSurface/Core/Adapter/Utility/Runtime/Support) —
   // role-aware vision için. Eski snapshot'lar → "Runtime".
   const role = d.role || 'Runtime';
-  // Advisory: bu node türlerinde yüksek instability / incoming=0 doğaldır →
-  // vision fail'i kırmızı risk yerine sarı uyarı olarak göster.
-  const advisoryTypes = ['Test', 'Fixture', 'Migration', 'Generated', 'Script'];
-  const isAdvisory = advisoryTypes.includes(cls);
+  // #5: Advisory downgrade artık evaluateNodeVerdict içinde — Support rolüne göre.
+  // Eskiden soft-coded advisoryTypes + isAdvisory vardı; backend ile aynı mantık.
 
   // Classification badge renkleri
   const badgeColors = {
@@ -1011,21 +1909,29 @@ function showNodeInspector(d) {
   };
   const badgeColor = badgeColors[cls] || '#8b949e';
 
-  // Vision sapma analizi — slider'lardan mevcut vision vektörünü oku
-  let visionHtml = '<div class="metric"><span class="label">No vision loaded</span></div>';
-  const visX = parseFloat(document.getElementById('vis_x')?.value);
-  const visY = parseFloat(document.getElementById('vis_y')?.value);
-  const visZ = parseFloat(document.getElementById('vis_z')?.value);
-  const thetaBound = parseFloat(document.getElementById('vis_theta_bound')?.value);
-  if (!isNaN(visX) && !isNaN(visY) && !isNaN(visZ) && !isNaN(thetaBound)) {
-    // Role-aware vision: node'un rolüne göre builtin override uygula (backend
+  // Vision sapma analizi — #2: getVisionState() ile provenance-aware.
+  // Çelişki çözüldü: "No vision loaded" + "θ pass" aynı anda görünmez artık.
+  //   - vs.state === 'none' → gerçekten topology-only, θ HESAPLANMAZ
+  //   - vs.state === 'builtinRole' → builtin role override aktif, θ anlamlı
+  //     ("role-default (builtin)" etiketi gösterilir)
+  //   - vs.state === 'userGlobal' → kullanıcı slider vision, θ anlamlı ("user loaded")
+  let visionHtml;
+  const vs = getVisionState();
+  const thetaBound = parseFloat(document.getElementById('vis_theta_bound')?.value) || 0.30;
+  if (!vs.evaluable) {
+    // Gerçek topology-only — builtin role override disabled. θ hesaplanmaz.
+    visionHtml = `
+      <div class="metric"><span class="label">Vision</span><span class="value" style="color:#8b949e;">not loaded</span></div>
+      <div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">Mode: Topology only — no θ evaluation</span></div>`;
+  } else {
+    // Role-aware vision: node'un rolüne göre builtin/user override uygula (backend
     // vision_for_claim ile aynı). Core node z=0.20, TypeSurface x=0.05, vb.
-    const rv = roleVision(role, visX, visY, visZ);
+    const gv = readGlobalVision();
+    const rv = roleVision(role, gv.x, gv.y, gv.z);
     const dx = (d.coupling ?? 0.5) - rv.x;
     const dy = (d.cohesion ?? 0.5) - rv.y;
     const dz = (d.instability ?? 0.5) - rv.z;
     const theta = Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
-    const passes = theta <= thetaBound;
     // Cohesion placeholder: SCIP yoksa cohesion=0.5 fallback → θ sonucu düşük güven.
     // Değerlendirmenin "placeholder iken fail yerine review" önerisi.
     const cohesionPlaceholder = d.cohesion_source === 'placeholder' || d.cohesion_source === 'heuristic';
@@ -1036,31 +1942,34 @@ function showNodeInspector(d) {
       {name: 'instability (z)', delta: Math.abs(dz)},
     ].sort((a,b) => b.delta - a.delta);
 
-    // Advisory mode: test/migration/fixture için fail → sarı uyarı (false-positive gider)
-    // Production/Unknown için mevcut kırmızı fail korunur.
-    let statusColor, statusText;
-    if (passes) {
-      // Pass margin: boundary'ye yakınsa "near boundary" işaretle.
+    // #5: VisionVerdict artık backend evaluate_node_vision mirror'ı (tek kaynak).
+    // Eskiden soft-coded advisoryTypes + if-else zinciri vardı; şimdi tek fonksiyon.
+    // thetaWarn: pass/reject arasındaki warning bandı (θ_bound'un hemen üstü).
+    const thetaWarn = thetaBound + 0.10; // warning band genişliği
+    const isSupportRole = role === 'Support';
+    const verdict = evaluateNodeVerdict(theta, thetaBound, thetaWarn, isSupportRole, cohesionPlaceholder);
+    const meta = VERDICT_META[verdict];
+
+    // Verdict'e göre ek açıklama metni (backend ile aynı semantik).
+    let statusDetail = '';
+    if (verdict === 'pass') {
       const margin = thetaBound - theta;
       const nearBoundary = margin < 0.05;
-      statusColor = nearBoundary ? '#d29922' : '#3fb950';
-      statusText = nearBoundary
-        ? `✓ pass · near boundary (margin ${margin.toFixed(3)})`
-        : `✓ pass (margin ${margin.toFixed(3)})`;
-    } else if (isAdvisory) {
-      statusColor = '#d29922';
-      statusText = `⚠ advisory — high ${axes[0].name.split(' ')[0]} normal for ${cls}`;
-    } else if (cohesionPlaceholder) {
-      // Confidence-aware: cohesion placeholder (SCIP yok) iken θ sonucu düşük güven.
-      // Değerlendirmenin "placeholder iken fail yerine review" önerisi — fail kesin
-      // görünmemeli çünkü cohesion ölçülmemiş (0.5 fallback).
-      statusColor = '#8b949e';
-      statusText = `◐ review — cohesion unmeasured (no SCIP data), θ inconclusive`;
-    } else {
-      statusColor = '#f85149'; statusText = '✗ fail';
+      if (nearBoundary) {
+        statusDetail = ` · near boundary (margin ${margin.toFixed(3)})`;
+      } else {
+        statusDetail = ` · margin ${margin.toFixed(3)}`;
+      }
+    } else if (verdict === 'advisory') {
+      statusDetail = ` — high ${axes[0].name.split(' ')[0]} normal for ${cls}`;
+    } else if (verdict === 'inconclusive') {
+      statusDetail = ` — cohesion unmeasured (no SCIP data), θ inconclusive`;
     }
+    const statusText = meta.label + statusDetail;
+    const statusColor = meta.color;
 
     visionHtml = `
+      <div class="metric"><span class="label">Vision source</span><span class="value" style="color:${vs.color};font-size:11px;">${vs.label}</span></div>
       <div class="metric"><span class="label">Vision deviation θ</span><span class="value" style="color:${statusColor};">${theta.toFixed(3)} ${statusText}</span></div>
       <div class="metric"><span class="label">Worst axis</span><span class="value">${axes[0].name} (Δ=${axes[0].delta.toFixed(3)})</span></div>
       <div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">Δx=${dx.toFixed(2)} Δy=${dy.toFixed(2)} Δz=${dz.toFixed(2)} · θ_bound=${thetaBound.toFixed(2)}</span></div>`;
@@ -1080,6 +1989,7 @@ function showNodeInspector(d) {
     <div class="metric"><span class="label">Mass (LOC)</span><span class="value">${d.mass}</span></div>
     ${d.path ? `<div class="metric" style="font-size:11px;word-break:break-all;"><span class="label">Path</span><span class="value">${d.path}</span></div>` : ''}
     <div style="margin-top:10px;font-size:12px;color:#8b949e;">OSP Coordinates</div>
+    ${renderAxisBars(d)}
     <div class="metric"><span class="label">x — Coupling</span><span class="value">${fmt(d.coupling)}</span></div>
     <div class="metric"><span class="label">y — Cohesion</span><span class="value">${fmt(d.cohesion)}${cohesionBadge(d)}</span></div>
     <div class="metric"><span class="label">z — Instability</span><span class="value">${fmt(d.instability)}</span></div>

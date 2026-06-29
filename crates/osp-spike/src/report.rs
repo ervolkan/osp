@@ -26,7 +26,11 @@ pub fn print_comparison(analyses: &[RepoAnalysis]) -> Result<()> {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| a.repo_path.to_string_lossy().into_owned());
-        let ff = if a.witness.likely_ff_workflow { "*" } else { "" };
+        let ff = if a.witness.likely_ff_workflow {
+            "*"
+        } else {
+            ""
+        };
         let kappa = if a.graph.nodes.is_empty() {
             0.0
         } else {

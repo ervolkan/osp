@@ -11,5 +11,5 @@ pub mod index;
 pub mod lcom4;
 pub mod loader;
 
-pub use index::{SemanticIndex, ClassSemanticInfo, FieldAccess};
+pub use index::{ClassSemanticInfo, FieldAccess, SemanticIndex};
 pub use loader::load_scip_index;

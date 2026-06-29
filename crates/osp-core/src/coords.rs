@@ -359,9 +359,18 @@ mod tests {
     #[test]
     fn position_of_collects_all_axes_in_order() {
         let cs = CoordinateSystem::empty()
-            .with_axis(ConstantAxis { name: "a", value: 0.1 })
-            .with_axis(ConstantAxis { name: "b", value: 0.2 })
-            .with_axis(ConstantAxis { name: "c", value: 0.3 });
+            .with_axis(ConstantAxis {
+                name: "a",
+                value: 0.1,
+            })
+            .with_axis(ConstantAxis {
+                name: "b",
+                value: 0.2,
+            })
+            .with_axis(ConstantAxis {
+                name: "c",
+                value: 0.3,
+            });
         assert_eq!(cs.dim(), 3);
         assert_eq!(cs.axis_names(), vec!["a", "b", "c"]);
 
@@ -374,9 +383,18 @@ mod tests {
     fn raw_position_of_maps_by_axis_name_not_order() {
         // Eksenler "yanlış" sırada ama doğru isimle → RawPosition doğru field'a gider
         let cs = CoordinateSystem::empty()
-            .with_axis(ConstantAxis { name: "entropy", value: 0.5 })      // → w
-            .with_axis(ConstantAxis { name: "coupling", value: 0.7 })     // → x
-            .with_axis(ConstantAxis { name: "witness_depth", value: 0.3 });// → v
+            .with_axis(ConstantAxis {
+                name: "entropy",
+                value: 0.5,
+            }) // → w
+            .with_axis(ConstantAxis {
+                name: "coupling",
+                value: 0.7,
+            }) // → x
+            .with_axis(ConstantAxis {
+                name: "witness_depth",
+                value: 0.3,
+            }); // → v
         let space = Space::new();
         let raw = cs.raw_position_of(&node(1), &space);
         assert!((raw.x - 0.7).abs() < 1e-9, "x (coupling) = {}", raw.x);
@@ -425,8 +443,14 @@ mod tests {
     #[test]
     fn builder_chain_compiles_and_works() {
         let cs = CoordinateSystem::empty()
-            .with_axis(ConstantAxis { name: "a", value: 0.0 })
-            .with_axis(ConstantAxis { name: "b", value: 1.0 });
+            .with_axis(ConstantAxis {
+                name: "a",
+                value: 0.0,
+            })
+            .with_axis(ConstantAxis {
+                name: "b",
+                value: 1.0,
+            });
         assert_eq!(cs.dim(), 2);
     }
 }

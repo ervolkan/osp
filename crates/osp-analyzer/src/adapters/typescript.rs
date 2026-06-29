@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use crate::contract::{ClassDef, ImportStatement, ImportKind, ResolvedImport};
-use crate::language::{LanguageAdapter, RepoContext};
 use super::shared;
+use crate::contract::{ClassDef, ImportKind, ImportStatement, ResolvedImport};
+use crate::language::{LanguageAdapter, RepoContext};
 
 pub struct TypeScriptAdapter;
 
@@ -21,22 +21,22 @@ impl LanguageAdapter for TypeScriptAdapter {
     }
 
     fn extract_imports(&self, source: &str) -> Vec<ImportStatement> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        ) {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
-        let paths = shared::walk_imports(
-            tree.root_node(),
-            source.as_bytes(),
-            &["import_statement"],
-        );
+        let tree =
+            match shared::parse_root(source, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) {
+                Some(t) => t,
+                None => return Vec::new(),
+            };
+        // walk_imports_typed: TS `import type` ayrımı yapar (statement-level +
+        // per-specifier). path + is_type_only tuple döndürür.
+        let paths = shared::walk_imports_typed(tree.root_node(), source.as_bytes());
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i })
+            .map(|(i, (path, is_type_only))| ImportStatement {
+                path,
+                source_location: i,
+                is_type_only,
+            })
             .collect()
     }
 
@@ -67,13 +67,11 @@ impl LanguageAdapter for TypeScriptAdapter {
     }
 
     fn extract_class_defs(&self, source: &str) -> Vec<ClassDef> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-        ) {
-            Some(t) => t,
-            None => return Vec::new(),
-        };
+        let tree =
+            match shared::parse_root(source, tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()) {
+                Some(t) => t,
+                None => return Vec::new(),
+            };
         shared::walk_class_defs(
             tree.root_node(),
             source,
@@ -94,13 +92,18 @@ mod tests {
         let src = "import { x } from './foo';\nimport y from '../bar';\nimport z from 'react';\n";
         let adapter = TypeScriptAdapter;
         let imports = adapter.extract_imports(src);
-        assert!(imports.iter().any(|i| i.path.contains("foo")), "{:?}", imports);
+        assert!(
+            imports.iter().any(|i| i.path.contains("foo")),
+            "{:?}",
+            imports
+        );
         assert!(imports.iter().any(|i| i.path == "react"));
     }
 
     #[test]
     fn ts_abstract_class_detected() {
-        let src = "abstract class Animal { speak(): void {} }\nclass Dog extends Animal { bark() {} }\n";
+        let src =
+            "abstract class Animal { speak(): void {} }\nclass Dog extends Animal { bark() {} }\n";
         let adapter = TypeScriptAdapter;
         let defs = adapter.extract_class_defs(src);
         assert!(defs.iter().any(|d| d.is_abstract), "Animal abstract");
@@ -112,11 +115,18 @@ mod tests {
         // Regression: değerlendirme Svelte'de Abstractness=0.0 gördü. Kök neden
         // walk_class_defs'in interface_declaration node kind'ini tanımamasıydı.
         // Interface'ler Martin tanımına göre abstract sayılır (abstract contract).
-        let src = "interface Animal { speak(): void; }\nclass Dog implements Animal { speak() {} }\n";
+        let src =
+            "interface Animal { speak(): void; }\nclass Dog implements Animal { speak() {} }\n";
         let adapter = TypeScriptAdapter;
         let defs = adapter.extract_class_defs(src);
-        assert!(defs.iter().any(|d| d.is_abstract), "Animal interface should be abstract");
-        assert!(defs.iter().any(|d| !d.is_abstract), "Dog class should be concrete");
+        assert!(
+            defs.iter().any(|d| d.is_abstract),
+            "Animal interface should be abstract"
+        );
+        assert!(
+            defs.iter().any(|d| !d.is_abstract),
+            "Dog class should be concrete"
+        );
         // 2 def beklenir (interface + class), ikisi de sayılmalı
         assert_eq!(defs.len(), 2, "interface + class both counted");
     }
@@ -127,7 +137,10 @@ mod tests {
         let src = "type Status = 'active' | 'inactive';\nclass Service { status: Status; }\n";
         let adapter = TypeScriptAdapter;
         let defs = adapter.extract_class_defs(src);
-        assert!(defs.iter().any(|d| d.is_abstract), "type alias should be abstract");
+        assert!(
+            defs.iter().any(|d| d.is_abstract),
+            "type alias should be abstract"
+        );
     }
 
     #[test]
@@ -137,8 +150,14 @@ mod tests {
             vec![PathBuf::from("/repo/src/util.ts")],
         );
         let adapter = TypeScriptAdapter;
-        let import = ImportStatement { path: "./util".into(), source_location: 0 };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/src/main.ts"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "./util".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/src/main.ts"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
     }
 
@@ -146,8 +165,81 @@ mod tests {
     fn ts_resolve_external_package() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = TypeScriptAdapter;
-        let import = ImportStatement { path: "react".into(), source_location: 0 };
-        let resolved = adapter.resolve_import(&import, Path::new("/repo/src/main.ts"), &repo).unwrap();
+        let import = ImportStatement {
+            path: "react".into(),
+            source_location: 0,
+            ..Default::default()
+        };
+        let resolved = adapter
+            .resolve_import(&import, Path::new("/repo/src/main.ts"), &repo)
+            .unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
+    }
+
+    // ── Type-only import ayrımı (4 form) ───────────────────────────────────
+    // TS `import type` runtime dependency değildir → coupling/instability'den hariç.
+    // 4 formu test et: value, statement-level type, per-specifier type, mixed.
+
+    fn find_import<'a>(imports: &'a [ImportStatement], path: &str) -> Option<&'a ImportStatement> {
+        imports.iter().find(|i| i.path == path)
+    }
+
+    #[test]
+    fn ts_value_import_not_type_only() {
+        // Form 1: `import { Foo } from './foo'` → value import
+        let src = "import { Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(!imp.is_type_only, "value import must not be type-only");
+    }
+
+    #[test]
+    fn ts_statement_level_type_import() {
+        // Form 2: `import type { Foo } from './foo'` → type-only (statement-level qualifier)
+        let src = "import type { Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(imp.is_type_only, "import type must be type-only");
+    }
+
+    #[test]
+    fn ts_per_specifier_type_only() {
+        // Form 3: `import { type Foo } from './foo'` → type-only (tek specifier, type-qualified)
+        let src = "import { type Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(
+            imp.is_type_only,
+            "import with single type specifier must be type-only"
+        );
+    }
+
+    #[test]
+    fn ts_mixed_import_value_wins() {
+        // Form 4: `import { Foo, type Bar } from './foo'` → value (mixed, en az bir value var)
+        let src = "import { Foo, type Bar } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(
+            !imp.is_type_only,
+            "mixed import must be value (runtime dependency from value specifier)"
+        );
+    }
+
+    #[test]
+    fn ts_default_type_import() {
+        // `import type Foo from './foo'` → type-only (default import with statement-level type)
+        let src = "import type Foo from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(
+            imp.is_type_only,
+            "import type Foo (default) must be type-only"
+        );
     }
 }

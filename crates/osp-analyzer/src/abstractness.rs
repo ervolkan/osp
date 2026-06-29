@@ -74,9 +74,7 @@ impl RepoAbstractness {
 }
 
 /// Per-package abstractness breakdown (reviewer 1 #6 — rapor için).
-pub fn abstractness_by_package(
-    packages: &[(String, &[ClassDef])],
-) -> Vec<(String, f64)> {
+pub fn abstractness_by_package(packages: &[(String, &[ClassDef])]) -> Vec<(String, f64)> {
     packages
         .iter()
         .map(|(name, defs)| {
@@ -147,18 +145,34 @@ mod tests {
         // Module B: 0 abstract, 5 concrete (A=0.0)
         // Repo: 3/9 = 0.333 (NOT average of 0.75 and 0.0)
         let modules = vec![
-            ModuleAbstractness { abstract_count: 3, total_count: 4, ratio: 0.75 },
-            ModuleAbstractness { abstract_count: 0, total_count: 5, ratio: 0.0 },
+            ModuleAbstractness {
+                abstract_count: 3,
+                total_count: 4,
+                ratio: 0.75,
+            },
+            ModuleAbstractness {
+                abstract_count: 0,
+                total_count: 5,
+                ratio: 0.0,
+            },
         ];
         let repo = RepoAbstractness::from_all_modules(&modules);
         assert_eq!(repo.total_abstract, 3);
         assert_eq!(repo.total_concrete, 6);
-        assert!((repo.ratio - 3.0 / 9.0).abs() < 1e-9, "repo ratio = {}", repo.ratio);
+        assert!(
+            (repo.ratio - 3.0 / 9.0).abs() < 1e-9,
+            "repo ratio = {}",
+            repo.ratio
+        );
     }
 
     #[test]
     fn repo_no_types_anywhere() {
-        let modules = vec![ModuleAbstractness { abstract_count: 0, total_count: 0, ratio: 0.0 }];
+        let modules = vec![ModuleAbstractness {
+            abstract_count: 0,
+            total_count: 0,
+            ratio: 0.0,
+        }];
         let repo = RepoAbstractness::from_all_modules(&modules);
         assert!((repo.ratio - 0.5).abs() < 1e-9, "no types → neutral 0.5");
     }
@@ -183,14 +197,18 @@ mod tests {
     fn faz0_click_like_distribution() {
         // click: mostly concrete, few ABC-based classes
         let defs = vec![
-            class_def("BaseCommand", true),  // ABC
-            class_def("Command", false),     // concrete
+            class_def("BaseCommand", true), // ABC
+            class_def("Command", false),    // concrete
             class_def("Group", false),
             class_def("Parameter", false),
             class_def("Option", false),
         ];
         let abs = ModuleAbstractness::from_class_defs(&defs);
-        assert!((abs.ratio - 0.2).abs() < 1e-9, "1/5 abstract = {}", abs.ratio);
+        assert!(
+            (abs.ratio - 0.2).abs() < 1e-9,
+            "1/5 abstract = {}",
+            abs.ratio
+        );
     }
 
     #[test]
@@ -222,8 +240,12 @@ mod tests {
         let d_real = (a_real + i_module - 1.0).abs();
         let d_placeholder = (a_placeholder + i_module - 1.0).abs();
 
-        assert!((d_real - 0.03).abs() < 1e-9, "D real = {}", d_real);  // near main-seq
-        assert!((d_placeholder - 0.2).abs() < 1e-9, "D placeholder = {}", d_placeholder);
+        assert!((d_real - 0.03).abs() < 1e-9, "D real = {}", d_real); // near main-seq
+        assert!(
+            (d_placeholder - 0.2).abs() < 1e-9,
+            "D placeholder = {}",
+            d_placeholder
+        );
 
         // Real A shows this module IS near main-sequence (good architecture)
         // Placeholder A showed it as further off (misleading)

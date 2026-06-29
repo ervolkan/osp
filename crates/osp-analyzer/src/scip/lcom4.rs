@@ -89,7 +89,10 @@ pub fn compute_lcom4(class: &ClassSemanticInfo) -> Lcom4Result {
     // For each field_access: union(method, field)
     let mut access_count = 0;
     for access in accesses {
-        if let (Some(&mi), Some(&fi)) = (method_idx.get(access.method.as_str()), field_idx.get(access.field.as_str())) {
+        if let (Some(&mi), Some(&fi)) = (
+            method_idx.get(access.method.as_str()),
+            field_idx.get(access.field.as_str()),
+        ) {
             dsu.union(mi, fi);
             access_count += 1;
         }
@@ -201,7 +204,12 @@ impl Dsu {
 mod tests {
     use super::*;
 
-    fn class(name: &str, methods: &[&str], fields: &[&str], accesses: &[(&str, &str)]) -> ClassSemanticInfo {
+    fn class(
+        name: &str,
+        methods: &[&str],
+        fields: &[&str],
+        accesses: &[(&str, &str)],
+    ) -> ClassSemanticInfo {
         ClassSemanticInfo {
             name: name.into(),
             methods: methods.iter().map(|s| s.to_string()).collect(),
@@ -320,12 +328,7 @@ mod tests {
             "Fragmented",
             &["m1", "m2", "m3", "m4"],
             &["f1", "f2", "f3", "f4"],
-            &[
-                ("m1", "f1"),
-                ("m2", "f2"),
-                ("m3", "f3"),
-                ("m4", "f4"),
-            ],
+            &[("m1", "f1"), ("m2", "f2"), ("m3", "f3"), ("m4", "f4")],
         );
         let result = compute_lcom4(&c);
         assert_eq!(result.lcom4, 4);
@@ -340,11 +343,25 @@ mod tests {
         // Class B: LCOM4=2 (1 method, cohesion=0.5)
         // Weighted: (1.0*3 + 0.5*1) / 4 = 0.875
         let classes = vec![
-            Lcom4Result { lcom4: 1, method_count: 3, field_count: 2, access_count: 3 },
-            Lcom4Result { lcom4: 2, method_count: 1, field_count: 2, access_count: 1 },
+            Lcom4Result {
+                lcom4: 1,
+                method_count: 3,
+                field_count: 2,
+                access_count: 3,
+            },
+            Lcom4Result {
+                lcom4: 2,
+                method_count: 1,
+                field_count: 2,
+                access_count: 1,
+            },
         ];
         let mv = module_cohesion(&classes);
-        assert!((mv.value - 0.875).abs() < 1e-9, "weighted cohesion = {}", mv.value);
+        assert!(
+            (mv.value - 0.875).abs() < 1e-9,
+            "weighted cohesion = {}",
+            mv.value
+        );
         assert_eq!(mv.source, crate::contract::MetricSource::Scip);
     }
 
@@ -362,7 +379,12 @@ mod tests {
         let index = SemanticIndex {
             classes: vec![
                 class("A", &["m1"], &["f1"], &[("m1", "f1")]),
-                class("B", &["m1", "m2"], &["f1", "f2"], &[("m1", "f1"), ("m2", "f2")]),
+                class(
+                    "B",
+                    &["m1", "m2"],
+                    &["f1", "f2"],
+                    &[("m1", "f1"), ("m2", "f2")],
+                ),
             ],
             files_indexed: 2,
             files_total: 2,
@@ -387,18 +409,21 @@ mod tests {
             &[
                 ("__str__", "title"),
                 ("save", "title"),
-                ("save", "body"),           // save bridges title+body
-                ("save", "published_at"),    // + published_at
+                ("save", "body"),         // save bridges title+body
+                ("save", "published_at"), // + published_at
                 ("clean", "title"),
-                ("clean", "body"),           // clean also bridges
+                ("clean", "body"), // clean also bridges
                 // get_absolute_url accesses slug
                 ("get_absolute_url", "slug"),
                 // save also accesses slug (typical Django pattern)
-                ("save", "slug"),            // save connects ALL fields
+                ("save", "slug"), // save connects ALL fields
             ],
         );
         let result = compute_lcom4(&c);
-        assert_eq!(result.lcom4, 1, "save() connects all → Django models are cohesive");
+        assert_eq!(
+            result.lcom4, 1,
+            "save() connects all → Django models are cohesive"
+        );
         assert!((result.cohesion() - 1.0).abs() < 1e-9);
     }
 

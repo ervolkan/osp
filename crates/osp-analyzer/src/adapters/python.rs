@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
+use super::shared;
 use crate::contract::{ClassDef, ImportStatement, ResolvedImport};
 use crate::language::{LanguageAdapter, RepoContext};
-use super::shared;
 
 pub struct PythonAdapter;
 
@@ -21,10 +21,7 @@ impl LanguageAdapter for PythonAdapter {
     }
 
     fn extract_imports(&self, source: &str) -> Vec<ImportStatement> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_python::LANGUAGE.into(),
-        ) {
+        let tree = match shared::parse_root(source, tree_sitter_python::LANGUAGE.into()) {
             Some(t) => t,
             None => return Vec::new(),
         };
@@ -38,7 +35,8 @@ impl LanguageAdapter for PythonAdapter {
             .enumerate()
             .map(|(i, path)| ImportStatement {
                 path,
-                source_location: i, // approximate
+                source_location: i,  // approximate
+                is_type_only: false, // Python'da type-only import kavramı yok (TYPE_CHECKING idiom future work)
             })
             .collect()
     }
@@ -65,10 +63,7 @@ impl LanguageAdapter for PythonAdapter {
     }
 
     fn extract_class_defs(&self, source: &str) -> Vec<ClassDef> {
-        let tree = match shared::parse_root(
-            source,
-            tree_sitter_python::LANGUAGE.into(),
-        ) {
+        let tree = match shared::parse_root(source, tree_sitter_python::LANGUAGE.into()) {
             Some(t) => t,
             None => return Vec::new(),
         };
@@ -93,7 +88,11 @@ mod tests {
         let src = "import os\nimport foo.bar\nfrom baz.qux import x\n";
         let adapter = PythonAdapter;
         let imports = adapter.extract_imports(src);
-        assert!(imports.iter().any(|i| i.path == "foo.bar"), "imports: {:?}", imports);
+        assert!(
+            imports.iter().any(|i| i.path == "foo.bar"),
+            "imports: {:?}",
+            imports
+        );
         assert!(imports.iter().any(|i| i.path == "baz.qux"));
     }
 
@@ -125,6 +124,7 @@ class Dog(Animal):
         let import = ImportStatement {
             path: "foo.bar".into(),
             source_location: 0,
+            ..Default::default()
         };
         let resolved = adapter
             .resolve_import(&import, Path::new("/repo/main.py"), &repo)
@@ -139,6 +139,7 @@ class Dog(Animal):
         let import = ImportStatement {
             path: "external_pkg".into(),
             source_location: 0,
+            ..Default::default()
         };
         let resolved = adapter
             .resolve_import(&import, Path::new("/repo/main.py"), &repo)

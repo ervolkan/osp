@@ -159,15 +159,17 @@ impl Rule for EdgeTargetExistsRule {
         &self.id
     }
     fn evaluate(&self, nodes: &[Node], edges: &[Edge], space: &Space) -> Option<RuleViolation> {
-        let delta_ids: std::collections::HashSet<u64> =
-            nodes.iter().map(|n| n.id).collect();
+        let delta_ids: std::collections::HashSet<u64> = nodes.iter().map(|n| n.id).collect();
         for e in edges {
             let from_exists = space.nodes.contains_key(&e.from) || delta_ids.contains(&e.from);
             let to_exists = space.nodes.contains_key(&e.to) || delta_ids.contains(&e.to);
             if !from_exists {
                 return Some(RuleViolation {
                     rule_id: self.id.clone(),
-                    detail: format!("edge from={} does not exist (not in space or delta)", e.from),
+                    detail: format!(
+                        "edge from={} does not exist (not in space or delta)",
+                        e.from
+                    ),
                     severity: RuleSeverity::Hard,
                 });
             }
@@ -239,6 +241,7 @@ mod tests {
             from: 5,
             to: 5,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }];
         let v = rule.evaluate(&nodes, &edges, &space);
         assert!(v.is_some(), "self-import should be detected");
@@ -253,6 +256,7 @@ mod tests {
             from: 1,
             to: 2,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }];
         assert!(rule.evaluate(&[], &edges, &space).is_none());
     }
@@ -266,6 +270,7 @@ mod tests {
             from: 3,
             to: 3,
             kind: EdgeKind::Calls,
+            ..Default::default()
         }];
         assert!(rule.evaluate(&[], &edges, &space).is_none());
     }
@@ -319,6 +324,7 @@ mod tests {
             from: 1,
             to: 99,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }];
         let v = rule.evaluate(&[], &edges, &space);
         assert!(v.is_some(), "missing edge target should be detected");
@@ -339,6 +345,7 @@ mod tests {
             from: 1,
             to: 99,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }];
         // from=1 also needs to exist — add it to delta
         let nodes = vec![

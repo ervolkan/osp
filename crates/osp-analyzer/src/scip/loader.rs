@@ -129,9 +129,15 @@ pub fn parse_scip_bytes(bytes: &[u8]) -> anyhow::Result<SemanticIndex> {
                 InferredKind::from_kind_value(kind_val)
             };
             match inferred {
-                InferredKind::Class => { class_defs.push((symbol.clone(), display)); }
-                InferredKind::Method => { method_defs.push((symbol.clone(), display, vec![])); }
-                InferredKind::Field => { field_defs.push((symbol.clone(), display)); }
+                InferredKind::Class => {
+                    class_defs.push((symbol.clone(), display));
+                }
+                InferredKind::Method => {
+                    method_defs.push((symbol.clone(), display, vec![]));
+                }
+                InferredKind::Field => {
+                    field_defs.push((symbol.clone(), display));
+                }
                 InferredKind::Other => {}
             }
         }
@@ -258,7 +264,10 @@ pub fn parse_scip_bytes(bytes: &[u8]) -> anyhow::Result<SemanticIndex> {
                     field_access: field_accesses,
                 };
                 classes.push(info.clone());
-                classes_by_file.entry(rel_path.clone()).or_default().push(info);
+                classes_by_file
+                    .entry(rel_path.clone())
+                    .or_default()
+                    .push(info);
             }
         }
     }
@@ -402,21 +411,33 @@ pub fn build_synthetic_index(classes: Vec<ClassSemanticInfo>) -> SemanticIndex {
 mod tests {
     use super::*;
 
-    fn class_info(name: &str, methods: &[&str], fields: &[&str], accesses: &[(&str, &str)]) -> ClassSemanticInfo {
+    fn class_info(
+        name: &str,
+        methods: &[&str],
+        fields: &[&str],
+        accesses: &[(&str, &str)],
+    ) -> ClassSemanticInfo {
         ClassSemanticInfo {
             name: name.into(),
             methods: methods.iter().map(|s| s.to_string()).collect(),
             fields: fields.iter().map(|s| s.to_string()).collect(),
-            field_access: accesses.iter().map(|(m, f)| FieldAccess {
-                method: m.to_string(), field: f.to_string()
-            }).collect(),
+            field_access: accesses
+                .iter()
+                .map(|(m, f)| FieldAccess {
+                    method: m.to_string(),
+                    field: f.to_string(),
+                })
+                .collect(),
         }
     }
 
     #[test]
     fn extract_last_segment_symbol() {
         // Type (class) — `#` suffix
-        assert_eq!(extract_last_segment("scip npm . . path/File.ts/ClassName#"), "ClassName");
+        assert_eq!(
+            extract_last_segment("scip npm . . path/File.ts/ClassName#"),
+            "ClassName"
+        );
         // Method — `().` suffix
         assert_eq!(
             extract_last_segment("scip npm . . path/File.ts/ClassName#methodName()."),
@@ -433,19 +454,36 @@ mod tests {
             "paramName"
         );
         // Bare identifier (no descriptor suffix)
-        assert_eq!(extract_last_segment("python pkg.mod ClassName"), "ClassName");
+        assert_eq!(
+            extract_last_segment("python pkg.mod ClassName"),
+            "ClassName"
+        );
     }
 
     #[test]
     fn build_synthetic_and_compute_lcom4() {
         // Build synthetic index with known class structure
         let index = build_synthetic_index(vec![
-            class_info("Cohesive", &["a", "b", "c"], &["x", "y"], &[
-                ("a", "x"), ("b", "y"), ("c", "x"), ("c", "y") // c bridges → LCOM4=1
-            ]),
-            class_info("Fragmented", &["a", "b"], &["x", "y"], &[
-                ("a", "x"), ("b", "y") // no bridge → LCOM4=2
-            ]),
+            class_info(
+                "Cohesive",
+                &["a", "b", "c"],
+                &["x", "y"],
+                &[
+                    ("a", "x"),
+                    ("b", "y"),
+                    ("c", "x"),
+                    ("c", "y"), // c bridges → LCOM4=1
+                ],
+            ),
+            class_info(
+                "Fragmented",
+                &["a", "b"],
+                &["x", "y"],
+                &[
+                    ("a", "x"),
+                    ("b", "y"), // no bridge → LCOM4=2
+                ],
+            ),
         ]);
 
         assert!(index.is_available());
@@ -475,16 +513,19 @@ mod tests {
     #[test]
     fn end_to_end_synthetic_lcom4_pipeline() {
         // Simulate a real Python class with field access
-        let index = build_synthetic_index(vec![
-            class_info("Article", &["__init__", "save", "get_summary"], &["title", "body", "tags"], &[
+        let index = build_synthetic_index(vec![class_info(
+            "Article",
+            &["__init__", "save", "get_summary"],
+            &["title", "body", "tags"],
+            &[
                 ("__init__", "title"),
                 ("__init__", "body"),
-                ("__init__", "tags"),     // __init__ accesses all → bridges
+                ("__init__", "tags"), // __init__ accesses all → bridges
                 ("save", "title"),
                 ("save", "body"),
                 ("get_summary", "body"),
-            ]),
-        ]);
+            ],
+        )]);
 
         let results = crate::scip::lcom4::compute_all_lcom4(&index);
         let lcom4_results: Vec<_> = results.iter().map(|(_, r)| r.clone()).collect();
@@ -691,7 +732,8 @@ mod tests {
         let base = "scip cargo counter 1.0 src/counter/";
 
         // Class definition: Counter# (kind=49 Struct)
-        doc.symbols.push(symbol_info(&format!("{base}Counter#"), "Counter", 49));
+        doc.symbols
+            .push(symbol_info(&format!("{base}Counter#"), "Counter", 49));
         // Field: Counter#count. (kind=15 Field) — definition occurrence L5
         doc.symbols
             .push(symbol_info(&format!("{base}Counter#count."), "count", 15));
@@ -759,7 +801,12 @@ mod tests {
         si
     }
 
-    fn occurrence_def(symbol: &str, line: i32, col_start: i32, col_end: i32) -> scip::types::Occurrence {
+    fn occurrence_def(
+        symbol: &str,
+        line: i32,
+        col_start: i32,
+        col_end: i32,
+    ) -> scip::types::Occurrence {
         use scip::types::SyntaxKind;
         let mut occ = scip::types::Occurrence::new();
         occ.range = vec![line, col_start, col_end];

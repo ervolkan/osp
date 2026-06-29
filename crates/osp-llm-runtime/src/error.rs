@@ -12,7 +12,10 @@ pub enum LlmError {
     /// API returned a shape we did not expect (missing `choices`, etc.).
     BadResponse(String),
     /// Assistant message parsed as JSON but failed `DeltaProposal` schema.
-    ProposalParse { raw: String, source: serde_json::Error },
+    ProposalParse {
+        raw: String,
+        source: serde_json::Error,
+    },
     /// API key was missing or empty.
     MissingApiKey,
 }

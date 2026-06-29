@@ -57,7 +57,10 @@ fn handle_request(mut request: tiny_http::Request) {
             request.as_reader().read_to_string(&mut content).ok();
             let req: Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+                Err(e) => {
+                    respond_error(request, 400, &format!("Invalid JSON: {e}"));
+                    return;
+                }
             };
             let repo = req["repo_path"].as_str().unwrap_or("");
             if repo.is_empty() {
@@ -74,7 +77,10 @@ fn handle_request(mut request: tiny_http::Request) {
             request.as_reader().read_to_string(&mut content).ok();
             let req: Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+                Err(e) => {
+                    respond_error(request, 400, &format!("Invalid JSON: {e}"));
+                    return;
+                }
             };
             let repo = req["repo"].as_str().unwrap_or("");
             if repo.is_empty() {
@@ -92,7 +98,10 @@ fn handle_request(mut request: tiny_http::Request) {
             request.as_reader().read_to_string(&mut content).ok();
             let req: Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+                Err(e) => {
+                    respond_error(request, 400, &format!("Invalid JSON: {e}"));
+                    return;
+                }
             };
             let repo = req["repo_path"].as_str().unwrap_or("");
             let scenario = req["scenario"].as_str().unwrap_or("valid");
@@ -111,7 +120,10 @@ fn handle_request(mut request: tiny_http::Request) {
             request.as_reader().read_to_string(&mut content).ok();
             let req: Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+                Err(e) => {
+                    respond_error(request, 400, &format!("Invalid JSON: {e}"));
+                    return;
+                }
             };
             let repo = req["repo_path"].as_str().unwrap_or("");
             if repo.is_empty() {
@@ -129,7 +141,10 @@ fn handle_request(mut request: tiny_http::Request) {
             request.as_reader().read_to_string(&mut content).ok();
             let req: Value = match serde_json::from_str(&content) {
                 Ok(v) => v,
-                Err(e) => { respond_error(request, 400, &format!("Invalid JSON: {e}")); return; }
+                Err(e) => {
+                    respond_error(request, 400, &format!("Invalid JSON: {e}"));
+                    return;
+                }
             };
             let repo = req["repo_path"].as_str().unwrap_or("");
             let scenario = req["scenario"].as_str().unwrap_or("vision_fail");
@@ -186,7 +201,9 @@ fn serve_file(request: tiny_http::Request, filename: &str, mime: &str) {
         Ok(data) => {
             let response = Response::from_data(data)
                 .with_header(Header::from_bytes(&b"Content-Type"[..], mime.as_bytes()).unwrap())
-                .with_header(Header::from_bytes(&b"Access-Control-Allow-Origin"[..], b"*").unwrap());
+                .with_header(
+                    Header::from_bytes(&b"Access-Control-Allow-Origin"[..], b"*").unwrap(),
+                );
             request.respond(response).ok();
         }
         Err(_) => respond_error(request, 404, &format!("File not found: {filename}")),
@@ -196,7 +213,9 @@ fn serve_file(request: tiny_http::Request, filename: &str, mime: &str) {
 fn respond_json<T: Serialize>(request: tiny_http::Request, data: &T) {
     let body = serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string());
     let response = Response::from_string(body)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap())
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap(),
+        )
         .with_header(Header::from_bytes(&b"Access-Control-Allow-Origin"[..], b"*").unwrap());
     request.respond(response).ok();
 }
@@ -205,7 +224,9 @@ fn respond_error(request: tiny_http::Request, code: u16, message: &str) {
     let body = serde_json::json!({ "error": message });
     let response = Response::from_string(body.to_string())
         .with_status_code(code)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap());
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap(),
+        );
     request.respond(response).ok();
 }
 

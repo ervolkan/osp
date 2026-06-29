@@ -25,7 +25,7 @@ mod response;
 mod runtime;
 
 pub use error::LlmError;
-pub use prompt::{raw_dump_user_prompt, osp_user_prompt, osp_system_prompt, raw_system_prompt};
+pub use prompt::{osp_system_prompt, osp_user_prompt, raw_dump_user_prompt, raw_system_prompt};
 pub use response::{RawCompletion, TokenUsage};
 pub use runtime::{CompletionRequest, Runtime, RuntimeConfig};
 

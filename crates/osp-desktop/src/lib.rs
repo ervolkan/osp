@@ -120,7 +120,8 @@ pub fn cmd_analyze_repo(
     let config = AnalysisConfig {
         scip_index: scip_path.map(PathBuf::from),
         ..Default::default()
-    };    let registry = AdapterRegistry::default_all();
+    };
+    let registry = AdapterRegistry::default_all();
     let result = analyze_repo_with_config(Path::new(repo_path), &registry, &config)
         .map_err(|e| e.to_string())?;
 
@@ -135,9 +136,11 @@ pub fn cmd_analyze_repo(
             // Cohesion: node.cohesion (SCIP direkt) veya module_metrics'ten.
             // Source/confidence module_metrics'ten gelir (node.cohesion sadece değer taşır).
             let (cohesion_val, cohesion_src, cohesion_conf) = if let Some(m) = metrics {
-                (Some(m.cohesion.value),
-                 Some(format!("{:?}", m.cohesion.source).to_lowercase()),
-                 Some(m.cohesion.confidence))
+                (
+                    Some(m.cohesion.value),
+                    Some(format!("{:?}", m.cohesion.source).to_lowercase()),
+                    Some(m.cohesion.confidence),
+                )
             } else {
                 (n.cohesion, None, None)
             };
@@ -217,10 +220,7 @@ pub struct PipelineResultJson {
 /// - "syntax_fail": self-import → Q4 reddeder
 /// - "vision_fail": zero-vector position → Q5 redder
 /// - "rule_fail": duplicate node → Q6 redder (default rules ile)
-pub fn cmd_simulate_claim(
-    repo_path: &str,
-    scenario: &str,
-) -> Result<PipelineResultJson, String> {
+pub fn cmd_simulate_claim(repo_path: &str, scenario: &str) -> Result<PipelineResultJson, String> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use osp_core::coords::CoordinateSystem;
     use osp_core::engine::{EngineConfig, SpaceEngine};
@@ -241,27 +241,59 @@ pub fn cmd_simulate_claim(
         WitnessDepthAxis::from_witness(0.3, 5),
     );
     let vision = VisionVector::new(osp_core::coords::RawPosition {
-        x: 0.4, y: 0.6, z: 0.5, w: 0.5, v: 0.5,
+        x: 0.4,
+        y: 0.6,
+        z: 0.5,
+        w: 0.5,
+        v: 0.5,
     });
     let engine = SpaceEngine::with_default_rules(
-        result.space, cs, vision, EngineConfig::default_calibrated(),
+        result.space,
+        cs,
+        vision,
+        EngineConfig::default_calibrated(),
     );
 
     // Scenario → delta
     let next_id = engine.space().nodes.keys().max().copied().unwrap_or(0) + 1;
     let (delta_nodes, delta_edges, computed_raw_override) = match scenario {
         "valid" => (
-            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: 1, kind: EdgeKind::Imports }],
+            vec![Node {
+                id: next_id,
+                kind: NodeKind::Module,
+                mass: 50.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: next_id,
+                to: 1,
+                kind: EdgeKind::Imports,
+                ..Default::default()
+            }],
             None, // let engine compute
         ),
         "syntax_fail" => (
-            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports }], // self-import
+            vec![Node {
+                id: next_id,
+                kind: NodeKind::Module,
+                mass: 50.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: next_id,
+                to: next_id,
+                kind: EdgeKind::Imports,
+                ..Default::default()
+            }], // self-import
             None,
         ),
         "vision_fail" => (
-            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
+            vec![Node {
+                id: next_id,
+                kind: NodeKind::Module,
+                mass: 50.0,
+                ..Default::default()
+            }],
             vec![],
             Some(osp_core::coords::RawPosition::default()), // zero-vector → max θ
         ),
@@ -269,7 +301,12 @@ pub fn cmd_simulate_claim(
             // Duplicate an existing node ID
             let existing_id = engine.space().nodes.keys().next().copied().unwrap_or(1);
             (
-                vec![Node { id: existing_id, kind: NodeKind::Module, mass: 99.0, ..Default::default() }],
+                vec![Node {
+                    id: existing_id,
+                    kind: NodeKind::Module,
+                    mass: 99.0,
+                    ..Default::default()
+                }],
                 vec![],
                 None,
             )
@@ -301,20 +338,32 @@ pub fn cmd_simulate_claim(
     let gate_results = engine.check_all_gates(&claim, &omega);
     let outcome = if gate_results.last().map(|g| g.passed).unwrap_or(false) {
         "Commit".to_string()
-    } else if gate_results.iter().any(|g| !g.passed && g.name.starts_with("Q1")) {
+    } else if gate_results
+        .iter()
+        .any(|g| !g.passed && g.name.starts_with("Q1"))
+    {
         "Hold".to_string()
     } else {
         "Rejected".to_string()
     };
 
     Ok(PipelineResultJson {
-        gates: gate_results.iter().map(|g| GateResultJson {
-            name: g.name.to_string(),
-            passed: g.passed,
-            detail: g.detail.clone(),
-            hallucination: g.hallucination.clone(),
-        }).collect(),
-        computed_raw: vec![computed_raw.x, computed_raw.y, computed_raw.z, computed_raw.w, computed_raw.v],
+        gates: gate_results
+            .iter()
+            .map(|g| GateResultJson {
+                name: g.name.to_string(),
+                passed: g.passed,
+                detail: g.detail.clone(),
+                hallucination: g.hallucination.clone(),
+            })
+            .collect(),
+        computed_raw: vec![
+            computed_raw.x,
+            computed_raw.y,
+            computed_raw.z,
+            computed_raw.w,
+            computed_raw.v,
+        ],
         outcome,
     })
 }
@@ -359,8 +408,12 @@ pub fn cmd_get_graveyard(repo_path: &str) -> Result<GraveyardJson, String> {
             Ok(result) => {
                 if result.outcome != "Commit" {
                     let failed = result.gates.iter().find(|g| !g.passed);
-                    let failed_gate = failed.map(|g| g.name.clone()).unwrap_or("Unknown".to_string());
-                    let hallucination = failed.and_then(|g| g.hallucination.clone()).unwrap_or("Unknown hallucination".to_string());
+                    let failed_gate = failed
+                        .map(|g| g.name.clone())
+                        .unwrap_or("Unknown".to_string());
+                    let hallucination = failed
+                        .and_then(|g| g.hallucination.clone())
+                        .unwrap_or("Unknown hallucination".to_string());
 
                     let dangerous = scenario == &"vision_fail";
 
@@ -412,10 +465,10 @@ pub struct WhatIfResultJson {
 pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResultJson, String> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use osp_core::coords::CoordinateSystem;
+    use osp_core::coords::RawPosition;
     use osp_core::engine::{EngineConfig, SpaceEngine};
     use osp_core::space::{Edge, EdgeKind, Node, NodeKind};
     use osp_core::vision::{CosineDeviation, DeviationMetric, VisionVector};
-    use osp_core::coords::RawPosition;
 
     // Analyze repo
     let config = AnalysisConfig::default();
@@ -430,27 +483,54 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
         WitnessDepthAxis::from_witness(0.3, 5),
     );
     let vision = VisionVector::new(RawPosition {
-        x: 0.4, y: 0.6, z: 0.5, w: 0.5, v: 0.5,
+        x: 0.4,
+        y: 0.6,
+        z: 0.5,
+        w: 0.5,
+        v: 0.5,
     });
     let engine = SpaceEngine::with_default_rules(
-        result.space, cs, vision, EngineConfig::default_calibrated(),
+        result.space,
+        cs,
+        vision,
+        EngineConfig::default_calibrated(),
     );
 
     // Build delta from scenario (same logic as cmd_simulate_claim)
     let next_id = engine.space().nodes.keys().max().copied().unwrap_or(0) + 1;
     let (delta_nodes, delta_edges) = match scenario {
         "syntax_fail" => (
-            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports }],
+            vec![Node {
+                id: next_id,
+                kind: NodeKind::Module,
+                mass: 50.0,
+                ..Default::default()
+            }],
+            vec![Edge {
+                from: next_id,
+                to: next_id,
+                kind: EdgeKind::Imports,
+                ..Default::default()
+            }],
         ),
         "vision_fail" => (
-            vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
+            vec![Node {
+                id: next_id,
+                kind: NodeKind::Module,
+                mass: 50.0,
+                ..Default::default()
+            }],
             vec![],
         ),
         "rule_fail" => {
             let existing = engine.space().nodes.keys().next().copied().unwrap_or(1);
             (
-                vec![Node { id: existing, kind: NodeKind::Module, mass: 99.0, ..Default::default() }],
+                vec![Node {
+                    id: existing,
+                    kind: NodeKind::Module,
+                    mass: 99.0,
+                    ..Default::default()
+                }],
                 vec![],
             )
         }
@@ -459,7 +539,10 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
 
     // Compute current θ for all nodes
     let theta_bound = engine.config().theta_bound;
-    let current_thetas: Vec<(u64, f64)> = engine.space().nodes.values()
+    let current_thetas: Vec<(u64, f64)> = engine
+        .space()
+        .nodes
+        .values()
         .map(|n| {
             let raw = engine.coord_system().raw_position_of(n, engine.space());
             let theta = CosineDeviation.theta(&raw, engine.vision(), engine.space());
@@ -469,13 +552,23 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
 
     // Hypothetical: apply delta (ignore gates) and compute new θ
     let mut hypothetical_space = engine.space().clone();
-    for n in &delta_nodes { hypothetical_space.insert_node(n.clone()); }
-    for e in &delta_edges { hypothetical_space.insert_edge(*e); }
+    for n in &delta_nodes {
+        hypothetical_space.insert_node(n.clone());
+    }
+    for e in &delta_edges {
+        hypothetical_space.insert_edge(*e);
+    }
 
-    let impacted: Vec<ImpactNodeJson> = current_thetas.iter()
+    let impacted: Vec<ImpactNodeJson> = current_thetas
+        .iter()
         .map(|(id, old_theta)| {
             let node = hypothetical_space.nodes.get(id);
-            let new_raw = node.map(|n| engine.coord_system().raw_position_of(n, &hypothetical_space))
+            let new_raw = node
+                .map(|n| {
+                    engine
+                        .coord_system()
+                        .raw_position_of(n, &hypothetical_space)
+                })
                 .unwrap_or_default();
             let new_theta = CosineDeviation.theta(&new_raw, engine.vision(), &hypothetical_space);
             ImpactNodeJson {
@@ -489,12 +582,18 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
         .filter(|i| i.delta_theta.abs() > 0.001) // only show changed nodes
         .collect();
 
-    let neg_count = impacted.iter().filter(|i| i.would_enter_negative_space).count();
+    let neg_count = impacted
+        .iter()
+        .filter(|i| i.would_enter_negative_space)
+        .count();
 
     let message = if neg_count > 0 {
         format!("⚠ If this claim had been accepted, {} node(s) would have entered negative space (θ > {:.2}).", neg_count, theta_bound)
     } else if !impacted.is_empty() {
-        format!("This claim would have shifted {} node(s) but none into negative space.", impacted.len())
+        format!(
+            "This claim would have shifted {} node(s) but none into negative space.",
+            impacted.len()
+        )
     } else {
         "This claim would have minimal impact on the space.".to_string()
     };
@@ -579,11 +678,28 @@ pub fn cmd_get_repo_stats(repo_path: &str) -> Result<RepoStatsJson, String> {
 
     // Tri-state classification (calibration-corpus.md threshold: 10%)
     let (status, detail) = if author_count <= 1 {
-        ("Unwitnessed".to_string(), format!("Solo project ({} author)", author_count))
+        (
+            "Unwitnessed".to_string(),
+            format!("Solo project ({} author)", author_count),
+        )
     } else if merge_ratio >= 0.10 {
-        ("Witnessed".to_string(), format!("{:.1}% merge ratio, {} authors", merge_ratio * 100.0, author_count))
+        (
+            "Witnessed".to_string(),
+            format!(
+                "{:.1}% merge ratio, {} authors",
+                merge_ratio * 100.0,
+                author_count
+            ),
+        )
     } else {
-        ("Unobservable-locally".to_string(), format!("{} authors but {:.1}% merge (squash/rebase hides evidence)", author_count, merge_ratio * 100.0))
+        (
+            "Unobservable-locally".to_string(),
+            format!(
+                "{} authors but {:.1}% merge (squash/rebase hides evidence)",
+                author_count,
+                merge_ratio * 100.0
+            ),
+        )
     };
 
     Ok(RepoStatsJson {
@@ -598,7 +714,10 @@ pub fn cmd_get_repo_stats(repo_path: &str) -> Result<RepoStatsJson, String> {
 
 fn git_int(path: &std::path::Path, args: &[&str]) -> Result<usize, String> {
     let output = git_output(path, args)?;
-    output.trim().parse().map_err(|e| format!("git parse error: {e}"))
+    output
+        .trim()
+        .parse()
+        .map_err(|e| format!("git parse error: {e}"))
 }
 
 fn git_output(path: &std::path::Path, args: &[&str]) -> Result<String, String> {
@@ -626,10 +745,7 @@ mod tests {
     #[test]
     fn analyze_repo_populates_node_json_path_for_inspector() {
         // Minimal Python fixture: 2 dosya, birbirini import etmesin (edges 0 OK)
-        let dir = std::env::temp_dir().join(format!(
-            "osp-desktop-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("osp-desktop-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("alpha.py"), "x = 1\n").unwrap();
@@ -679,11 +795,26 @@ mod tests {
             scip_max_lcom4: 2,
         };
         let json = serde_json::to_string(&node).expect("serialize");
-        assert!(json.contains("\"path\":\"src/main.py\""), "path field in JSON");
-        assert!(json.contains("\"classification\":\"Production\""), "classification field");
-        assert!(json.contains("\"scip_class_count\":3"), "scip_class_count field");
-        assert!(json.contains("\"cohesion_source\":\"scip\""), "cohesion_source field");
-        assert!(json.contains("\"scip_method_count\":12"), "scip_method_count field");
+        assert!(
+            json.contains("\"path\":\"src/main.py\""),
+            "path field in JSON"
+        );
+        assert!(
+            json.contains("\"classification\":\"Production\""),
+            "classification field"
+        );
+        assert!(
+            json.contains("\"scip_class_count\":3"),
+            "scip_class_count field"
+        );
+        assert!(
+            json.contains("\"cohesion_source\":\"scip\""),
+            "cohesion_source field"
+        );
+        assert!(
+            json.contains("\"scip_method_count\":12"),
+            "scip_method_count field"
+        );
         // Round-trip
         let back: NodeJson = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.path, Some("src/main.py".to_string()));
@@ -698,8 +829,17 @@ mod tests {
     fn node_json_backward_compat_missing_scip_fields() {
         let old_json = r#"{"id":1,"kind":"Module","mass":10.0,"coupling":null,"cohesion":null,"instability":null,"path":"a.py"}"#;
         let n: NodeJson = serde_json::from_str(old_json).expect("deserialize old node");
-        assert_eq!(n.scip_class_count, 0, "missing scip_class_count defaults to 0");
-        assert_eq!(n.scip_method_count, 0, "missing scip_method_count defaults to 0");
-        assert_eq!(n.classification, "", "missing classification defaults to empty");
+        assert_eq!(
+            n.scip_class_count, 0,
+            "missing scip_class_count defaults to 0"
+        );
+        assert_eq!(
+            n.scip_method_count, 0,
+            "missing scip_method_count defaults to 0"
+        );
+        assert_eq!(
+            n.classification, "",
+            "missing classification defaults to empty"
+        );
     }
 }

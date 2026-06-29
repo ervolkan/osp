@@ -16,16 +16,17 @@ fn main() -> anyhow::Result<()> {
 
     for doc in &index.documents {
         println!("── Document: {:?} ──", doc.relative_path);
-        println!("  Symbols: {}, Occurrences: {}", doc.symbols.len(), doc.occurrences.len());
+        println!(
+            "  Symbols: {}, Occurrences: {}",
+            doc.symbols.len(),
+            doc.occurrences.len()
+        );
 
         // --- Symbols with kind inference ---
         println!("\n  Symbols (first 15):");
         for (i, sym) in doc.symbols.iter().enumerate().take(15) {
             let kind_val = sym.kind.value();
-            println!(
-                "    [{}] kind={} symbol={:?}",
-                i, kind_val, sym.symbol
-            );
+            println!("    [{}] kind={} symbol={:?}", i, kind_val, sym.symbol);
         }
 
         // --- Occurrences with full detail ---

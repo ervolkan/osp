@@ -41,7 +41,10 @@ impl Axis for CouplingAxis {
         "coupling"
     }
     fn compute(&self, node: &Node, space: &Space) -> f64 {
-        let deg = space.out_degree(node.id, EdgeKind::Imports) as f64;
+        // Value-only out-degree: type-only import'lar (`import type`) runtime dependency
+        // değildir, coupling'i artırmamalı. Mimari açıdan doğru: bir .d.ts dosyası
+        // `import type {Foo}` yaparsa bu runtime coupling üretmez.
+        let deg = space.out_degree_value(node.id, EdgeKind::Imports) as f64;
         deg / (1.0 + deg)
     }
 }
@@ -153,8 +156,10 @@ impl Axis for InstabilityAxis {
         "instability"
     }
     fn compute(&self, node: &Node, space: &Space) -> f64 {
-        let ce = space.out_degree(node.id, EdgeKind::Imports) as f64; // fan-out
-        let ca = space.in_degree(node.id, EdgeKind::Imports) as f64; // fan-in
+        // Value-only degrees: type-only import'lar Ce/Ca'dan hariç (CouplingAxis ile aynı
+        // rationale — runtime dependency değil).
+        let ce = space.out_degree_value(node.id, EdgeKind::Imports) as f64; // fan-out
+        let ca = space.in_degree_value(node.id, EdgeKind::Imports) as f64; // fan-in
         let denom = ce + ca;
         if denom > 0.0 {
             ce / denom
@@ -265,11 +270,11 @@ impl CoordinateSystem {
         witness: WitnessDepthAxis,
     ) -> Self {
         Self::empty()
-            .with_axis(CouplingAxis::new())    // x — per-node
-            .with_axis(cohesion)               // y — precomputed
+            .with_axis(CouplingAxis::new()) // x — per-node
+            .with_axis(cohesion) // y — precomputed
             .with_axis(InstabilityAxis::new()) // z — per-node
-            .with_axis(entropy)                // w — precomputed
-            .with_axis(witness)                // v — precomputed
+            .with_axis(entropy) // w — precomputed
+            .with_axis(witness) // v — precomputed
     }
 }
 
@@ -294,6 +299,7 @@ mod tests {
             from,
             to,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }
     }
 
@@ -320,12 +326,77 @@ mod tests {
             from: 1,
             to: 2,
             kind: EdgeKind::Calls,
+            ..Default::default()
         });
 
         let axis = CouplingAxis::new();
         let v = axis.compute(&node(1), &space);
         // out_degree(Imports) = 2 → 2/3
         assert!((v - 2.0 / 3.0).abs() < 1e-9, "coupling = {}", v);
+    }
+
+    #[test]
+    fn coupling_excludes_type_only_imports() {
+        // Type-only import'lar (`import type`) runtime dependency değildir — coupling'i
+        // artırmamalı. value-only degree kullanır: is_type_only=true edge'ler hariç.
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        space.insert_node(node(3));
+        // 1 value import → 2 (coupling'e girer)
+        space.insert_edge(import_edge(1, 2));
+        // 1 type-only import → 3 (coupling'e GİRMEZ)
+        space.insert_edge(Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Imports,
+            is_type_only: true,
+        });
+
+        let axis = CouplingAxis::new();
+        let v = axis.compute(&node(1), &space);
+        // value-only out_degree = 1 → 1/2 = 0.5 (type-only hariç)
+        assert!(
+            (v - 0.5).abs() < 1e-9,
+            "type-only import should not count, coupling = {}",
+            v
+        );
+
+        // Karşılaştırma: iki value import olsaydı 2/3 ≈ 0.667 olurdu.
+        // Type-only'nin coupling'i düşürmesi mimari açıdan doğru sinyal.
+    }
+
+    #[test]
+    fn instability_excludes_type_only_imports() {
+        // InstabilityAxis de value-only degree kullanır (Ce/Ca type-only hariç).
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        // 1 value import (1→2): Ce=1, Ca=0 → I=1.0
+        space.insert_edge(import_edge(1, 2));
+
+        let axis = InstabilityAxis::new();
+        let v_with_only_value = axis.compute(&node(1), &space);
+        assert!(
+            (v_with_only_value - 1.0).abs() < 1e-9,
+            "I with only value = 1.0"
+        );
+
+        // Şimdi 1 type-only import ekle (1→2 zaten var, farklı node ekleyelim)
+        space.insert_node(node(3));
+        space.insert_edge(Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Imports,
+            is_type_only: true,
+        });
+        // value-only Ce hâlâ 1 (type-only hariç) → I hâlâ 1.0
+        let v_with_type_only = axis.compute(&node(1), &space);
+        assert!(
+            (v_with_type_only - 1.0).abs() < 1e-9,
+            "type-only import should not change I, got {}",
+            v_with_type_only
+        );
     }
 
     #[test]
@@ -460,13 +531,13 @@ mod tests {
     #[test]
     fn default_raw_three_raw_position_maps_correctly() {
         let cs = CoordinateSystem::default_raw_three(
-            EntropyAxis::from_commit_entropy(6.5),    // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
-            WitnessDepthAxis::from_witness(0.3, 5),   // v
+            EntropyAxis::from_commit_entropy(6.5), // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
+            WitnessDepthAxis::from_witness(0.3, 5), // v
         );
         let mut space = Space::new();
         space.insert_node(node(1));
         space.insert_node(node(2));
-        space.insert_edge(import_edge(1, 2));         // node 1: 1 import → x = 0.5
+        space.insert_edge(import_edge(1, 2)); // node 1: 1 import → x = 0.5
 
         let raw = cs.raw_position_of(&node(1), &space);
         // x: 1 import → 1/(1+1) = 0.5
@@ -491,7 +562,7 @@ mod tests {
         space.insert_node(node(3));
         space.insert_edge(import_edge(2, 1)); // 2 → 1
         space.insert_edge(import_edge(3, 1)); // 3 → 1
-        // node 1: in-degree=2, out-degree=0 → I = 0/2 = 0
+                                              // node 1: in-degree=2, out-degree=0 → I = 0/2 = 0
         let axis = InstabilityAxis::new();
         let i = axis.compute(&node(1), &space);
         assert!(i.abs() < 1e-9, "pure stable I = {}", i);
@@ -504,7 +575,7 @@ mod tests {
         space.insert_node(node(1));
         space.insert_node(node(2));
         space.insert_edge(import_edge(1, 2)); // 1 → 2
-        // node 1: out=1, in=0 → I = 1/1 = 1
+                                              // node 1: out=1, in=0 → I = 1/1 = 1
         let axis = InstabilityAxis::new();
         let i = axis.compute(&node(1), &space);
         assert!((i - 1.0).abs() < 1e-9, "pure unstable I = {}", i);
@@ -519,7 +590,7 @@ mod tests {
         space.insert_node(node(3));
         space.insert_edge(import_edge(1, 2)); // 1 → 2 (out for 1)
         space.insert_edge(import_edge(3, 1)); // 3 → 1 (in for 1)
-        // node 1: out=1, in=1 → I = 1/2 = 0.5
+                                              // node 1: out=1, in=1 → I = 1/2 = 0.5
         let axis = InstabilityAxis::new();
         let i = axis.compute(&node(1), &space);
         assert!((i - 0.5).abs() < 1e-9, "balanced I = {}", i);
@@ -582,7 +653,11 @@ mod tests {
         };
         let axis = CohesionAxis::new();
         let y = axis.compute(&node, &space);
-        assert!((y - 0.8).abs() < 1e-9, "per-node cohesion should be 0.8, got {}", y);
+        assert!(
+            (y - 0.8).abs() < 1e-9,
+            "per-node cohesion should be 0.8, got {}",
+            y
+        );
     }
 
     #[test]
@@ -598,7 +673,11 @@ mod tests {
         };
         let axis = CohesionAxis::new();
         let y = axis.compute(&node, &space);
-        assert!((y - 0.5).abs() < 1e-9, "no cohesion → default 0.5, got {}", y);
+        assert!(
+            (y - 0.5).abs() < 1e-9,
+            "no cohesion → default 0.5, got {}",
+            y
+        );
     }
 
     #[test]
@@ -614,7 +693,11 @@ mod tests {
         };
         let axis = CohesionAxis::from_lcom4(1); // fallback = Some(1.0)
         let y = axis.compute(&node, &space);
-        assert!((y - 1.0).abs() < 1e-9, "fallback should be 1.0 when node has None, got {}", y);
+        assert!(
+            (y - 1.0).abs() < 1e-9,
+            "fallback should be 1.0 when node has None, got {}",
+            y
+        );
     }
 
     #[test]
@@ -630,7 +713,11 @@ mod tests {
         };
         let axis = CohesionAxis::from_lcom4(1); // fallback = Some(1.0)
         let y = axis.compute(&node, &space);
-        assert!((y - 0.6).abs() < 1e-9, "node cohesion should override fallback, got {}", y);
+        assert!(
+            (y - 0.6).abs() < 1e-9,
+            "node cohesion should override fallback, got {}",
+            y
+        );
     }
 
     // --- default_raw_five preset — Faz 1.9 ---
@@ -645,7 +732,13 @@ mod tests {
         assert_eq!(cs.dim(), 5);
         assert_eq!(
             cs.axis_names(),
-            vec!["coupling", "cohesion", "instability", "entropy", "witness_depth"]
+            vec![
+                "coupling",
+                "cohesion",
+                "instability",
+                "entropy",
+                "witness_depth"
+            ]
         );
     }
 
@@ -666,14 +759,14 @@ mod tests {
     #[test]
     fn default_raw_five_raw_position_all_fields_populated() {
         let cs = CoordinateSystem::default_raw_five(
-            CohesionAxis::from_normalized(0.8),       // y
-            EntropyAxis::from_commit_entropy(6.5),    // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
-            WitnessDepthAxis::from_witness(0.3, 5),   // v
+            CohesionAxis::from_normalized(0.8),     // y
+            EntropyAxis::from_commit_entropy(6.5),  // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
+            WitnessDepthAxis::from_witness(0.3, 5), // v
         );
         let mut space = Space::new();
         space.insert_node(node(1));
         space.insert_node(node(2));
-        space.insert_edge(import_edge(1, 2));         // node 1: Ce=1, Ca=0
+        space.insert_edge(import_edge(1, 2)); // node 1: Ce=1, Ca=0
 
         let raw = cs.raw_position_of(&node(1), &space);
         // x: 1 import → 0.5
@@ -703,7 +796,11 @@ mod tests {
 
         let raw1 = cs.raw_position_of(&node(1), &space);
         let raw2 = cs.raw_position_of(&node(2), &space);
-        assert!((raw1.z - 1.0).abs() < 1e-9, "node 1 z (unstable) = {}", raw1.z);
+        assert!(
+            (raw1.z - 1.0).abs() < 1e-9,
+            "node 1 z (unstable) = {}",
+            raw1.z
+        );
         assert!(raw2.z.abs() < 1e-9, "node 2 z (stable) = {}", raw2.z);
     }
 }

@@ -186,35 +186,47 @@ impl VisionConfig {
         Ok(())
     }
 
-    /// → `VisionVector` (raw position wrap).
+    /// → `VisionVector` (raw position wrap, source = `UserLoaded`).
+    ///
+    /// TOML `[raw]` ile elle deklare edildiği için en yüksek provenance'a sahiptir.
     pub fn to_vision_vector(&self) -> VisionVector {
-        VisionVector::new(RawPosition {
-            x: self.raw.x,
-            y: self.raw.y,
-            z: self.raw.z,
-            w: self.raw.w,
-            v: self.raw.v,
-        })
+        use crate::vision::VisionSource;
+        VisionVector::with_source(
+            RawPosition {
+                x: self.raw.x,
+                y: self.raw.y,
+                z: self.raw.z,
+                w: self.raw.w,
+                v: self.raw.v,
+            },
+            VisionSource::UserLoaded,
+        )
     }
 
     /// → role-specific `VisionVector`. Override varsa x/y/z onu kullanır,
     /// yoksa (veya alan None ise) global `[raw]` default. w/v her zaman global.
     ///
+    /// **Provenance (#2):** Override varsa source = `RoleProfile` (kullanıcı TOML
+    /// `[role_overrides]`); yoksa global `[raw]` → `UserLoaded`.
+    ///
     /// Bu, değerlendirmenin "her rol için ayrı vision vector" önerisini formal
     /// model seviyesinde uygular. Örn: TypeSurface için coupling=0.05 (declaration
     /// dosyasında runtime deps beklenmez), Core için instability=0.20 (stable).
     pub fn role_vision(&self, role: NodeRole) -> VisionVector {
+        use crate::vision::VisionSource;
         let key = format!("{:?}", role);
-        let global = self.to_vision_vector();
         match self.role_overrides.get(&key) {
-            Some(ovr) => VisionVector::new(RawPosition {
-                x: ovr.x.unwrap_or(self.raw.x),
-                y: ovr.y.unwrap_or(self.raw.y),
-                z: ovr.z.unwrap_or(self.raw.z),
-                w: self.raw.w,
-                v: self.raw.v,
-            }),
-            None => global,
+            Some(ovr) => VisionVector::with_source(
+                RawPosition {
+                    x: ovr.x.unwrap_or(self.raw.x),
+                    y: ovr.y.unwrap_or(self.raw.y),
+                    z: ovr.z.unwrap_or(self.raw.z),
+                    w: self.raw.w,
+                    v: self.raw.v,
+                },
+                VisionSource::RoleProfile,
+            ),
+            None => self.to_vision_vector(),
         }
     }
 
@@ -230,7 +242,10 @@ impl VisionConfig {
     /// target 0.50 olmamalı" tespitini adresler.
     ///
     /// Default'lar mimari normlardan türetilmiştir:
-    /// - TypeSurface (.d.ts): coupling düşük (declaration = runtime deps yok)
+    /// - TypeSurface (.d.ts): coupling düşük (declaration = runtime deps yok). Artık
+    ///   type-only import ayrımı yapıldığı için (`Edge::is_type_only`, CouplingAxis
+    ///   value-only degree), .d.ts dosyalarının `import type`'ları coupling'e girmiyor.
+    ///   Target tekrar 0.05 (orijinal mimari norma döndü — kalibrasyon 0.20 gerekmedi).
     /// - Core: instability düşük (stabil foundation), cohesion yüksek
     /// - Adapter: instability yüksek olabilir (integration boundary)
     /// - Utility: coupling düşük (leaf helper)
@@ -239,10 +254,12 @@ impl VisionConfig {
     pub fn builtin_role_override(role: NodeRole) -> Option<RoleVisionOverride> {
         use NodeRole as R;
         let ovr = |x: f64, y: f64, z: f64| RoleVisionOverride {
-            x: Some(x), y: Some(y), z: Some(z),
+            x: Some(x),
+            y: Some(y),
+            z: Some(z),
         };
         match role {
-            R::TypeSurface => Some(ovr(0.05, 0.80, 0.50)), // coupling relaxed
+            R::TypeSurface => Some(ovr(0.05, 0.80, 0.50)), // coupling relaxed (type-only ayrımı yapıldı)
             R::Core => Some(ovr(0.60, 0.75, 0.20)),        // instability low (stabil)
             R::Adapter => Some(ovr(0.80, 0.50, 0.80)),     // instability tolerated
             R::Utility => Some(ovr(0.20, 0.60, 0.50)),     // coupling low
@@ -377,7 +394,10 @@ v = 0.5
         let result = VisionConfig::from_str(toml);
         assert!(matches!(
             result,
-            Err(VisionConfigError::OutOfRange { field: "x", value: 1.5 })
+            Err(VisionConfigError::OutOfRange {
+                field: "x",
+                value: 1.5
+            })
         ));
     }
 

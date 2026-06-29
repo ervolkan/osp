@@ -47,7 +47,9 @@ fn main() -> Result<()> {
 fn usage() {
     eprintln!("Kullanım:");
     eprintln!("  osp-spike analyze <repo> [--compare <b> <c> ...]       (Faz 0 legacy)");
-    eprintln!("  osp-spike analyze-v2 <repo> [--compare <b> <c> ...]   (Faz 1.10 osp-core pipeline)");
+    eprintln!(
+        "  osp-spike analyze-v2 <repo> [--compare <b> <c> ...]   (Faz 1.10 osp-core pipeline)"
+    );
 }
 
 /// `<repo> [--compare <b> <c> ...]` argümanlarını path listesine çevir.
