@@ -1437,7 +1437,7 @@ let selectedNodeId = null;
 // Değerlendirmenin "DetectedCore hâlâ global z=0.50 ile fail" tespitini adresler:
 // backend role-aware ama frontend global kullanıyordu — artık aynı override.
 const BUILTIN_ROLE_VISION = {
-  TypeSurface: { x: 0.20, y: 0.80, z: 0.50 }, // coupling 0.05→0.20 (type-import kalibrasyon)
+  TypeSurface: { x: 0.05, y: 0.80, z: 0.50 }, // coupling relaxed (type-only ayrımı yapıldı)
   Core:        { x: 0.60, y: 0.75, z: 0.20 }, // instability low (stabil foundation)
   Adapter:     { x: 0.80, y: 0.50, z: 0.80 }, // instability tolerated (integration boundary)
   Utility:     { x: 0.20, y: 0.60, z: 0.50 }, // coupling low (leaf helper)
@@ -1683,10 +1683,10 @@ function roleBadge(role) {
 function showRoleProfile(role) {
   const profiles = {
     TypeSurface: {
-      vision: { x: 0.20, y: 0.80, z: 0.50 },
-      desc: 'Declaration/type surface (.d.ts, interfaces). Coupling düşük-orta — type-only importlar coupling\'e girer (analyzer sınırlaması), bu yüzden 0.20.',
+      vision: { x: 0.05, y: 0.80, z: 0.50 },
+      desc: 'Declaration/type surface (.d.ts, interfaces). Coupling düşük beklenir — type-only import\'lar artık coupling\'e girmiyor (value-only degree).',
       expectations: [
-        'coupling (x): 0.20 — düşük-orta (type-only import\'lar dahil)',
+        'coupling (x): 0.05 — relaxed (type-only import\'lar hariç, declaration = no runtime deps)',
         'cohesion (y): 0.80 — yüksek (tip tanımları kohezyonlu)',
         'instability (z): 0.50 — nötr (stable/instable kararsız)',
       ],

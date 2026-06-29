@@ -29,7 +29,7 @@ impl LanguageAdapter for GoAdapter {
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i })
+            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
             .collect()
     }
 
@@ -110,7 +110,7 @@ import "github.com/gin-gonic/gin"
     fn go_resolve_stdlib() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
-        let import = ImportStatement { path: "fmt".into(), source_location: 0 };
+        let import = ImportStatement { path: "fmt".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::StandardLibrary);
     }
@@ -119,7 +119,7 @@ import "github.com/gin-gonic/gin"
     fn go_resolve_external() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
-        let import = ImportStatement { path: "github.com/gin-gonic/gin".into(), source_location: 0 };
+        let import = ImportStatement { path: "github.com/gin-gonic/gin".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
     }
@@ -150,6 +150,7 @@ import "github.com/gin-gonic/gin"
         let import = ImportStatement {
             path: "github.com/example/foo/pkg/util".into(),
             source_location: 0,
+            ..Default::default()
         };
         let resolved = adapter
             .resolve_import(&import, dir.join("main.go").as_path(), &repo)
@@ -163,7 +164,7 @@ import "github.com/gin-gonic/gin"
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = GoAdapter;
         for p in &["fmt", "os", "strings"] {
-            let import = ImportStatement { path: (*p).to_string(), source_location: 0 };
+            let import = ImportStatement { path: (*p).to_string(), source_location: 0, ..Default::default() };
             let resolved = adapter.resolve_import(&import, Path::new("/repo/main.go"), &repo).unwrap();
             assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
         }

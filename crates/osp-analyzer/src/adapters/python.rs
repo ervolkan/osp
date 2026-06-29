@@ -39,6 +39,7 @@ impl LanguageAdapter for PythonAdapter {
             .map(|(i, path)| ImportStatement {
                 path,
                 source_location: i, // approximate
+                is_type_only: false, // Python'da type-only import kavramı yok (TYPE_CHECKING idiom future work)
             })
             .collect()
     }
@@ -125,6 +126,7 @@ class Dog(Animal):
         let import = ImportStatement {
             path: "foo.bar".into(),
             source_location: 0,
+            ..Default::default()
         };
         let resolved = adapter
             .resolve_import(&import, Path::new("/repo/main.py"), &repo)
@@ -139,6 +141,7 @@ class Dog(Animal):
         let import = ImportStatement {
             path: "external_pkg".into(),
             source_location: 0,
+            ..Default::default()
         };
         let resolved = adapter
             .resolve_import(&import, Path::new("/repo/main.py"), &repo)

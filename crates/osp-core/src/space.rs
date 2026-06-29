@@ -297,9 +297,10 @@ pub struct RoleMetrics {
 ///
 /// Klasik yazılım grafindan (yalnız `DependsOn`) farklı olarak OSP'de epistemolojik
 /// ilişkileri (`Witnesses`, `Approves`, `Violates`) de modeller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum EdgeKind {
     /// `from` modülü `to` modülünü import ediyor (modül-düzeyi bağımlılık).
+    #[default]
     Imports,
     /// `from` fonksiyonu `to` fonksiyonunu çağırıyor (fonksiyon-düzeyi).
     Calls,
@@ -351,12 +352,23 @@ pub struct Node {
 ///
 /// **Self-loop semantiği:** `from == to` bazı türler için anlamlı (`Calls` — rekürsiyon),
 /// bazıları için değil (`Imports` — modül kendini import edemez; `Witnesses` — self-witness
-/// reddi). Tür-bazlı self-loop validasyonu Faz 1.2/1.3 graf kurulumunda eklenecek.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// reddi). Tür-bazlı self-loop validasyonu Faz 1.2/1.3 graf kurulumında eklenecek.
+///
+/// **Type-only import ayrımı:** `is_type_only` bayrağı TS `import type {Foo}` gibi
+/// runtime dependency üretmeyen import'ları işaretler. CouplingAxis/InstabilityAxis
+/// bu edge'leri *value-only* degree metotlarıyla (`out_degree_value`/`in_degree_value`)
+/// dışlar — type-only import runtime coupling değildir. `#[serde(default)]` eski
+/// snapshot'larla backward-compat sağlar (Node.classification pattern'i).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     pub from: NodeId,
     pub to: NodeId,
     pub kind: EdgeKind,
+    /// TS `import type` / `import {type X}` ile üretilen type-only import mu?
+    /// `true` → runtime dependency değil, coupling/instability'den hariç.
+    /// Backward-compat: eski snapshot'larda yok → `false` (value import varsay).
+    #[serde(default)]
+    pub is_type_only: bool,
 }
 
 /// Kütleçekim vektörü — `Rule`'lardan gelen kısıt ağırlıkları (`ℝᵏ`).
@@ -447,6 +459,25 @@ impl Space {
             .filter(|e| e.from == id && e.kind == kind)
             .count()
     }
+
+    /// Value-only out-degree — type-only import'lar (`is_type_only: true`) hariç.
+    /// CouplingAxis/InstabilityAxis bu metodu kullanır: type-only import runtime
+    /// dependency değildir, coupling'i artırmamalı. Diğer tüm `out_degree`
+    /// çağrıcıları (agent slice, role refinement) etkilenmez — onlar tüm edge'leri sayar.
+    pub fn out_degree_value(&self, id: NodeId, kind: EdgeKind) -> usize {
+        self.edges
+            .iter()
+            .filter(|e| e.from == id && e.kind == kind && !e.is_type_only)
+            .count()
+    }
+
+    /// Value-only in-degree — type-only import'lar hariç (InstabilityAxis Ca için).
+    pub fn in_degree_value(&self, id: NodeId, kind: EdgeKind) -> usize {
+        self.edges
+            .iter()
+            .filter(|e| e.to == id && e.kind == kind && !e.is_type_only)
+            .count()
+    }
 }
 
 impl Default for Space {
@@ -480,8 +511,8 @@ mod tests {
         let mut s = Space::new();
         s.insert_node(mod_node(1, 100.0));
         s.insert_node(mod_node(2, 50.0));
-        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
-        s.insert_edge(Edge { from: 2, to: 1, kind: EdgeKind::Calls });
+        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+        s.insert_edge(Edge { from: 2, to: 1, kind: EdgeKind::Calls, ..Default::default() });
         assert_eq!(s.node_count(), 2);
         assert_eq!(s.edge_count(), 2);
         assert_eq!(s.edge_count_of(EdgeKind::Imports), 1);
@@ -495,9 +526,9 @@ mod tests {
         s.insert_node(mod_node(2, 1.0));
         s.insert_node(mod_node(3, 1.0));
         // 1 → 2 (Imports), 3 → 2 (Imports), 1 → 3 (Calls)
-        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
-        s.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports });
-        s.insert_edge(Edge { from: 1, to: 3, kind: EdgeKind::Calls });
+        s.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+        s.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+        s.insert_edge(Edge { from: 1, to: 3, kind: EdgeKind::Calls, ..Default::default() });
 
         assert_eq!(s.in_degree(2, EdgeKind::Imports), 2);
         assert_eq!(s.out_degree(1, EdgeKind::Imports), 1);
@@ -529,6 +560,7 @@ mod tests {
                 from: 1,
                 to: 2,
                 kind: EdgeKind::Calls,
+                ..Default::default()
             });
         assert_eq!(s.node_count(), 2);
         assert_eq!(s.edge_count(), 1);

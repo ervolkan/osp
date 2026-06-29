@@ -102,8 +102,11 @@ pub fn analyze_repo_with_config(
     }
 
     // 5. Phase 2: resolve imports → edges (registry borrowed again, fresh)
-    let mut seen_edges: std::collections::HashSet<(NodeId, NodeId)> =
-        std::collections::HashSet::new();
+    // Dedup: HashMap<(from, to), is_type_only>. Aynı dosyaya hem type hem value
+    // import varsa VALUE kazanır (is_type_only=false) — çünkü runtime dependency
+    // mevcut, coupling gerçek. Kural: existing.is_type_only && !new.is_type_only → overwrite false.
+    let mut seen_edges: std::collections::HashMap<(NodeId, NodeId), bool> =
+        std::collections::HashMap::new();
     for fd in &file_data {
         let adapter = match registry.adapter_for_extension(&fd.ext) {
             Some(a) => a,
@@ -117,12 +120,13 @@ pub fn analyze_repo_with_config(
                     ImportKind::Internal => {
                         if let Some(target) = &resolved.target_path {
                             if let Some(&to_id) = node_map.get(target) {
-                                if from_id != to_id && seen_edges.insert((from_id, to_id)) {
-                                    space.insert_edge(Edge {
-                                        from: from_id,
-                                        to: to_id,
-                                        kind: EdgeKind::Imports,
-                                    });
+                                if from_id == to_id {
+                                    continue;
+                                }
+                                // Value-wins dedup: existing type-only + new value → false.
+                                let entry = seen_edges.entry((from_id, to_id)).or_insert(imp.is_type_only);
+                                if *entry && !imp.is_type_only {
+                                    *entry = false;
                                 }
                             }
                         }
@@ -139,6 +143,15 @@ pub fn analyze_repo_with_config(
                 }
             }
         }
+    }
+    // seen_edges doldu — artık tek Edge oluştur per (from, to).
+    for ((from_id, to_id), is_type_only) in &seen_edges {
+        space.insert_edge(Edge {
+            from: *from_id,
+            to: *to_id,
+            kind: EdgeKind::Imports,
+            is_type_only: *is_type_only,
+        });
     }
 
     // 5. Abstractness (real A!)
@@ -712,8 +725,8 @@ mod tests {
         let mut space = Space::new();
         space.insert_node(CoreNode { id: 0, kind: NodeKind::Module, mass: 10.0, ..Default::default() });
         space.insert_node(CoreNode { id: 1, kind: NodeKind::Module, mass: 10.0, ..Default::default() });
-        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports });
-        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports });
+        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_edge(Edge { from: 0, to: 1, kind: EdgeKind::Imports, ..Default::default() });
         let i = compute_repo_instability(&space);
         // node 0: ce=2, ca=0 → I=1.0; node 1: ce=0, ca=2 → I=0.0
         // weighted = (1.0×10 + 0.0×10)/20 = 0.5

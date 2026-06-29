@@ -28,6 +28,7 @@ fn import_edge(from: u64, to: u64) -> Edge {
         from,
         to,
         kind: EdgeKind::Imports,
+        ..Default::default()
     }
 }
 

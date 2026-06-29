@@ -42,6 +42,7 @@ pub fn spike_graph_to_space(g: &DepGraph) -> Space {
             from: e.from as NodeId,
             to: e.to as NodeId,
             kind: spike_edge_kind_to_core(e.kind),
+            ..Default::default() // is_type_only: false — spike katmanı type-only bilmez
         });
     }
     space

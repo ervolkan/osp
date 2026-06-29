@@ -33,6 +33,144 @@ pub fn walk_imports(root: Node, source_bytes: &[u8], import_node_kinds: &[&str])
     imports
 }
 
+/// Walk AST, collect import path strings WITH type-only flag (TS only).
+///
+/// TypeScript `import type` ayrımı: tree-sitter grammar `type`/`typeof` qualifier'ı
+/// anonim token olarak consume eder (named node değil), bu yüzden structural AST'den
+/// okunamaz. Ama kaynak byte'lardan textual olarak recover edilebilir — `import`
+/// keyword'ünün bitişi ile `import_clause`/`source` başlangıcı arasındaki gap'te
+/// `type`/`typeof` kelimesi var mı kontrol eder.
+///
+/// Per-specifier `import {type Foo, Bar}` (mixed) için: specifier'lar tek tek
+/// incelenir. Eğer en az bir value specifier varsa → value edge (`is_type_only=false`),
+/// çünkü runtime dependency mevcut. Sadece tüm specifier'lar type-qualified ise
+/// → type-only.
+///
+/// Sadece TypeScript adapter'ı bu fonksiyonu çağırır. JS/Python/Rust/Go `walk_imports`
+/// kullanmaya devam eder (bu dillerde type-only import kavramı yok).
+pub fn walk_imports_typed(root: Node, source_bytes: &[u8]) -> Vec<(String, bool)> {
+    let mut imports: Vec<(String, bool)> = Vec::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "import_statement" {
+            let is_type_only = detect_ts_type_only_import(&n, source_bytes);
+            // Path extraction (aynı extract_import_path mantığı, JS/TS source field)
+            if let Some(src) = n.child_by_field_name("source") {
+                if let Ok(text) = src.utf8_text(source_bytes) {
+                    let stripped = text
+                        .trim_matches(|c| c == '"' || c == '\'' || c == '`')
+                        .trim()
+                        .to_string();
+                    if !stripped.is_empty() {
+                        imports.push((stripped, is_type_only));
+                    }
+                }
+            }
+        }
+        for i in (0..n.child_count()).rev() {
+            if let Some(c) = n.child(i) {
+                stack.push(c);
+            }
+        }
+    }
+    imports
+}
+
+/// TypeScript `import type` detection — textual byte-range check.
+///
+/// Üç formu handle eder:
+/// 1. `import type { Foo } from './x'` — statement-level `type` qualifier
+/// 2. `import { type Foo } from './x'` — per-specifier `type` (tek specifier, type-only)
+/// 3. `import { Foo, type Bar } from './x'` — mixed → value (en az bir value specifier)
+///
+/// Mantık: önce statement-level `type` kontrolü (form 1). Yoksa, specifier listesini
+/// incele — tüm specifier'lar type-qualified ise type-only (form 2), en az bir value
+/// varsa value (form 3). Namespace/ default import'lar (`import type Foo`) form 1'e girer.
+fn detect_ts_type_only_import(node: &Node, source: &[u8]) -> bool {
+    // Form 1: statement-level `type`/`typeof` qualifier.
+    // `import_statement` çocularını soldan tara; ilknamed child `import_clause` ise,
+    // ondan önce `type`/`typeof` anonim token'ı var mı byte-range ile kontrol et.
+    if has_statement_level_type_qualifier(node, source) {
+        return true;
+    }
+    // Form 2/3: per-specifier. import_clause → named_imports → import_specifier children.
+    // Her specifier için `type`/`typeof` qualifier var mı. Tümü type → type-only.
+    if let Some(clause) = find_child_of_kind(node, "import_clause") {
+        if let Some(named_imports) = find_child_of_kind(&clause, "named_imports") {
+            let specifiers = collect_children_of_kind(&named_imports, "import_specifier");
+            if !specifiers.is_empty() {
+                // Tüm specifier'lar type-qualified mı?
+                return specifiers
+                    .iter()
+                    .all(|spec| has_specifier_type_qualifier(spec, source));
+            }
+        }
+    }
+    false
+}
+
+/// Statement-level `type`/`typeof` kontrolü: `import` keyword'ünden sonra
+/// `import_clause`/`source`'tan önce `type`/`typeof` kelimesi var mı.
+fn has_statement_level_type_qualifier(node: &Node, source: &[u8]) -> bool {
+    // `import` keyword'ünü bul (ilk çocuk, identifier değil ama `import` literal).
+    // Sonra ilk named child'a (import_clause veya source) kadar olan byte'ları oku.
+    let node_start = node.start_byte();
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            let ck = child.kind();
+            // İlk anlamlı çocuk: import_clause, string (source), import_require_clause
+            if ck == "import_clause" || ck == "string" || ck == "import_require_clause" {
+                let gap = &source[node_start..child.start_byte()];
+                let gap_text = std::str::from_utf8(gap).unwrap_or("").trim();
+                // gap = "import type" veya "import typeof" (import keyword + qualifier)
+                // "import" kelimesini çıkar, kalanı kontrol et
+                let after_import = gap_text
+                    .trim_start_matches("import")
+                    .trim();
+                return after_import == "type" || after_import == "typeof";
+            }
+        }
+    }
+    false
+}
+
+/// Per-specifier `type`/`typeof` kontrolü: specifier'ın `name` field'ından önce
+/// `type`/`typeof` qualifier var mı (`import {type Foo}` formu).
+fn has_specifier_type_qualifier(spec: &Node, source: &[u8]) -> bool {
+    let spec_start = spec.start_byte();
+    if let Some(name) = spec.child_by_field_name("name") {
+        let gap = &source[spec_start..name.start_byte()];
+        let gap_text = std::str::from_utf8(gap).unwrap_or("").trim();
+        return gap_text == "type" || gap_text == "typeof";
+    }
+    false
+}
+
+/// Bir node'un belirli kind'daki ilk çocuğunu bul.
+fn find_child_of_kind<'a>(node: &'a Node, kind: &str) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(c) = node.child(i) {
+            if c.kind() == kind {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Bir node'un belirli kind'daki tüm çocuklarını topla.
+fn collect_children_of_kind<'a>(node: &'a Node, kind: &str) -> Vec<Node<'a>> {
+    let mut out = Vec::new();
+    for i in 0..node.child_count() {
+        if let Some(c) = node.child(i) {
+            if c.kind() == kind {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 /// Python: `import_from_statement` → `module_name` field; `import_statement` → `dotted_name` children.
 /// JS/TS: `import_statement` → `source` field (string literal, strip quotes).
 fn extract_import_path(node: &Node, source: &[u8], imports: &mut Vec<String>) {

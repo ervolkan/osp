@@ -24,7 +24,7 @@ use osp_core::space::NodeRole;
 /// Backend builtin_role_override mirror (vision_config.rs ile birebir aynı).
 fn builtin_role_vision(role: NodeRole) -> Option<(f64, f64, f64)> {
     match role {
-        NodeRole::TypeSurface => Some((0.20, 0.80, 0.50)), // 0.05→0.20 type-import kalibrasyon
+        NodeRole::TypeSurface => Some((0.05, 0.80, 0.50)), // type-only ayrımı yapıldı → 0.05 geri
         NodeRole::Core => Some((0.60, 0.75, 0.20)),
         NodeRole::Adapter => Some((0.80, 0.50, 0.80)),
         NodeRole::Utility => Some((0.20, 0.60, 0.50)),

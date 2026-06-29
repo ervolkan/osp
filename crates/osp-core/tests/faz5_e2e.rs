@@ -52,8 +52,8 @@ fn make_project_space() -> Space {
         ..Default::default()
     });
     // main → config, main → utils
-    space.insert_edge(Edge { from: 3, to: 1, kind: EdgeKind::Imports });
-    space.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports });
+    space.insert_edge(Edge { from: 3, to: 1, kind: EdgeKind::Imports, ..Default::default() });
+    space.insert_edge(Edge { from: 3, to: 2, kind: EdgeKind::Imports, ..Default::default() });
     space
 }
 
@@ -100,7 +100,7 @@ fn mock_llm_add_auth() -> (Vec<Node>, Vec<Edge>) {
         mass: 40.0,
         ..Default::default()
     };
-    let auth_import = Edge { from: 4, to: 1, kind: EdgeKind::Imports };
+    let auth_import = Edge { from: 4, to: 1, kind: EdgeKind::Imports, ..Default::default() };
     (vec![auth_node], vec![auth_import])
 }
 
@@ -113,7 +113,7 @@ fn mock_llm_self_import() -> (Vec<Node>, Vec<Edge>) {
         ..Default::default()
     };
     // BUG: auth imports itself
-    let self_loop = Edge { from: 4, to: 4, kind: EdgeKind::Imports };
+    let self_loop = Edge { from: 4, to: 4, kind: EdgeKind::Imports, ..Default::default() };
     (vec![auth_node], vec![self_loop])
 }
 

@@ -280,6 +280,7 @@ mod tests {
             from,
             to,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }
     }
 

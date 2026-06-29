@@ -795,6 +795,7 @@ mod tests {
             from,
             to,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }
     }
 
@@ -1158,6 +1159,7 @@ v = 0.5
                 from: 10,
                 to: 10,
                 kind: EdgeKind::Imports,
+                ..Default::default()
             }],
         );
         let result = engine.commit(&claim, &two_witnesses());
@@ -1183,6 +1185,7 @@ v = 0.5
                 from: 10,
                 to: 10,
                 kind: EdgeKind::Calls,
+                ..Default::default()
             }],
         );
         // Should pass Q4 (might fail Q5 if vision not aligned, but not Q4)
@@ -1236,6 +1239,7 @@ v = 0.5
                 from: 10,
                 to: 10,
                 kind: EdgeKind::Imports,
+                ..Default::default()
             }],
         );
         // Q4 catches this first, but if we bypass Q4, Q6 catches it too
@@ -1298,6 +1302,7 @@ v = 0.5
                 from: 10,
                 to: 11,
                 kind: EdgeKind::Imports,
+                ..Default::default()
             }],
         );
         let result = engine.check_claim_rules(&claim);
@@ -1370,7 +1375,7 @@ v = 0.5
             Node { id: 1, kind: NodeKind::Module, mass: 10.0, ..Default::default() },
             Node { id: 2, kind: NodeKind::Module, mass: 10.0, ..Default::default() },
         ];
-        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports }];
+        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() }];
 
         let raw = engine.compute_raw_from_delta(&nodes, &edges);
 
@@ -1391,7 +1396,7 @@ v = 0.5
             Node { id: 1, kind: NodeKind::Module, mass: 100.0, ..Default::default() },
             Node { id: 2, kind: NodeKind::Module, mass: 1.0, ..Default::default() },
         ];
-        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports }];
+        let edges = vec![Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() }];
 
         let raw = engine.compute_raw_from_delta(&nodes, &edges);
         let expected = 100.0 * 0.5 / 101.0;

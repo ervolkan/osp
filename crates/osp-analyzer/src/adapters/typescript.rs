@@ -28,15 +28,17 @@ impl LanguageAdapter for TypeScriptAdapter {
             Some(t) => t,
             None => return Vec::new(),
         };
-        let paths = shared::walk_imports(
-            tree.root_node(),
-            source.as_bytes(),
-            &["import_statement"],
-        );
+        // walk_imports_typed: TS `import type` ayrımı yapar (statement-level +
+        // per-specifier). path + is_type_only tuple döndürür.
+        let paths = shared::walk_imports_typed(tree.root_node(), source.as_bytes());
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i })
+            .map(|(i, (path, is_type_only))| ImportStatement {
+                path,
+                source_location: i,
+                is_type_only,
+            })
             .collect()
     }
 
@@ -137,7 +139,7 @@ mod tests {
             vec![PathBuf::from("/repo/src/util.ts")],
         );
         let adapter = TypeScriptAdapter;
-        let import = ImportStatement { path: "./util".into(), source_location: 0 };
+        let import = ImportStatement { path: "./util".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/src/main.ts"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
     }
@@ -146,8 +148,69 @@ mod tests {
     fn ts_resolve_external_package() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = TypeScriptAdapter;
-        let import = ImportStatement { path: "react".into(), source_location: 0 };
+        let import = ImportStatement { path: "react".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/src/main.ts"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
+    }
+
+    // ── Type-only import ayrımı (4 form) ───────────────────────────────────
+    // TS `import type` runtime dependency değildir → coupling/instability'den hariç.
+    // 4 formu test et: value, statement-level type, per-specifier type, mixed.
+
+    fn find_import<'a>(imports: &'a [ImportStatement], path: &str) -> Option<&'a ImportStatement> {
+        imports.iter().find(|i| i.path == path)
+    }
+
+    #[test]
+    fn ts_value_import_not_type_only() {
+        // Form 1: `import { Foo } from './foo'` → value import
+        let src = "import { Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(!imp.is_type_only, "value import must not be type-only");
+    }
+
+    #[test]
+    fn ts_statement_level_type_import() {
+        // Form 2: `import type { Foo } from './foo'` → type-only (statement-level qualifier)
+        let src = "import type { Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(imp.is_type_only, "import type must be type-only");
+    }
+
+    #[test]
+    fn ts_per_specifier_type_only() {
+        // Form 3: `import { type Foo } from './foo'` → type-only (tek specifier, type-qualified)
+        let src = "import { type Foo } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(imp.is_type_only, "import with single type specifier must be type-only");
+    }
+
+    #[test]
+    fn ts_mixed_import_value_wins() {
+        // Form 4: `import { Foo, type Bar } from './foo'` → value (mixed, en az bir value var)
+        let src = "import { Foo, type Bar } from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(
+            !imp.is_type_only,
+            "mixed import must be value (runtime dependency from value specifier)"
+        );
+    }
+
+    #[test]
+    fn ts_default_type_import() {
+        // `import type Foo from './foo'` → type-only (default import with statement-level type)
+        let src = "import type Foo from './foo';\n";
+        let adapter = TypeScriptAdapter;
+        let imports = adapter.extract_imports(src);
+        let imp = find_import(&imports, "./foo").expect("import found");
+        assert!(imp.is_type_only, "import type Foo (default) must be type-only");
     }
 }

@@ -29,7 +29,7 @@ impl LanguageAdapter for RustAdapter {
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i })
+            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
             .collect()
     }
 
@@ -104,7 +104,7 @@ mod tests {
     fn rust_resolve_stdlib() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "std::collections::HashMap".into(), source_location: 0 };
+        let import = ImportStatement { path: "std::collections::HashMap".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::StandardLibrary);
     }
@@ -113,7 +113,7 @@ mod tests {
     fn rust_resolve_external() {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "serde::Serialize".into(), source_location: 0 };
+        let import = ImportStatement { path: "serde::Serialize".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::External);
     }
@@ -126,7 +126,7 @@ mod tests {
             vec![PathBuf::from("/repo/models.rs"), PathBuf::from("/repo/main.rs")],
         );
         let adapter = RustAdapter;
-        let import = ImportStatement { path: "crate::models::User".into(), source_location: 0 };
+        let import = ImportStatement { path: "crate::models::User".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
         assert_eq!(resolved.target_path.as_deref(), Some(std::path::Path::new("/repo/models.rs")));
@@ -148,7 +148,7 @@ mod tests {
         let repo = RepoContext::new(PathBuf::from("/repo"), vec![]);
         let adapter = RustAdapter;
         for p in ["alloc::sync::Arc", "core::fmt::Debug"] {
-            let import = ImportStatement { path: p.into(), source_location: 0 };
+            let import = ImportStatement { path: p.into(), source_location: 0, ..Default::default() };
             let resolved = adapter.resolve_import(&import, Path::new("/repo/main.rs"), &repo).unwrap();
             assert_eq!(resolved.kind, ImportKind::StandardLibrary, "{}", p);
         }

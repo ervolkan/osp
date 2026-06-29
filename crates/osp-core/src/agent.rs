@@ -929,7 +929,7 @@ mod tests {
             });
         }
         for (from, to) in [(1, 2), (2, 3), (3, 4), (4, 5)] {
-            space.insert_edge(Edge { from, to, kind: EdgeKind::Imports });
+            space.insert_edge(Edge { from, to, kind: EdgeKind::Imports, ..Default::default() });
         }
         space
     }
@@ -1060,8 +1060,8 @@ mod tests {
                 ..Default::default()
             });
         }
-        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
-        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports });
+        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports, ..Default::default() });
 
         let rules: Vec<Box<dyn Rule>> = vec![];
         let mask = PermissionMask::full_access();
@@ -1148,8 +1148,8 @@ mod tests {
                 ..Default::default()
             });
         }
-        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports });
-        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports });
+        space.insert_edge(Edge { from: 1, to: 2, kind: EdgeKind::Imports, ..Default::default() });
+        space.insert_edge(Edge { from: 2, to: 3, kind: EdgeKind::Imports, ..Default::default() });
 
         let mut mask = PermissionMask::full_access();
         mask.hide_node(2); // hide middle node

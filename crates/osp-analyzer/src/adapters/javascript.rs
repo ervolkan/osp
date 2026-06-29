@@ -36,7 +36,7 @@ impl LanguageAdapter for JavaScriptAdapter {
         paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| ImportStatement { path, source_location: i })
+            .map(|(i, path)| ImportStatement { path, source_location: i, is_type_only: false })
             .collect()
     }
 
@@ -116,7 +116,7 @@ mod tests {
             vec![PathBuf::from("/repo/lib/util.js")],
         );
         let adapter = JavaScriptAdapter;
-        let import = ImportStatement { path: "./util".into(), source_location: 0 };
+        let import = ImportStatement { path: "./util".into(), source_location: 0, ..Default::default() };
         let resolved = adapter.resolve_import(&import, Path::new("/repo/main.js"), &repo).unwrap();
         assert_eq!(resolved.kind, ImportKind::Internal);
     }

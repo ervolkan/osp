@@ -41,7 +41,10 @@ impl Axis for CouplingAxis {
         "coupling"
     }
     fn compute(&self, node: &Node, space: &Space) -> f64 {
-        let deg = space.out_degree(node.id, EdgeKind::Imports) as f64;
+        // Value-only out-degree: type-only import'lar (`import type`) runtime dependency
+        // değildir, coupling'i artırmamalı. Mimari açıdan doğru: bir .d.ts dosyası
+        // `import type {Foo}` yaparsa bu runtime coupling üretmez.
+        let deg = space.out_degree_value(node.id, EdgeKind::Imports) as f64;
         deg / (1.0 + deg)
     }
 }
@@ -153,8 +156,10 @@ impl Axis for InstabilityAxis {
         "instability"
     }
     fn compute(&self, node: &Node, space: &Space) -> f64 {
-        let ce = space.out_degree(node.id, EdgeKind::Imports) as f64; // fan-out
-        let ca = space.in_degree(node.id, EdgeKind::Imports) as f64; // fan-in
+        // Value-only degrees: type-only import'lar Ce/Ca'dan hariç (CouplingAxis ile aynı
+        // rationale — runtime dependency değil).
+        let ce = space.out_degree_value(node.id, EdgeKind::Imports) as f64; // fan-out
+        let ca = space.in_degree_value(node.id, EdgeKind::Imports) as f64; // fan-in
         let denom = ce + ca;
         if denom > 0.0 {
             ce / denom
@@ -294,6 +299,7 @@ mod tests {
             from,
             to,
             kind: EdgeKind::Imports,
+            ..Default::default()
         }
     }
 
@@ -320,12 +326,70 @@ mod tests {
             from: 1,
             to: 2,
             kind: EdgeKind::Calls,
+            ..Default::default()
         });
 
         let axis = CouplingAxis::new();
         let v = axis.compute(&node(1), &space);
         // out_degree(Imports) = 2 → 2/3
         assert!((v - 2.0 / 3.0).abs() < 1e-9, "coupling = {}", v);
+    }
+
+    #[test]
+    fn coupling_excludes_type_only_imports() {
+        // Type-only import'lar (`import type`) runtime dependency değildir — coupling'i
+        // artırmamalı. value-only degree kullanır: is_type_only=true edge'ler hariç.
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        space.insert_node(node(3));
+        // 1 value import → 2 (coupling'e girer)
+        space.insert_edge(import_edge(1, 2));
+        // 1 type-only import → 3 (coupling'e GİRMEZ)
+        space.insert_edge(Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Imports,
+            is_type_only: true,
+        });
+
+        let axis = CouplingAxis::new();
+        let v = axis.compute(&node(1), &space);
+        // value-only out_degree = 1 → 1/2 = 0.5 (type-only hariç)
+        assert!((v - 0.5).abs() < 1e-9, "type-only import should not count, coupling = {}", v);
+
+        // Karşılaştırma: iki value import olsaydı 2/3 ≈ 0.667 olurdu.
+        // Type-only'nin coupling'i düşürmesi mimari açıdan doğru sinyal.
+    }
+
+    #[test]
+    fn instability_excludes_type_only_imports() {
+        // InstabilityAxis de value-only degree kullanır (Ce/Ca type-only hariç).
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        // 1 value import (1→2): Ce=1, Ca=0 → I=1.0
+        space.insert_edge(import_edge(1, 2));
+
+        let axis = InstabilityAxis::new();
+        let v_with_only_value = axis.compute(&node(1), &space);
+        assert!((v_with_only_value - 1.0).abs() < 1e-9, "I with only value = 1.0");
+
+        // Şimdi 1 type-only import ekle (1→2 zaten var, farklı node ekleyelim)
+        space.insert_node(node(3));
+        space.insert_edge(Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Imports,
+            is_type_only: true,
+        });
+        // value-only Ce hâlâ 1 (type-only hariç) → I hâlâ 1.0
+        let v_with_type_only = axis.compute(&node(1), &space);
+        assert!(
+            (v_with_type_only - 1.0).abs() < 1e-9,
+            "type-only import should not change I, got {}",
+            v_with_type_only
+        );
     }
 
     #[test]

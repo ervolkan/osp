@@ -199,11 +199,16 @@ impl Default for AnalysisConfig {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Import deyimi (syntactic — tree-sitter çıktısı).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ImportStatement {
     /// "foo.bar" (Python) / "./foo" (JS) / "crate::foo" (Rust)
     pub path: String,
     pub source_location: usize,
+    /// TS `import type {Foo}` / `import {type Foo}` ile üretilen type-only import mu?
+    /// `true` → runtime dependency değil, coupling/instability'den hariç (Edge::is_type_only).
+    /// Sadece TypeScript adapter'ı `true` set eder; JS/Python/Rust/Go her zaman `false`
+    /// (bu dillerde type-only import kavramı yok).
+    pub is_type_only: bool,
 }
 
 /// Import çözümleme sonucu — internal/external/stdlib ayrımı.

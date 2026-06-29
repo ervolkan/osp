@@ -252,12 +252,12 @@ pub fn cmd_simulate_claim(
     let (delta_nodes, delta_edges, computed_raw_override) = match scenario {
         "valid" => (
             vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: 1, kind: EdgeKind::Imports }],
+            vec![Edge { from: next_id, to: 1, kind: EdgeKind::Imports, ..Default::default() }],
             None, // let engine compute
         ),
         "syntax_fail" => (
             vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports }], // self-import
+            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports, ..Default::default() }], // self-import
             None,
         ),
         "vision_fail" => (
@@ -441,7 +441,7 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
     let (delta_nodes, delta_edges) = match scenario {
         "syntax_fail" => (
             vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
-            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports }],
+            vec![Edge { from: next_id, to: next_id, kind: EdgeKind::Imports, ..Default::default() }],
         ),
         "vision_fail" => (
             vec![Node { id: next_id, kind: NodeKind::Module, mass: 50.0, ..Default::default() }],
