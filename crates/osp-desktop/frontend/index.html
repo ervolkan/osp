@@ -2232,7 +2232,8 @@ let threeEngine = null;
 let threeScene = null;
 let threeCamera = null;
 let threeInit = false; // engine/scene kuruldu mu (init3D bir kez)
-let threeNodeMesh = null; // template mesh (InstancedMesh source)
+let threeNodeMesh = null; // dispose referansı (Runtime template)
+let threeTemplates = null; // {roleKey: templateMesh} — role başına ayrı template
 let threeInstances = []; // InstancedMesh[] — picking için pickedMesh → index
 let threeNodeData = []; // render sırasındaki node'lar (picking için index→node)
 let threeDefaultCameraTarget = null;
@@ -2313,51 +2314,73 @@ function init3D() {
 /// render3D — analysisData'dan node'ları InstancedMesh olarak sahnele.
 /// Sabit eksen: X=coupling, Y=cohesion, Z=instability. role=color, mass=size.
 ///
-/// InstancedMesh seçildi (thin instances yerine) çünkü: (1) instance color
-/// doğrudan `instance.setColor` ile set edilir — custom color buffer/shader
-/// gerekmez (thin instances'ta color buffer naming sorunuydu, node'lar görünmüyordu);
-/// (2) picking `pickedMesh` + `instanceId` ile güvenilir; (3) Babylon 3448
-/// instance'ı tek draw call'da optimize eder.
+/// **Color yaklaşımı:** role bazlı material havuzu. registerInstancedBuffer('color')
+/// StandardMaterial tarafından otomatik okunmuyor (node'lar siyah çıkıyordu);
+/// yerine her role için 1 material (toplam 8: 7 role + placeholder gri), her
+/// instance kendi role material'ını paylaşır. 3448 instance ~8 material → draw
+/// call yine az. Bu `setColor`/instancedBuffer tuzağını doğrudan aşar.
 function render3D() {
   if (!threeInit || !analysisData) return;
   const nodes = analysisData.space.nodes;
   document.getElementById('threeNodeCount').textContent = nodes.length;
 
-  // Eski node mesh + instanceları temizle (re-analyze).
-  if (threeNodeMesh) { threeNodeMesh.dispose(); threeNodeMesh = null; }
+  // Eski template mesh'leri + instanceları temizle (re-analyze).
+  if (threeTemplates) {
+    for (const t of Object.values(threeTemplates)) t.dispose();
+    threeTemplates = null;
+  }
   threeInstances = [];
   threeNodeData = [];
+  threeNodeMesh = null;
 
   if (nodes.length === 0) return;
 
-  // Template sphere — instanceları bunu çoğaltır. Düşük-poly (8 segments).
-  const template = BABYLON.MeshBuilder.CreateSphere('nodeTemplate', {
-    diameter: 1, segments: 8, updatable: false,
-  }, threeScene);
-  template.isVisible = false; // sadece instancelar görünür
-  template.doNotSyncBoundingInfo = true; // 3448 instance bbox sync önle
+  // Role başına ayrı template mesh — her template'in KENDİ material'ı var.
+  // InstancedMesh source mesh'in material'ını kullanır (material override
+  // güvenilir değil), bu yüzden role başına template = kesin doğru renk.
+  // 7 role + 1 placeholder = 8 template; 3448 instance bu 8 template'ten gelir.
+  const makeMat = (name, color3, emissiveBoost) => {
+    const m = new BABYLON.StandardMaterial(name, threeScene);
+    m.diffuseColor = color3;
+    m.emissiveColor = color3.scale(emissiveBoost); // karanlık sahnede parlaklık
+    m.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+    return m;
+  };
+  const makeTemplate = (key, color3, boost) => {
+    const t = BABYLON.MeshBuilder.CreateSphere('tpl_' + key, {
+      diameter: 1, segments: 8, updatable: false,
+    }, threeScene);
+    t.isVisible = false; // sadece instancelar görünür
+    t.doNotSyncBoundingInfo = true;
+    t.material = makeMat('mat_' + key, color3, boost);
+    t.isPickable = true;
+    return t;
+  };
 
-  // Material — instance color materyali geçersiz kılar (Babilon default).
-  // `useVertexColor` false (instance color kullan); diffuse beyaz bırakılır,
-  // her instance kendi rengini `setColor` ile taşır.
-  const mat = new BABYLON.StandardMaterial('nodeMat', threeScene);
-  mat.diffuseColor = BABYLON.Color3.White();
-  mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
-  mat.emissiveColor = new BABYLON.Color3(0.15, 0.15, 0.15); // karanlık sahnede görünür
-  template.material = mat;
-  // Instance başına RGBA buffer — her instance instancedBuffers.color set eder.
-  // InstancedMesh'te setColor yoktur; bu Babylon'un resmi instance-color yolu.
-  template.registerInstancedBuffer('color', 4);
+  threeTemplates = {};
+  for (const [role, hex] of Object.entries(threeRolePalette)) {
+    threeTemplates[role] = makeTemplate(role, BABYLON.Color3.FromHexString(hex), 0.6);
+  }
+  // Placeholder cohesion: AYRI gri template YAPMA — bu tüm node'ları gri yapıyordu
+  // (svelte SCIP'siz → hepsi placeholder → hepsi gri). Yerine role rengi korunur;
+  // placeholder sadece emissive boost düşük (sönük) için dim template.
+  // 2D'deki hollow stroke mantığı: renk değişmez, sadece belirginlik azalır.
+  for (const [role, hex] of Object.entries(threeRolePalette)) {
+    threeTemplates['__ph_' + role] = makeTemplate(
+      'ph_' + role, BABYLON.Color3.FromHexString(hex), 0.25 // sönük emissive
+    );
+  }
+  // Default (role yok / null) → Runtime template.
+  threeNodeMesh = threeTemplates.Runtime; // dispose referansı için
 
   // Mass → size scale (2D size() ile aynı sqrt oran, ama 3D için küçült).
   const maxMass = Math.max(1, ...nodes.map(n => n.mass || 0));
   const massToScale = m => {
     const t = Math.sqrt(Math.max(0, m || 0) / maxMass); // sqrt → area-proportional
-    return 0.12 + t * 0.45; // [0.12, 0.57] — öncekinden biraz büyük (görünürlük)
+    return 0.12 + t * 0.45; // [0.12, 0.57]
   };
 
   threeNodeData = nodes;
-  threeNodeMesh = template;
 
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
@@ -2366,22 +2389,16 @@ function render3D() {
     const z = metricToAxis(n.instability);
     const s = massToScale(n.mass);
 
-    const inst = template.createInstance('node_' + i);
+    // Template seçimi: placeholder cohesion → sönük role template'i (__ph_<role>),
+    // yoksa normal role template'i. Renk her zaman role (gri DEĞİL).
+    const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
+    const role = n.role || 'Runtime';
+    const tplKey = isPlaceholder ? ('__ph_' + role) : role;
+    const tpl = threeTemplates[tplKey] || threeTemplates.Runtime;
+
+    const inst = tpl.createInstance('node_' + i);
     inst.position.set(x, y, z);
     inst.scaling.set(s, s, s);
-
-    // Color: role palette → instancedBuffer color (RGBA).
-    const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
-    let r, g, b, a;
-    if (isPlaceholder) {
-      r = 0.35; g = 0.4; b = 0.45; a = 0.4; // gri, ölçülmemiş (2D hollow karşılığı)
-    } else {
-      const hex = threeRolePalette[n.role || 'Runtime'] || threeRolePalette.Runtime;
-      const c = BABYLON.Color3.FromHexString(hex);
-      r = c.r; g = c.g; b = c.b; a = 0.95;
-    }
-    inst.instancedBuffers.color = [r, g, b, a];
-
     inst.isPickable = true;
     threeInstances.push(inst);
   }
