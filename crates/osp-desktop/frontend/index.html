@@ -140,6 +140,15 @@
   #threedHoverTooltip .tt-path { color: #8b949e; font-size: 10px; word-break: break-all; }
   #threedLoading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #58a6ff; font-size: 14px; }
   #threedError { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #f85149; font-size: 13px; max-width: 400px; text-align: center; padding: 20px; background: rgba(45,27,27,0.9); border: 1px solid #f85149; border-radius: 8px; }
+  /* Lens bar — üst-orta, CAD/engine araç hissi. Button group (dropdown değil,
+     tek tık). Lens hem color mapping hem camera preset değiştirir. Eksen sabit. */
+  #threeLensBar { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; background: rgba(13,17,23,0.92); border: 1px solid #30363d; border-radius: 8px; padding: 6px 8px; backdrop-filter: blur(8px); z-index: 5; }
+  #threeLensBar .lens-label { font-size: 10px; font-weight: 700; color: #6e7681; letter-spacing: 1px; padding: 0 8px 0 4px; border-right: 1px solid #30363d; margin-right: 2px; }
+  #threeLensBar .lens-btn { background: transparent; border: 1px solid transparent; color: #8b949e; padding: 5px 12px; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; }
+  #threeLensBar .lens-btn:hover { background: #21262d; color: #c9d1d9; }
+  #threeLensBar .lens-btn.active { background: #1f6feb; color: #fff; border-color: #388bfd; font-weight: 600; }
+  /* Lens legend — controls panel içinde lens açıklaması. */
+  #threeLensLegend { margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d; font-size: 11px; color: #8b949e; line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -228,23 +237,30 @@
   </div>
 </div>
 
-<!-- ═══ Panel: 3D View (Babylon.js) — roadmap #8 Aşama 1 ═══ -->
-<!-- "3D Architecture IDE" vizyonu. Sabit mimari uzay: X=coupling, Y=cohesion,
-     Z=instability. Node'lar thin instances (GPU), role=color, mass=size.
-     Edge'ler Aşama 2'de. Lens dropdown Aşama 2'de (Architecture sabit şimdi). -->
+<!-- ═══ Panel: 3D View (Babylon.js) — roadmap #8 Aşama 2 ═══ -->
+<!-- "3D Architecture IDE" — uzay yaşatma. Sabit eksen (coupling/cohesion/instability),
+     lens ayrı bar (color + camera preset), grid/ticks/bounding cube ile uzay algısı.
+     Node'lar InstancedMesh (role-per-template), mass=size. Edge Aşama 3'te. -->
 <div class="panel" id="panel-threed">
   <div class="threed-container">
     <canvas id="babylonCanvas"></canvas>
+    <div id="threeLensBar">
+      <span class="lens-label">LENS</span>
+      <button class="lens-btn active" data-lens="architecture" onclick="apply3DLens('architecture')">Architecture</button>
+      <button class="lens-btn" data-lens="battletested" onclick="apply3DLens('battletested')">Battle-tested</button>
+      <button class="lens-btn" data-lens="risk" onclick="apply3DLens('risk')">Risk</button>
+      <button class="lens-btn" data-lens="ownership" onclick="apply3DLens('ownership')">Ownership</button>
+      <button class="lens-btn" data-lens="runtime" onclick="apply3DLens('runtime')">Instability</button>
+    </div>
     <div id="threedControls">
       <div class="ctrl-title">3D Architecture Space</div>
       <div class="ctrl-row"><span class="k">X axis</span><span class="v">coupling</span></div>
       <div class="ctrl-row"><span class="k">Y axis</span><span class="v">cohesion</span></div>
       <div class="ctrl-row"><span class="k">Z axis</span><span class="v">instability</span></div>
-      <div class="ctrl-row"><span class="k">Color</span><span class="v">role</span></div>
       <div class="ctrl-row"><span class="k">Size</span><span class="v">mass (LOC)</span></div>
-      <div class="ctrl-row"><span class="k">Lens</span><span class="v">Architecture</span></div>
       <div class="ctrl-row"><span class="k">Nodes</span><span class="v" id="threeNodeCount">—</span></div>
       <button class="ctrl-btn" onclick="reset3DCamera()">Reset camera</button>
+      <div id="threeLensLegend">role palette (TypeSurface/Core/Adapter/Utility/Runtime/Support)</div>
       <div class="ctrl-hint">Drag = orbit · Scroll = zoom · Right-drag = pan · Click node = inspect</div>
     </div>
     <div id="threedHoverTooltip"></div>
@@ -2245,6 +2261,103 @@ const threeRolePalette = {
   Adapter: '#f0883e', Utility: '#3fb950', Support: '#d29922', Unknown: '#6e7681',
 };
 
+// ─── Lens sistemi (Aşama 2) ──────────────────────────────────────────────
+// Lens = color mapping + camera preset (birleşik). Eksen SABİT (coupling/
+// cohesion/instability). Lens değişince color mapping + kamera açısı değişir.
+// "uzayı yaşat" — aynı mimari uzay, farklı bakış açısı/renk.
+let threeActiveLens = 'architecture';
+
+// Continuous değer [0,1] → heat gradient color (mavi→yeşil→sarı→kırmızı).
+// soğuk=low, sıcak=high. Babylon Color3 döndürür.
+function threeHeatColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  // 4 stop: 0=mavi(0.2,0.4,1), 0.33=yeşil(0.2,0.8,0.3), 0.66=sarı(0.9,0.8,0.2), 1=kırmızı(1,0.3,0.2)
+  const stops = [
+    [0.2, 0.4, 1.0], [0.2, 0.8, 0.3], [0.9, 0.8, 0.2], [1.0, 0.3, 0.2],
+  ];
+  const seg = t * (stops.length - 1);
+  const i = Math.floor(seg);
+  const f = seg - i;
+  const a = stops[i], b = stops[Math.min(i + 1, stops.length - 1)];
+  return new BABYLON.Color3(a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f, a[2] + (b[2]-a[2])*f);
+}
+
+// Green→Red gradient (yeşil=iyi/düşük, kırmızı=kötü/yüksek). Risk/ownership için.
+function threeGreenRedColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  // 0=yeşil(0.25,0.85,0.3), 0.5=sarı(0.9,0.8,0.2), 1=kırmızı(1,0.25,0.2)
+  const stops = [[0.25, 0.85, 0.3], [0.9, 0.8, 0.2], [1.0, 0.25, 0.2]];
+  const seg = t * (stops.length - 1);
+  const i = Math.floor(seg);
+  const f = seg - i;
+  const a = stops[i], b = stops[Math.min(i + 1, stops.length - 1)];
+  return new BABYLON.Color3(a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f, a[2] + (b[2]-a[2])*f);
+}
+
+// Lens tanımları: colorFn(node) → {bucket, color3, material override}, camera preset, legend.
+// colorFn quantized bucket döndürür (0-15) — her bucket için ayrı template.
+const THREE_LENSES = {
+  architecture: {
+    label: 'Architecture',
+    // role-per-template (categorical) — bucket = role index.
+    bucket: (n) => 'role_' + (n.role || 'Runtime'),
+    isCategorical: true,
+    camera: { alpha: -Math.PI/2.4, beta: Math.PI/3, radius: 18 },
+    legend: 'role palette · TypeSurface/Core/Adapter/Utility/Runtime/Support',
+  },
+  battletested: {
+    label: 'Battle-tested',
+    // witness_commits → heat. C_max=600 normalize (svelte max ~611).
+    bucket: (n) => {
+      const c = n.witness_commits || 0;
+      const t = Math.min(1, c / 600);
+      return 'heat_' + Math.round(t * 15);
+    },
+    isCategorical: false,
+    colorForBucket: (idx) => threeHeatColor(idx / 15),
+    camera: { alpha: -Math.PI/2.4, beta: Math.PI/3, radius: 18 },
+    legend: 'commits touching · soğuk=few, sıcak=many (battle-tested)',
+  },
+  risk: {
+    label: 'Risk',
+    // composite risk total (computeRiskBreakdown) → green-red. Yüksek=kırmızı.
+    bucket: (n) => {
+      const vs = getVisionState ? getVisionState() : { evaluable: false };
+      const theta = vs.evaluable ? computeRiskBreakdownTheta(n) : 0;
+      const { total } = computeRiskBreakdown(theta, n);
+      return 'gr_' + Math.round(total * 15);
+    },
+    isCategorical: false,
+    colorForBucket: (idx) => threeGreenRedColor(idx / 15),
+    camera: { alpha: -Math.PI/2, beta: 0.01, radius: 22 }, // top-down
+    legend: 'composite risk · yeşil=düşük (stable), kırmızı=yüksek (speculative)',
+  },
+  ownership: {
+    label: 'Ownership',
+    // witness_ownership → green-red. 0=shared(yeşil), 1=solo(kırmızı).
+    bucket: (n) => {
+      const o = n.witness_ownership != null ? n.witness_ownership : 0.5;
+      return 'gr_' + Math.round(o * 15);
+    },
+    isCategorical: false,
+    colorForBucket: (idx) => threeGreenRedColor(idx / 15),
+    camera: { alpha: -Math.PI/2.4, beta: Math.PI/3, radius: 18 },
+    legend: 'ownership · yeşil=shared, kırmızı=solo (bus-factor risk)',
+  },
+  runtime: {
+    label: 'Instability',
+    // instability → green-red. 0=stable(yeşil), 1=rigid(kırmızı).
+    bucket: (n) => {
+      const i = n.instability != null ? n.instability : 0.5;
+      return 'gr_' + Math.round(i * 15);
+    },
+    isCategorical: false,
+    colorForBucket: (idx) => threeGreenRedColor(idx / 15),
+    camera: { alpha: 0, beta: 0.01, radius: 22 }, // side view (YZ)
+    legend: 'instability (Martin I) · yeşil=stable, kırmızı=rigid',
+  },
+};
+
 // [0,1] metrik → [-RANGE, RANGE] 3D koordinat. RANGE=5 (orbit kamera için rahat).
 const THREE_RANGE = 5;
 const metricToAxis = v => {
@@ -2291,6 +2404,7 @@ function init3D() {
     hemi.intensity = 0.7;
 
     draw3DAxes(threeScene);
+    draw3DSpace(threeScene); // grid + ticks + bounding cube + origin (uzay algısı)
 
     // Render loop.
     threeEngine.runRenderLoop(() => threeScene.render());
@@ -2312,19 +2426,19 @@ function init3D() {
 }
 
 /// render3D — analysisData'dan node'ları InstancedMesh olarak sahnele.
-/// Sabit eksen: X=coupling, Y=cohesion, Z=instability. role=color, mass=size.
+/// Sabit eksen: X=coupling, Y=cohesion, Z=instability. mass=size. Renk = lens.
 ///
-/// **Color yaklaşımı:** role bazlı material havuzu. registerInstancedBuffer('color')
-/// StandardMaterial tarafından otomatik okunmuyor (node'lar siyah çıkıyordu);
-/// yerine her role için 1 material (toplam 8: 7 role + placeholder gri), her
-/// instance kendi role material'ını paylaşır. 3448 instance ~8 material → draw
-/// call yine az. Bu `setColor`/instancedBuffer tuzağını doğrudan aşar.
+/// **Color yaklaşımı:** lens bazlı template havuzu. Categorical lens (architecture)
+/// → role-per-template; continuous lens (risk/ownership/runtime/battletested)
+/// → quantized bucket template (16 bucket gradient). InstancedMesh source mesh'in
+/// material'ını miras alır → role-per-template = kesin doğru renk (registerInstancedBuffer
+/// StandardMaterial'da çalışmıyordu, material override güvenilir değildi).
 function render3D() {
   if (!threeInit || !analysisData) return;
   const nodes = analysisData.space.nodes;
   document.getElementById('threeNodeCount').textContent = nodes.length;
 
-  // Eski template mesh'leri + instanceları temizle (re-analyze).
+  // Eski template mesh'leri + instanceları temizle.
   if (threeTemplates) {
     for (const t of Object.values(threeTemplates)) t.dispose();
     threeTemplates = null;
@@ -2335,43 +2449,9 @@ function render3D() {
 
   if (nodes.length === 0) return;
 
-  // Role başına ayrı template mesh — her template'in KENDİ material'ı var.
-  // InstancedMesh source mesh'in material'ını kullanır (material override
-  // güvenilir değil), bu yüzden role başına template = kesin doğru renk.
-  // 7 role + 1 placeholder = 8 template; 3448 instance bu 8 template'ten gelir.
-  const makeMat = (name, color3, emissiveBoost) => {
-    const m = new BABYLON.StandardMaterial(name, threeScene);
-    m.diffuseColor = color3;
-    m.emissiveColor = color3.scale(emissiveBoost); // karanlık sahnede parlaklık
-    m.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
-    return m;
-  };
-  const makeTemplate = (key, color3, boost) => {
-    const t = BABYLON.MeshBuilder.CreateSphere('tpl_' + key, {
-      diameter: 1, segments: 8, updatable: false,
-    }, threeScene);
-    t.isVisible = false; // sadece instancelar görünür
-    t.doNotSyncBoundingInfo = true;
-    t.material = makeMat('mat_' + key, color3, boost);
-    t.isPickable = true;
-    return t;
-  };
-
-  threeTemplates = {};
-  for (const [role, hex] of Object.entries(threeRolePalette)) {
-    threeTemplates[role] = makeTemplate(role, BABYLON.Color3.FromHexString(hex), 0.6);
-  }
-  // Placeholder cohesion: AYRI gri template YAPMA — bu tüm node'ları gri yapıyordu
-  // (svelte SCIP'siz → hepsi placeholder → hepsi gri). Yerine role rengi korunur;
-  // placeholder sadece emissive boost düşük (sönük) için dim template.
-  // 2D'deki hollow stroke mantığı: renk değişmez, sadece belirginlik azalır.
-  for (const [role, hex] of Object.entries(threeRolePalette)) {
-    threeTemplates['__ph_' + role] = makeTemplate(
-      'ph_' + role, BABYLON.Color3.FromHexString(hex), 0.25 // sönük emissive
-    );
-  }
-  // Default (role yok / null) → Runtime template.
-  threeNodeMesh = threeTemplates.Runtime; // dispose referansı için
+  // Lens'in template havuzunu kur (categorical vs continuous).
+  threeTemplates = build3DTemplatePool(threeActiveLens);
+  threeNodeMesh = Object.values(threeTemplates)[0] || null; // dispose referansı
 
   // Mass → size scale (2D size() ile aynı sqrt oran, ama 3D için küçült).
   const maxMass = Math.max(1, ...nodes.map(n => n.mass || 0));
@@ -2381,6 +2461,7 @@ function render3D() {
   };
 
   threeNodeData = nodes;
+  const lens = THREE_LENSES[threeActiveLens] || THREE_LENSES.architecture;
 
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
@@ -2389,12 +2470,16 @@ function render3D() {
     const z = metricToAxis(n.instability);
     const s = massToScale(n.mass);
 
-    // Template seçimi: placeholder cohesion → sönük role template'i (__ph_<role>),
-    // yoksa normal role template'i. Renk her zaman role (gri DEĞİL).
-    const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
-    const role = n.role || 'Runtime';
-    const tplKey = isPlaceholder ? ('__ph_' + role) : role;
-    const tpl = threeTemplates[tplKey] || threeTemplates.Runtime;
+    // Template seçimi: lens bucket fonksiyonu → bucket key → template.
+    let bucketKey;
+    if (lens.isCategorical) {
+      // Architecture: role + placeholder dim variant.
+      const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
+      bucketKey = (isPlaceholder ? '__ph_' : '') + lens.bucket(n);
+    } else {
+      bucketKey = lens.bucket(n);
+    }
+    const tpl = threeTemplates[bucketKey] || Object.values(threeTemplates)[0];
 
     const inst = tpl.createInstance('node_' + i);
     inst.position.set(x, y, z);
@@ -2418,13 +2503,120 @@ function fit3DCameraToNodes(nodes) {
   threeDefaultCameraTarget = BABYLON.Vector3.Zero();
 }
 
-/// reset3DCamera — kullanıcı butonu.
+/// reset3DCamera — kullanıcı butonu. Aktif lens'in camera preset'ine döner.
 function reset3DCamera() {
   if (!threeCamera) return;
-  threeCamera.setTarget(threeDefaultCameraTarget || BABYLON.Vector3.Zero());
-  threeCamera.radius = 18;
-  threeCamera.alpha = -Math.PI / 2.4;
-  threeCamera.beta = Math.PI / 3;
+  const lens = THREE_LENSES[threeActiveLens] || THREE_LENSES.architecture;
+  threeCamera.setTarget(BABYLON.Vector3.Zero());
+  animate3DCamera(lens.camera);
+}
+
+/// build3DTemplatePool — lens için template mesh havuzu kur.
+/// Categorical (architecture) → role-per-template + dim placeholder variantları.
+/// Continuous (risk/ownership/runtime/battletested) → 16 quantized bucket gradient.
+function build3DTemplatePool(lensKey) {
+  const lens = THREE_LENSES[lensKey] || THREE_LENSES.architecture;
+  const makeMat = (name, color3, emissiveBoost, opts) => {
+    const m = new BABYLON.StandardMaterial(name, threeScene);
+    m.diffuseColor = color3;
+    m.emissiveColor = color3.scale(emissiveBoost);
+    m.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+    // Material differentiation (architecture lens) — renk körü erişilebilirlik:
+    // yorum önerisi: Core=mat, Runtime=metallic, Support=glass, TypeSurface=emissive.
+    if (opts && opts.metallic) { m.specularColor = new BABYLON.Color3(0.6,0.6,0.6); m.specularPower = 128; }
+    if (opts && opts.alpha != null) { m.alpha = opts.alpha; }
+    return m;
+  };
+  const makeTemplate = (key, color3, boost, opts) => {
+    const t = BABYLON.MeshBuilder.CreateSphere('tpl_' + key, {
+      diameter: 1, segments: 8, updatable: false,
+    }, threeScene);
+    t.isVisible = false;
+    t.doNotSyncBoundingInfo = true;
+    t.material = makeMat('mat_' + key, color3, boost, opts);
+    t.isPickable = true;
+    return t;
+  };
+
+  const pool = {};
+  if (lens.isCategorical) {
+    // Architecture: role-per-template. Material differentiation per role.
+    const matOpts = {
+      TypeSurface: { }, // high emissive boost (parlar)
+      Core: { metallic: true }, // mat-metallic
+      Runtime: { metallic: true }, // metallic
+      Support: { alpha: 0.75 }, // glass (yarı saydam)
+      Adapter: { }, // mat
+      Utility: { }, // mat
+      Unknown: { },
+    };
+    for (const [role, hex] of Object.entries(threeRolePalette)) {
+      const boost = role === 'TypeSurface' ? 0.9 : 0.6;
+      pool['role_' + role] = makeTemplate('role_' + role, BABYLON.Color3.FromHexString(hex), boost, matOpts[role]);
+      // Dim placeholder variant (sönük emissive, role rengi korunur).
+      pool['__ph_role_' + role] = makeTemplate('__ph_role_' + role, BABYLON.Color3.FromHexString(hex), 0.25);
+    }
+  } else {
+    // Continuous lens: 16 bucket gradient (heat veya green-red).
+    // Her iki bucket prefix (heat_/gr_) için template oluştur — lens hangisini
+    // kullanırsa kullansın havuzu dolu. colorForBucket index (0-15) alır.
+    for (let b = 0; b <= 15; b++) {
+      const c = lens.colorForBucket(b);
+      pool['heat_' + b] = makeTemplate('heat_' + b, c, 0.55);
+      pool['gr_' + b] = makeTemplate('gr_' + b, c, 0.55);
+    }
+  }
+  return pool;
+}
+
+/// computeRiskBreakdownTheta — bir node için vision θ hesapla (risk lens için).
+/// 2D render'daki ile aynı formül: roleVision deltas / sqrt(3).
+function computeRiskBreakdownTheta(n) {
+  if (typeof getVisionState !== 'function' || typeof roleVision !== 'function') return 0;
+  const vs = getVisionState();
+  if (!vs.evaluable) return 0;
+  const gv = readGlobalVision();
+  const rv = roleVision(n.role || 'Runtime', gv.x, gv.y, gv.z);
+  const dx = (n.coupling != null ? n.coupling : 0.5) - rv.x;
+  const dy = (n.cohesion != null ? n.cohesion : 0.5) - rv.y;
+  const dz = (n.instability != null ? n.instability : 0.5) - rv.z;
+  return Math.sqrt(dx*dx + dy*dy + dz*dz) / Math.sqrt(3);
+}
+
+/// apply3DLens — lens değiştir: color mapping rebuild + camera preset + legend.
+/// Eksen SABİT; sadece renk + kamera açısı değişir.
+function apply3DLens(lensKey) {
+  if (!THREE_LENSES[lensKey]) return;
+  threeActiveLens = lensKey;
+  // Button bar active state güncelle.
+  document.querySelectorAll('#threeLensBar .lens-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.lens === lensKey);
+  });
+  // Legend güncelle.
+  const legendEl = document.getElementById('threeLensLegend');
+  if (legendEl) legendEl.textContent = THREE_LENSES[lensKey].legend;
+  // Node'ları yeniden sahnele (yeni lens template havuzu ile).
+  if (analysisData) render3D();
+  // Kamera preset — smooth animasyon.
+  animate3DCamera(THREE_LENSES[lensKey].camera);
+}
+
+/// animate3DCamera — kamera alpha/beta/radius smooth geçiş (Babylon Animation).
+/// Jump yerine ease (CAD araç hissi). beta=0 (top-down) edge case: beta min clamp.
+function animate3DCamera(preset) {
+  if (!threeCamera) return;
+  const ease = new BABYLON.CubicEase();
+  ease.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEINOUT);
+  const anim = (prop, target) => {
+    BABYLON.Animation.CreateAndStartAnimation(
+      'cam_' + prop, threeCamera, prop, 30, 20,
+      threeCamera[prop], target, 0, ease
+    );
+  };
+  anim('alpha', preset.alpha);
+  anim('beta', Math.max(0.05, preset.beta)); // beta=0 tam top-down sorunlu, clamp
+  anim('radius', preset.radius);
+  threeCamera.setTarget(BABYLON.Vector3.Zero());
 }
 
 /// 3 eksen çiz + label'la. X=coupling (kırmızı), Y=cohesion (yeşil), Z=instability (sarı).
@@ -2474,6 +2666,60 @@ function draw3DAxes(scene) {
   mkLabel('coupling', new BABYLON.Vector3(axLen + 1, 0, 0), '#f85149');
   mkLabel('cohesion', new BABYLON.Vector3(0, axLen + 1, 0), '#3fb950');
   mkLabel('instability', new BABYLON.Vector3(0, 0, axLen + 1), '#d29922');
+}
+
+/// draw3DSpace — uzay algısı: grid + tick marks + bounding cube + origin.
+/// Yorumun "uzayı yaşat" önerisi. Boş uzayı doldurur → node konum okunurluğu artar.
+/// Tüm elementler isPickable=false (node picking'i bozmaz).
+function draw3DSpace(scene) {
+  const R = THREE_RANGE;
+  // ── Bounding cube (wireframe) — uzay sınırları [-R,R]³.
+  const cube = BABYLON.MeshBuilder.CreateBox('boundCube', { size: R * 2 }, scene);
+  cube.position = BABYLON.Vector3.Zero();
+  cube.isPickable = false;
+  const cubeMat = new BABYLON.StandardMaterial('boundCubeMat', scene);
+  cubeMat.wireframe = true;
+  cubeMat.emissiveColor = new BABYLON.Color3(0.19, 0.21, 0.24); // #30363d
+  cubeMat.disableLighting = true;
+  cube.material = cubeMat;
+
+  // ── Grid (XZ zemin plane) — [-R,R] arası 1.0'luk grid, çok sönük.
+  // 0.5'lik değil 1.0'lık (5x5=25 cell, az çizgi). metricToAxis(0/0.2/.../1) ile uyumlu:
+  // 0→-5, 0.2→-3, 0.4→-1, 0.5→0, 0.6→+1, 0.8→+3, 1→+5. Tick'ler bu noktalarda.
+  const gridPts = [];
+  for (let i = -R; i <= R; i += 1) {
+    gridPts.push([new BABYLON.Vector3(i, -R, -R), new BABYLON.Vector3(i, -R, R)]); // X-parallel
+    gridPts.push([new BABYLON.Vector3(-R, -R, i), new BABYLON.Vector3(R, -R, i)]); // Z-parallel
+  }
+  const grid = BABYLON.MeshBuilder.CreateLineSystem('grid', { lines: gridPts }, scene);
+  grid.color = new BABYLON.Color3(0.09, 0.11, 0.13); // #161b22 çok sönük
+  grid.isPickable = false;
+  grid.alpha = 0.5;
+
+  // ── Tick marks (her eksende 0.2/0.4/0.6/0.8 — 0 ve 1.0 eksen uçlarında).
+  // metricToAxis değerlerinde kısa line + label.
+  const tickVals = [0.2, 0.4, 0.6, 0.8];
+  const mkTick = (axis, val, color) => {
+    const pos = (val - 0.5) * 2 * R;
+    let p1, p2;
+    const tickLen = 0.3;
+    if (axis === 'x') { p1 = new BABYLON.Vector3(pos, -R, -R); p2 = new BABYLON.Vector3(pos, -R + tickLen, -R); }
+    else if (axis === 'y') { p1 = new BABYLON.Vector3(-R, pos, -R); p2 = new BABYLON.Vector3(-R + tickLen, pos, -R); }
+    else { p1 = new BABYLON.Vector3(-R, -R, pos); p2 = new BABYLON.Vector3(-R + tickLen, -R, pos); }
+    const ln = BABYLON.MeshBuilder.CreateLines('tick_' + axis + '_' + val, { points: [p1, p2] }, scene);
+    ln.color = BABYLON.Color3.FromHexString(color);
+    ln.isPickable = false;
+  };
+  tickVals.forEach(v => { mkTick('x', v, '#f85149'); mkTick('y', v, '#3fb950'); mkTick('z', v, '#d29922'); });
+
+  // ── Origin — beyaz küre (uzayın merkezi, metricToAxis(0.5) = origin).
+  const origin = BABYLON.MeshBuilder.CreateSphere('origin', { diameter: 0.35, segments: 12 }, scene);
+  origin.position = BABYLON.Vector3.Zero();
+  origin.isPickable = false;
+  const originMat = new BABYLON.StandardMaterial('originMat', scene);
+  originMat.emissiveColor = new BABYLON.Color3(1, 1, 1);
+  originMat.disableLighting = true;
+  origin.material = originMat;
 }
 
 /// Picking + hover setup. Thin instance picking → pickedInstance = index.
