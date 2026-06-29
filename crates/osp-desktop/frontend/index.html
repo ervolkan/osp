@@ -1174,8 +1174,9 @@ function renderSidebar(data) {
     <div class="metric"><span class="label">SCIP status</span><span class="value">${scipBadge}</span></div>
     <div class="metric"><span class="label">Files total</span><span class="value">${c.files_total}</span></div>
     <div class="metric"><span class="label">SCIP indexed</span><span class="value">${c.files_with_scip}</span></div>
-    <div class="metric"><span class="label">Coverage</span><span class="value">${(c.coverage_ratio * 100).toFixed(1)}%</span></div>
+    <div class="metric"><span class="label">SCIP coverage</span><span class="value">${(c.coverage_ratio * 100).toFixed(1)}%</span></div>
     <div class="metric"><span class="label">Classes</span><span class="value">${c.classes_total}</span></div>
+    ${c.coverage_ratio < 0.3 && scipActive ? '<div class="metric" style="font-size:10px;color:#8b949e;"><span class="label">SCIP coverage = semantic index kapsamı (LCOM4 cohesion için). Test coverage değil. Düşükse çoğu dosya placeholder cohesion.</span></div>' : ''}
     ${!scipActive ? '<div class="metric" style="font-size:11px;color:#8b949e;"><span class="label">No --scip index provided; re-analyze with a SCIP index for LCOM4 cohesion + class semantics.</span></div>' : ''}`;
   // Confidence panel — toplanmış epistemik durum (Structural/SCIP/Cohesion/Vision).
   // Değerlendirmenin "kullanıcı sistemin ne kadar güvenilir olduğunu tek yerde görmeli" önerisi.
