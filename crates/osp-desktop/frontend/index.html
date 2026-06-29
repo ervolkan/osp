@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OSP Desktop</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<!-- Babylon.js — 3D Architecture visualization (roadmap #8). Oyun motoru seviyesi
+     yetenek: GPU instancing/thin instances, picking, gizmo, WebGPU. Vizyon:
+     "3D Architecture IDE" — sadece grafik değil, gezilebilir mimari uzay.
+     D3 (2D topology) korunur; 3D ayrı "3D View" tab'inde. -->
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; height: 100vh; display: flex; flex-direction: column; }
@@ -114,6 +119,27 @@
   .hallucination-card .hmsg { color: #c9d1d9; font-size: 13px; margin-top: 8px; }
   .commit-success { padding: 20px; background: #0d2818; border: 1px solid #3fb950; border-radius: 8px; text-align: center; margin-top: 20px; }
   .commit-success .outcome { color: #3fb950; font-size: 20px; font-weight: 700; }
+  /* 3D View (Babylon.js) — roadmap #8 Aşama 1. "3D Architecture IDE" vizyonu.
+     Sabit mimari uzay: X=coupling, Y=cohesion, Z=instability. Canvas full-bleed,
+     controls overlay üstte, hover tooltip cursor'u takip eder. */
+  #panel-threed { display: none; }
+  #panel-threed.active { display: block; }
+  .threed-container { position: relative; width: 100%; height: calc(100vh - 110px); background: #010409; }
+  #babylonCanvas { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+  #threedControls { position: absolute; top: 16px; left: 16px; background: rgba(13,17,23,0.9); border: 1px solid #30363d; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #8b949e; backdrop-filter: blur(6px); max-width: 280px; }
+  #threedControls .ctrl-title { color: #58a6ff; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  #threedControls .ctrl-row { display: flex; justify-content: space-between; margin: 4px 0; }
+  #threedControls .ctrl-row .k { color: #8b949e; }
+  #threedControls .ctrl-row .v { color: #c9d1d9; font-family: monospace; }
+  #threedControls .ctrl-btn { margin-top: 8px; padding: 4px 10px; background: #21262d; border: 1px solid #30363d; color: #c9d1d9; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  #threedControls .ctrl-btn:hover { background: #30363d; }
+  #threedControls .ctrl-hint { margin-top: 8px; font-size: 10px; color: #6e7681; line-height: 1.4; }
+  #threedHoverTooltip { position: absolute; pointer-events: none; background: rgba(13,17,23,0.95); border: 1px solid #58a6ff; border-radius: 4px; padding: 8px 10px; font-size: 11px; color: #c9d1d9; display: none; z-index: 10; max-width: 280px; }
+  #threedHoverTooltip .tt-id { color: #58a6ff; font-weight: 700; }
+  #threedHoverTooltip .tt-role { font-size: 10px; }
+  #threedHoverTooltip .tt-path { color: #8b949e; font-size: 10px; word-break: break-all; }
+  #threedLoading { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #58a6ff; font-size: 14px; }
+  #threedError { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); color: #f85149; font-size: 13px; max-width: 400px; text-align: center; padding: 20px; background: rgba(45,27,27,0.9); border: 1px solid #f85149; border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -136,6 +162,7 @@
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('topology')">Space Topology</div>
+  <div class="tab" onclick="switchTab('threed')">3D View</div>
   <div class="tab" onclick="switchTab('vision')">Vision Editor</div>
     <div class="tab" onclick="switchTab('witness')">Witness Dashboard</div>
     <div class="tab" onclick="switchTab('pipeline')">Commit Pipeline</div>
@@ -198,6 +225,31 @@
       <h3 class="section-toggle" id="inspectorToggle" onclick="toggleSection(this)" style="display:none;">▾ Node Inspector</h3>
       <div class="section-body" id="nodeInspector"><div class="metric"><span class="label">Click a node to inspect</span></div></div>
     </div>
+  </div>
+</div>
+
+<!-- ═══ Panel: 3D View (Babylon.js) — roadmap #8 Aşama 1 ═══ -->
+<!-- "3D Architecture IDE" vizyonu. Sabit mimari uzay: X=coupling, Y=cohesion,
+     Z=instability. Node'lar thin instances (GPU), role=color, mass=size.
+     Edge'ler Aşama 2'de. Lens dropdown Aşama 2'de (Architecture sabit şimdi). -->
+<div class="panel" id="panel-threed">
+  <div class="threed-container">
+    <canvas id="babylonCanvas"></canvas>
+    <div id="threedControls">
+      <div class="ctrl-title">3D Architecture Space</div>
+      <div class="ctrl-row"><span class="k">X axis</span><span class="v">coupling</span></div>
+      <div class="ctrl-row"><span class="k">Y axis</span><span class="v">cohesion</span></div>
+      <div class="ctrl-row"><span class="k">Z axis</span><span class="v">instability</span></div>
+      <div class="ctrl-row"><span class="k">Color</span><span class="v">role</span></div>
+      <div class="ctrl-row"><span class="k">Size</span><span class="v">mass (LOC)</span></div>
+      <div class="ctrl-row"><span class="k">Lens</span><span class="v">Architecture</span></div>
+      <div class="ctrl-row"><span class="k">Nodes</span><span class="v" id="threeNodeCount">—</span></div>
+      <button class="ctrl-btn" onclick="reset3DCamera()">Reset camera</button>
+      <div class="ctrl-hint">Drag = orbit · Scroll = zoom · Right-drag = pan · Click node = inspect</div>
+    </div>
+    <div id="threedHoverTooltip"></div>
+    <div id="threedLoading">Initializing 3D engine…</div>
+    <div id="threedError" style="display:none;"></div>
   </div>
 </div>
 
@@ -325,6 +377,7 @@ function switchTab(name) {
   document.getElementById('panel-' + name).classList.add('active');
   if (name === 'vision') loadVisionConfig();
   if (name === 'witness') loadWitnessData();
+  if (name === 'threed') init3D(); // lazy — canvas/engine ilk açılışta
 }
 
 // #4: Collapsible section toggle. Review'in "sağ panel çok yoğun" önerisi.
@@ -2162,6 +2215,291 @@ function loadSnapshot(event) {
   // Reset input so the same file can be selected again
   event.target.value = '';
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3D View (Babylon.js) — roadmap #8 Aşama 1. "3D Architecture IDE" vizyonu.
+//
+// Sabit mimari uzay: X=coupling, Y=cohesion, Z=instability ∈ [0,1] → [-5,5].
+// Node'lar Thin Instances (GPU instancing) — 3448 node'da akıcı. role=color,
+// mass=size, cohesion_source=placeholder→wireframe. Picking → showNodeInspector
+// (2D click handler ile aynı). Hover → tooltip (2D tooltip ile aynı içerik).
+//
+// Aşama 1'de YOK: lens dropdown (Architecture sabit), edge rendering, pulse
+// animation, neighbor highlight. Aşama 2+ için temel.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let threeEngine = null;
+let threeScene = null;
+let threeCamera = null;
+let threeInit = false; // engine/scene kuruldu mu (init3D bir kez)
+let threeNodeMesh = null; // thin instances node mesh
+let threeNodeData = []; // render sırasındaki node'lar (picking için index→node)
+let threeDefaultCameraTarget = null;
+
+// rolePalette — 2D render() ile aynı (line 1310). Single source of truth değil
+// ama Aşama 1'de inline kopya; refactor Aşama 2'de (modüler frontend migration).
+const threeRolePalette = {
+  TypeSurface: '#a371f7', Core: '#58a6ff', Runtime: '#8b949e',
+  Adapter: '#f0883e', Utility: '#3fb950', Support: '#d29922', Unknown: '#6e7681',
+};
+
+// [0,1] metrik → [-RANGE, RANGE] 3D koordinat. RANGE=5 (orbit kamera için rahat).
+const THREE_RANGE = 5;
+const metricToAxis = v => {
+  const val = (v != null && !Number.isNaN(v)) ? v : 0.5; // None/NaN → 0.5 fallback
+  return (val - 0.5) * 2 * THREE_RANGE; // 0→-5, 0.5→0, 1→+5
+};
+
+/// init3D — Babylon engine + scene + camera kur (bir kez). Lazy: switchTab('threed').
+function init3D() {
+  if (threeInit) {
+    // Engine kurulu — analysisData varsa (re)render, yoksa bekle.
+    if (analysisData) render3D();
+    return;
+  }
+  const canvas = document.getElementById('babylonCanvas');
+  const loadingEl = document.getElementById('threedLoading');
+  const errorEl = document.getElementById('threedError');
+
+  if (typeof BABYLON === 'undefined') {
+    loadingEl.style.display = 'none';
+    errorEl.style.display = 'block';
+    errorEl.textContent = 'Babylon.js yüklenemedi (CDN offline?). İnternet bağlantısını kontrol edin.';
+    return;
+  }
+
+  try {
+    threeEngine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+    threeScene = new BABYLON.Scene(threeEngine);
+    threeScene.clearColor = new BABYLON.Color4(0.004, 0.015, 0.035, 1); // #010409
+
+    // ArcRotateCamera — orbit (drag), zoom (scroll), pan (right-drag).
+    threeCamera = new BABYLON.ArcRotateCamera(
+      'camera', -Math.PI / 2.4, Math.PI / 3, 18,
+      BABYLON.Vector3.Zero(), threeScene
+    );
+    threeCamera.attachControl(canvas, true);
+    threeCamera.lowerRadiusLimit = 4;
+    threeCamera.upperRadiusLimit = 60;
+    threeCamera.wheelDeltaPercentage = 0.01;
+    threeDefaultCameraTarget = threeCamera.target.clone();
+
+    // Lighting — hemispheric (point cloud için yeterli, düşük maliyetli).
+    const hemi = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), threeScene);
+    hemi.intensity = 0.7;
+
+    draw3DAxes(threeScene);
+
+    // Render loop.
+    threeEngine.runRenderLoop(() => threeScene.render());
+    window.addEventListener('resize', () => threeEngine.resize());
+
+    // Picking + hover.
+    setup3DPicking(canvas);
+
+    threeInit = true;
+    loadingEl.style.display = 'none';
+
+    if (analysisData) render3D();
+  } catch (e) {
+    loadingEl.style.display = 'none';
+    errorEl.style.display = 'block';
+    errorEl.textContent = '3D engine hatası: ' + (e && e.message ? e.message : e);
+    console.error('[3D init]', e);
+  }
+}
+
+/// render3D — analysisData'dan node'ları thin instances olarak sahnele.
+/// Sabit eksen: X=coupling, Y=cohesion, Z=instability. role=color, mass=size.
+function render3D() {
+  if (!threeInit || !analysisData) return;
+  const nodes = analysisData.space.nodes;
+  document.getElementById('threeNodeCount').textContent = nodes.length;
+
+  // Eski node mesh'i temizle (re-analyze).
+  if (threeNodeMesh) { threeNodeMesh.dispose(); threeNodeMesh = null; }
+  threeNodeData = [];
+
+  if (nodes.length === 0) return;
+
+  // Template sphere — thin instances bunu çoğaltır. Düşük-poly (8 segments)
+  // performans için; node'lar küçük görünecek.
+  const template = BABYLON.MeshBuilder.CreateSphere('nodeTemplate', {
+    diameter: 1, segments: 8, updatable: false,
+  }, threeScene);
+  template.isVisible = false; // sadece instance'lar görünür
+
+  // Material — vertex color (her instance kendi rengini taşır).
+  const mat = new BABYLON.StandardMaterial('nodeMat', threeScene);
+  mat.diffuseColor = BABYLON.Color3.White();
+  mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+  template.material = mat;
+
+  // Mass → size scale (2D size() ile aynı sqrt oran, ama 3D için küçült).
+  const maxMass = Math.max(1, ...nodes.map(n => n.mass || 0));
+  const massToScale = m => {
+    const t = Math.sqrt(Math.max(0, m || 0) / maxMass); // sqrt → area-proportional
+    return 0.08 + t * 0.35; // [0.08, 0.43]
+  };
+
+  // Thin instances build.
+  const matrices = new Float32Array(nodes.length * 16);
+  const colors = new Float32Array(nodes.length * 4);
+  threeNodeData = nodes;
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    const x = metricToAxis(n.coupling);
+    const y = metricToAxis(n.cohesion);
+    const z = metricToAxis(n.instability);
+    const s = massToScale(n.mass);
+
+    const scale = BABYLON.Matrix.Scaling(s, s, s);
+    const trans = BABYLON.Matrix.Translation(x, y, z);
+    const m = scale.multiply(trans);
+    m.copyToArray(matrices, i * 16);
+
+    // Color: role palette → RGB.
+    const hex = threeRolePalette[n.role || 'Runtime'] || threeRolePalette.Runtime;
+    const c = BABYLON.Color3.FromHexString(hex);
+    colors[i * 4] = c.r; colors[i * 4 + 1] = c.g; colors[i * 4 + 2] = c.b;
+
+    // Placeholder cohesion → dim alpha (2D hollow karşılığı).
+    const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
+    colors[i * 4 + 3] = isPlaceholder ? 0.35 : 0.92;
+  }
+
+  template.thinInstanceSetBuffer('matrix', matrices, 16, true);
+  template.thinInstanceSetBuffer('color', colors, 4, true);
+
+  // Picking için thin instances enabled.
+  template.isPickable = true;
+  threeNodeMesh = template;
+
+  // Kamerayı node cloud'a odakla (ilk render).
+  fit3DCameraToNodes(nodes);
+}
+
+/// Kamerayı node cloud'un merkezine/yakınlığına ayarla.
+function fit3DCameraToNodes(nodes) {
+  if (!nodes.length) return;
+  // Merkez ≈ origin (tüm eksenler [0,1]→[-5,5], orta=0).
+  threeCamera.setTarget(BABYLON.Vector3.Zero());
+  threeCamera.radius = 18;
+  threeCamera.alpha = -Math.PI / 2.4;
+  threeCamera.beta = Math.PI / 3;
+  threeDefaultCameraTarget = BABYLON.Vector3.Zero();
+}
+
+/// reset3DCamera — kullanıcı butonu.
+function reset3DCamera() {
+  if (!threeCamera) return;
+  threeCamera.setTarget(threeDefaultCameraTarget || BABYLON.Vector3.Zero());
+  threeCamera.radius = 18;
+  threeCamera.alpha = -Math.PI / 2.4;
+  threeCamera.beta = Math.PI / 3;
+}
+
+/// 3 eksen çiz + label'la. X=coupling (kırmızı), Y=cohesion (yeşil), Z=instability (sarı).
+function draw3DAxes(scene) {
+  const axLen = THREE_RANGE + 1.5;
+  const mkAxis = (name, dir, color) => {
+    const lines = BABYLON.MeshBuilder.CreateLines(name, {
+      points: [BABYLON.Vector3.Zero(), dir.scale(axLen)],
+    }, scene);
+    lines.color = color;
+    lines.isPickable = false;
+    return lines;
+  };
+  mkAxis('xAxis', new BABYLON.Vector3(1, 0, 0), new BABYLON.Color3(0.9, 0.3, 0.3));
+  mkAxis('yAxis', new BABYLON.Vector3(0, 1, 0), new BABYLON.Color3(0.3, 0.9, 0.4));
+  mkAxis('zAxis', new BABYLON.Vector3(0, 0, 1), new BABYLON.Color3(0.9, 0.8, 0.2));
+  // Negatif eksenler (daha sönük).
+  mkAxis('xAxisNeg', new BABYLON.Vector3(-1, 0, 0), new BABYLON.Color3(0.4, 0.15, 0.15));
+  mkAxis('yAxisNeg', new BABYLON.Vector3(0, -1, 0), new BABYLON.Color3(0.15, 0.4, 0.2));
+  mkAxis('zAxisNeg', new BABYLON.Vector3(0, 0, -1), new BABYLON.Color3(0.4, 0.35, 0.1));
+
+  // Label'lar — plane + texture (basit text). Babylon GUI yok Aşama 1'de;
+  // DynamicTexture ile label plane.
+  const mkLabel = (text, pos, color) => {
+    const dt = new BABYLON.DynamicTexture('lbl_' + text, { width: 256, height: 64 }, scene, false);
+    dt.hasAlpha = true;
+    const ctx = dt.getContext();
+    ctx.clearRect(0, 0, 256, 64);
+    ctx.font = 'bold 28px -apple-system, sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 128, 32);
+    dt.update();
+    const plane = BABYLON.MeshBuilder.CreatePlane('lblplane_' + text, { width: 2, height: 0.5 }, scene);
+    const m = new BABYLON.StandardMaterial('lblmat_' + text, scene);
+    m.diffuseTexture = dt;
+    m.emissiveTexture = dt;
+    m.useAlphaFromDiffuseTexture = true;
+    m.backFaceCulling = false;
+    plane.material = m;
+    plane.position = pos;
+    plane.isPickable = false;
+    plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+    return plane;
+  };
+  mkLabel('coupling', new BABYLON.Vector3(axLen + 1, 0, 0), '#f85149');
+  mkLabel('cohesion', new BABYLON.Vector3(0, axLen + 1, 0), '#3fb950');
+  mkLabel('instability', new BABYLON.Vector3(0, 0, axLen + 1), '#d29922');
+}
+
+/// Picking + hover setup. Thin instance picking → pickedInstance = index.
+function setup3DPicking(canvas) {
+  const tooltip = document.getElementById('threedHoverTooltip');
+
+  threeScene.onPointerObservable.add((info) => {
+    if (!threeNodeMesh || threeNodeData.length === 0) return;
+    const pick = info.pickInfo;
+    if (!pick || !pick.hit || pick.thinInstanceIndex == null || pick.thinInstanceIndex < 0) {
+      tooltip.style.display = 'none';
+      return;
+    }
+    const idx = pick.thinInstanceIndex;
+    const n = threeNodeData[idx];
+    if (!n) { tooltip.style.display = 'none'; return; }
+
+    // Tooltip içeriği — 2D tooltip ile aynı (id/role/path/mass/coupling/cohesion/instability).
+    const role = n.role || 'Runtime';
+    const roleColor = threeRolePalette[role] || '#8b949e';
+    const cohFlag = n.cohesion_source === 'placeholder' ? ' ⚠ placeholder' : '';
+    tooltip.innerHTML = `<div class="tt-id">Node ${n.id}</div>` +
+      `<div class="tt-role" style="color:${roleColor}">[${role}] ${n.classification || ''}</div>` +
+      (n.path ? `<div class="tt-path">${n.path}</div>` : '') +
+      `<div style="margin-top:4px;">mass: ${n.mass} · coupling: ${fmt3(n.coupling)} · cohesion: ${fmt3(n.cohesion)}${cohFlag} · instability: ${fmt3(n.instability)}</div>`;
+    tooltip.style.display = 'block';
+
+    // Tooltip pozisyonu — cursor.
+    const cx = info.event.clientX || 0;
+    const cy = info.event.clientY || 0;
+    tooltip.style.left = (cx + 14) + 'px';
+    tooltip.style.top = (cy - 10) + 'px';
+
+    // Click → showNodeInspector (2D click handler ile aynı).
+    if (info.type === BABYLON.PointerEventTypes.POINTERTAP) {
+      if (typeof showNodeInspector === 'function') showNodeInspector(n);
+    }
+  });
+
+  // Hover-out → tooltip gizle (pointer leave canvas).
+  canvas.addEventListener('pointerleave', () => { tooltip.style.display = 'none'; });
+}
+
+/// fmt3 — null-safe 3-basamak format (2D render ile aynı).
+function fmt3(v) { return v != null ? v.toFixed(3) : '—'; }
+
+// Re-analyze olunca 3D'yi de yenile (doAnalyze sonrası).
+// doAnalyze içinde renderSidebar/render çağrılıyor; 3D açıksa render3D da çağr.
+const _origDoAnalyze = doAnalyze;
+doAnalyze = async function() {
+  await _origDoAnalyze.apply(this, arguments);
+  if (threeInit) render3D();
+};
 </script>
 </body>
 </html>
