@@ -2254,6 +2254,12 @@ let threeTemplates = null; // {roleKey: templateMesh} — role başına ayrı te
 let threeInstances = []; // InstancedMesh[] — picking için pickedMesh → index
 let threeNodeData = []; // render sırasındaki node'lar (picking için index→node)
 let threeDefaultCameraTarget = null;
+// Hover edge state (Aşama 3). Sadece hover'da bağımlılık çizgileri — 4217 edge
+// hepsini çizmek ekranı mahveder. Node id → {index, position} lookup.
+let threeNodeIndex = null; // Map<nodeId, {index, position}>
+let threeHoverNode = null; // şu an hover'daki node (cache — flicker önle)
+let threeHoverEdges = null; // Babylon LineSystem mesh (dispose için)
+let threeHoverMarkers = null; // Babylon Mesh[] — neighbor emissive sphere'ları
 
 // rolePalette — 2D render() ile aynı (line 1310). Single source of truth değil
 // ama Aşama 1'de inline kopya; refactor Aşama 2'de (modüler frontend migration).
@@ -2444,9 +2450,11 @@ function render3D() {
     for (const t of Object.values(threeTemplates)) t.dispose();
     threeTemplates = null;
   }
+  clear3DHover(); // re-render'da hover edge'ler geçersiz (position değişebilir)
   threeInstances = [];
   threeNodeData = [];
   threeNodeMesh = null;
+  threeNodeIndex = null;
 
   if (nodes.length === 0) return;
 
@@ -2489,8 +2497,107 @@ function render3D() {
     threeInstances.push(inst);
   }
 
+  // Node id → {index, position, instance} lookup Map — hover edge için.
+  // edges {from,to} node id kullanır; bu Map ile position'a çeviririz.
+  threeNodeIndex = new Map();
+  for (let i = 0; i < nodes.length; i++) {
+    threeNodeIndex.set(nodes[i].id, { index: i, position: threeInstances[i].position.clone() });
+  }
+
   // Kamerayı node cloud'a odakla (ilk render).
   fit3DCameraToNodes(nodes);
+}
+
+/// clear3DHover — hover edge + marker temizle (hover-out, lens change, re-render).
+function clear3DHover() {
+  if (threeHoverEdges) { threeHoverEdges.dispose(); threeHoverEdges = null; }
+  if (threeHoverMarkers) { threeHoverMarkers.forEach(m => m.dispose()); threeHoverMarkers = null; }
+  threeHoverNode = null;
+}
+
+/// draw3DHoverEdges — picked node'un 1-hop bağımlılık çizgilerini çiz.
+/// Renk ile yön: outgoing (picked→other) = mavi, incoming (other→picked) = turuncu.
+/// Tüm edge'ler + yarı saydam (alpha 0.4) — hub node'larda bile okunaklı.
+/// Neighbor position'larda emissive marker sphere (parıltı).
+function draw3DHoverEdges(nodeId) {
+  clear3DHover();
+  if (!analysisData || !threeNodeIndex) return;
+  const pickedEntry = threeNodeIndex.get(nodeId);
+  if (!pickedEntry) return;
+  const edges = analysisData.space.edges || [];
+  const pickedPos = pickedEntry.position;
+
+  // 1-hop edge'leri topla: picked node'a dokunan her edge.
+  // outgoing = e.from===nodeId (picked→neighbor), incoming = e.to===nodeId.
+  const outPts = [], inPts = []; // [picked, neighbor, picked, neighbor, ...] line pairs
+  const neighborIds = new Set();
+  for (const e of edges) {
+    let otherId = null, isOut = false;
+    if (e.from === nodeId) { otherId = e.to; isOut = true; }
+    else if (e.to === nodeId) { otherId = e.from; isOut = false; }
+    else continue;
+    const otherEntry = threeNodeIndex.get(otherId);
+    if (!otherEntry) continue;
+    neighborIds.add(otherId);
+    if (isOut) { outPts.push(pickedPos, otherEntry.position); }
+    else { inPts.push(pickedPos, otherEntry.position); }
+  }
+
+  // Outgoing edges (mavi) — tek LineSystem.
+  if (outPts.length > 0) {
+    const lines = [];
+    for (let i = 0; i < outPts.length; i += 2) lines.push([outPts[i], outPts[i+1]]);
+    threeHoverEdges = BABYLON.MeshBuilder.CreateLineSystem('hoverOut', { lines, updatable: false }, threeScene);
+    threeHoverEdges.color = new BABYLON.Color3(0.35, 0.65, 1.0); // mavi (outgoing)
+    threeHoverEdges.alpha = 0.65;
+    threeHoverEdges.isPickable = false;
+  }
+  // Incoming edges (turuncu) — ayrı LineSystem (farklı renk).
+  if (inPts.length > 0) {
+    const lines = [];
+    for (let i = 0; i < inPts.length; i += 2) lines.push([inPts[i], inPts[i+1]]);
+    const inMesh = BABYLON.MeshBuilder.CreateLineSystem('hoverIn', { lines, updatable: false }, threeScene);
+    inMesh.color = new BABYLON.Color3(1.0, 0.6, 0.25); // turuncu (incoming)
+    inMesh.alpha = 0.65;
+    inMesh.isPickable = false;
+    // threeHoverEdges tek mesh dispose için; ikisini de takip et.
+    if (threeHoverEdges) {
+      // İkisini birden dispose edebilmek için marker'lara ekle.
+      if (!threeHoverMarkers) threeHoverMarkers = [];
+      threeHoverMarkers.push(inMesh);
+    } else {
+      threeHoverEdges = inMesh;
+    }
+  }
+
+  // Neighbor marker'lar — her neighbor position'da küçük emissive sphere (parıltı).
+  // Çizgi + parıltı = "bağlantı noktası" hissi. picked node beyaz, neighbor'lar sarı.
+  const markers = [];
+  // Picked node marker (beyaz, daha büyük).
+  const pickedMarker = BABYLON.MeshBuilder.CreateSphere('hoverPicked', { diameter: 0.5, segments: 8 }, threeScene);
+  pickedMarker.position = pickedPos.clone();
+  pickedMarker.isPickable = false;
+  const pm = new BABYLON.StandardMaterial('hoverPickedMat', threeScene);
+  pm.emissiveColor = new BABYLON.Color3(1, 1, 1);
+  pm.disableLighting = true;
+  pickedMarker.material = pm;
+  markers.push(pickedMarker);
+  // Neighbor marker'lar (sarı, küçük).
+  for (const nid of neighborIds) {
+    const entry = threeNodeIndex.get(nid);
+    if (!entry) continue;
+    const ms = BABYLON.MeshBuilder.CreateSphere('hoverNeighbor_' + nid, { diameter: 0.3, segments: 6 }, threeScene);
+    ms.position = entry.position.clone();
+    ms.isPickable = false;
+    const mm = new BABYLON.StandardMaterial('hoverNeighborMat_' + nid, threeScene);
+    mm.emissiveColor = new BABYLON.Color3(1.0, 0.85, 0.3); // sarı
+    mm.disableLighting = true;
+    ms.material = mm;
+    markers.push(ms);
+  }
+  if (markers.length > 0) threeHoverMarkers = (threeHoverMarkers || []).concat(markers);
+
+  threeHoverNode = nodeId;
 }
 
 /// Kamerayı node cloud'un merkezine/yakınlığına ayarla.
@@ -2596,6 +2703,8 @@ function apply3DLens(lensKey) {
   // Legend güncelle.
   const legendEl = document.getElementById('threeLensLegend');
   if (legendEl) legendEl.textContent = THREE_LENSES[lensKey].legend;
+  // Hover edge'leri temizle — lens değişince eski position/renk geçersiz.
+  clear3DHover();
   // Node'ları yeniden sahnele (yeni lens template havuzu ile).
   if (analysisData) render3D();
   // Kamera preset — smooth animasyon.
@@ -2733,6 +2842,7 @@ function setup3DPicking(canvas) {
     // InstancedMesh picking: pick.pickedMesh bir InstancedMesh'tir, instanceId verir.
     if (!pick || !pick.hit || !pick.pickedMesh) {
       tooltip.style.display = 'none';
+      clear3DHover(); // node dışına çıkınca edge'leri temizle
       return;
     }
     const picked = pick.pickedMesh;
@@ -2766,14 +2876,23 @@ function setup3DPicking(canvas) {
     tooltip.style.left = (cx + 14) + 'px';
     tooltip.style.top = (cy - 10) + 'px';
 
+    // Hover edge rendering — sadece node değiştiyse rebuild (flicker önle).
+    // Aynı node üzerinde pointermove çok tetiklenir; cache ile 1 kez çiz.
+    if (threeHoverNode !== n.id) {
+      draw3DHoverEdges(n.id);
+    }
+
     // Click → showNodeInspector (2D click handler ile aynı).
     if (info.type === BABYLON.PointerEventTypes.POINTERTAP) {
       if (typeof showNodeInspector === 'function') showNodeInspector(n);
     }
   });
 
-  // Hover-out → tooltip gizle (pointer leave canvas).
-  canvas.addEventListener('pointerleave', () => { tooltip.style.display = 'none'; });
+  // Hover-out → tooltip gizle + edge'leri temizle (pointer leave canvas).
+  canvas.addEventListener('pointerleave', () => {
+    tooltip.style.display = 'none';
+    clear3DHover();
+  });
 }
 
 /// fmt3 — null-safe 3-basamak format (2D render ile aynı).
