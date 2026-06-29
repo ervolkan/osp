@@ -2232,7 +2232,8 @@ let threeEngine = null;
 let threeScene = null;
 let threeCamera = null;
 let threeInit = false; // engine/scene kuruldu mu (init3D bir kez)
-let threeNodeMesh = null; // thin instances node mesh
+let threeNodeMesh = null; // template mesh (InstancedMesh source)
+let threeInstances = []; // InstancedMesh[] — picking için pickedMesh → index
 let threeNodeData = []; // render sırasındaki node'lar (picking için index→node)
 let threeDefaultCameraTarget = null;
 
@@ -2309,43 +2310,54 @@ function init3D() {
   }
 }
 
-/// render3D — analysisData'dan node'ları thin instances olarak sahnele.
+/// render3D — analysisData'dan node'ları InstancedMesh olarak sahnele.
 /// Sabit eksen: X=coupling, Y=cohesion, Z=instability. role=color, mass=size.
+///
+/// InstancedMesh seçildi (thin instances yerine) çünkü: (1) instance color
+/// doğrudan `instance.setColor` ile set edilir — custom color buffer/shader
+/// gerekmez (thin instances'ta color buffer naming sorunuydu, node'lar görünmüyordu);
+/// (2) picking `pickedMesh` + `instanceId` ile güvenilir; (3) Babylon 3448
+/// instance'ı tek draw call'da optimize eder.
 function render3D() {
   if (!threeInit || !analysisData) return;
   const nodes = analysisData.space.nodes;
   document.getElementById('threeNodeCount').textContent = nodes.length;
 
-  // Eski node mesh'i temizle (re-analyze).
+  // Eski node mesh + instanceları temizle (re-analyze).
   if (threeNodeMesh) { threeNodeMesh.dispose(); threeNodeMesh = null; }
+  threeInstances = [];
   threeNodeData = [];
 
   if (nodes.length === 0) return;
 
-  // Template sphere — thin instances bunu çoğaltır. Düşük-poly (8 segments)
-  // performans için; node'lar küçük görünecek.
+  // Template sphere — instanceları bunu çoğaltır. Düşük-poly (8 segments).
   const template = BABYLON.MeshBuilder.CreateSphere('nodeTemplate', {
     diameter: 1, segments: 8, updatable: false,
   }, threeScene);
-  template.isVisible = false; // sadece instance'lar görünür
+  template.isVisible = false; // sadece instancelar görünür
+  template.doNotSyncBoundingInfo = true; // 3448 instance bbox sync önle
 
-  // Material — vertex color (her instance kendi rengini taşır).
+  // Material — instance color materyali geçersiz kılar (Babilon default).
+  // `useVertexColor` false (instance color kullan); diffuse beyaz bırakılır,
+  // her instance kendi rengini `setColor` ile taşır.
   const mat = new BABYLON.StandardMaterial('nodeMat', threeScene);
   mat.diffuseColor = BABYLON.Color3.White();
   mat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+  mat.emissiveColor = new BABYLON.Color3(0.15, 0.15, 0.15); // karanlık sahnede görünür
   template.material = mat;
+  // Instance başına RGBA buffer — her instance instancedBuffers.color set eder.
+  // InstancedMesh'te setColor yoktur; bu Babylon'un resmi instance-color yolu.
+  template.registerInstancedBuffer('color', 4);
 
   // Mass → size scale (2D size() ile aynı sqrt oran, ama 3D için küçült).
   const maxMass = Math.max(1, ...nodes.map(n => n.mass || 0));
   const massToScale = m => {
     const t = Math.sqrt(Math.max(0, m || 0) / maxMass); // sqrt → area-proportional
-    return 0.08 + t * 0.35; // [0.08, 0.43]
+    return 0.12 + t * 0.45; // [0.12, 0.57] — öncekinden biraz büyük (görünürlük)
   };
 
-  // Thin instances build.
-  const matrices = new Float32Array(nodes.length * 16);
-  const colors = new Float32Array(nodes.length * 4);
   threeNodeData = nodes;
+  threeNodeMesh = template;
 
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i];
@@ -2354,27 +2366,25 @@ function render3D() {
     const z = metricToAxis(n.instability);
     const s = massToScale(n.mass);
 
-    const scale = BABYLON.Matrix.Scaling(s, s, s);
-    const trans = BABYLON.Matrix.Translation(x, y, z);
-    const m = scale.multiply(trans);
-    m.copyToArray(matrices, i * 16);
+    const inst = template.createInstance('node_' + i);
+    inst.position.set(x, y, z);
+    inst.scaling.set(s, s, s);
 
-    // Color: role palette → RGB.
-    const hex = threeRolePalette[n.role || 'Runtime'] || threeRolePalette.Runtime;
-    const c = BABYLON.Color3.FromHexString(hex);
-    colors[i * 4] = c.r; colors[i * 4 + 1] = c.g; colors[i * 4 + 2] = c.b;
-
-    // Placeholder cohesion → dim alpha (2D hollow karşılığı).
+    // Color: role palette → instancedBuffer color (RGBA).
     const isPlaceholder = n.cohesion_source === 'placeholder' || n.cohesion_source === 'heuristic';
-    colors[i * 4 + 3] = isPlaceholder ? 0.35 : 0.92;
+    let r, g, b, a;
+    if (isPlaceholder) {
+      r = 0.35; g = 0.4; b = 0.45; a = 0.4; // gri, ölçülmemiş (2D hollow karşılığı)
+    } else {
+      const hex = threeRolePalette[n.role || 'Runtime'] || threeRolePalette.Runtime;
+      const c = BABYLON.Color3.FromHexString(hex);
+      r = c.r; g = c.g; b = c.b; a = 0.95;
+    }
+    inst.instancedBuffers.color = [r, g, b, a];
+
+    inst.isPickable = true;
+    threeInstances.push(inst);
   }
-
-  template.thinInstanceSetBuffer('matrix', matrices, 16, true);
-  template.thinInstanceSetBuffer('color', colors, 4, true);
-
-  // Picking için thin instances enabled.
-  template.isPickable = true;
-  threeNodeMesh = template;
 
   // Kamerayı node cloud'a odakla (ilk render).
   fit3DCameraToNodes(nodes);
@@ -2454,14 +2464,26 @@ function setup3DPicking(canvas) {
   const tooltip = document.getElementById('threedHoverTooltip');
 
   threeScene.onPointerObservable.add((info) => {
-    if (!threeNodeMesh || threeNodeData.length === 0) return;
+    if (!threeNodeMesh || threeNodeData.length === 0 || threeInstances.length === 0) return;
     const pick = info.pickInfo;
-    if (!pick || !pick.hit || pick.thinInstanceIndex == null || pick.thinInstanceIndex < 0) {
+    // InstancedMesh picking: pick.pickedMesh bir InstancedMesh'tir, instanceId verir.
+    if (!pick || !pick.hit || !pick.pickedMesh) {
       tooltip.style.display = 'none';
       return;
     }
-    const idx = pick.thinInstanceIndex;
-    const n = threeNodeData[idx];
+    const picked = pick.pickedMesh;
+    // picked bir InstancedMesh mi? (template değil — template isVisible=false)
+    const idx = threeInstances.indexOf(picked);
+    if (idx < 0) {
+      // picked template'in instancelarından biri ama referans farklı — instanceId fallback.
+      if (typeof picked.instanceId === 'number' && picked.instanceId >= 0 && picked.instanceId < threeNodeData.length) {
+        // indexOf eşleşmedi ama instanceId var — nadiren, güvenli fallback.
+      } else {
+        tooltip.style.display = 'none';
+        return;
+      }
+    }
+    const n = threeNodeData[idx >= 0 ? idx : picked.instanceId];
     if (!n) { tooltip.style.display = 'none'; return; }
 
     // Tooltip içeriği — 2D tooltip ile aynı (id/role/path/mass/coupling/cohesion/instability).
