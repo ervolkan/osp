@@ -6,6 +6,7 @@ members = [
     "crates/osp-analyzer",
     "crates/osp-llm-runtime",
     "crates/osp-desktop",
+    "crates/osp-cli",
 ]
 
 # Gelecek Fazlar:

@@ -1,0 +1,15 @@
+[
+  {
+    "new_nodes": [
+      {
+        "kind": "Module",
+        "initial_mass": 100.0,
+        "connected_to": [[0, "Imports"]]
+      }
+    ],
+    "new_edges": [],
+    "modified_entities": [],
+    "position_hints": [],
+    "reasoning": "mock proposal: add module connected to node 0"
+  }
+]
