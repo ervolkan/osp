@@ -18,6 +18,7 @@ pub mod axes;
 pub mod bigbang;
 pub mod coords;
 pub mod engine;
+pub mod navigator;
 pub mod persistence;
 pub mod rule;
 pub mod space;
