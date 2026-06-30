@@ -300,6 +300,16 @@ pub struct Claim {
     pub computed_raw: RawPosition,
     pub delta_nodes: Vec<Node>,
     pub delta_edges: Vec<Edge>,
+    /// INV-T5 — Trajectory binding. `None` = standalone claim (Paper 1 static flow,
+    /// legacy, baseline analiz). `Some(id)` = trajectory-bound (Q5.b Predicate Gate
+    /// bu claim'i değerlendirir). `#[serde(default)]` ile backward-compat — eski
+    /// snapshot'lar (task_id yok) None ile deserialize olur.
+    ///
+    /// **Q5.b kuralı:** çıplak Claim ile çalışmaz; `bind_task_claim()` ile
+    /// `TaskBoundClaim`'e dönüştürülmeli (INV-T5 — static Claim taskless olabilir,
+    /// ama Q5.b sadece TaskBoundClaim kabul eder).
+    #[serde(default)]
+    pub task_id: Option<crate::trajectory::TaskId>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -383,6 +393,7 @@ mod tests {
             computed_raw: RawPosition::default(),
             delta_nodes: vec![],
             delta_edges: vec![],
+            task_id: None, // standalone (Paper 1 static flow, INV-T5)
         }
     }
 

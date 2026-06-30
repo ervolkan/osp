@@ -761,6 +761,204 @@ fn _placeholder_scope_aggregate() {
     let _ = (NodeKind::Module, EdgeKind::Imports);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Aşama B — TaskResolver + TaskBoundClaim + PredicateGate (Q5.b)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+use crate::witness::Claim;
+
+/// Task lookup abstraction (review v2 — planner'a bulaşmadan task resolve).
+/// Production: gerçek registry (Aşama C planner). Test: `InMemoryTaskRegistry`.
+pub trait TaskResolver {
+    fn resolve(&self, task_id: TaskId) -> Option<&Task>;
+}
+
+/// Test/placeholder TaskResolver — `HashMap<TaskId, Task>`.
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryTaskRegistry {
+    pub tasks: HashMap<TaskId, Task>,
+}
+
+impl InMemoryTaskRegistry {
+    pub fn new() -> Self {
+        Self {
+            tasks: HashMap::new(),
+        }
+    }
+    pub fn insert(&mut self, task: Task) {
+        self.tasks.insert(task.id, task);
+    }
+}
+
+impl TaskResolver for InMemoryTaskRegistry {
+    fn resolve(&self, task_id: TaskId) -> Option<&Task> {
+        self.tasks.get(&task_id)
+    }
+}
+
+/// INV-T5 — Q5.b Predicate Gate'in girdisi. Çıplak `Claim` ile çalışmaz; `bind_task_claim`
+/// ile üretilir. `claim.task_id` Some olmalı + resolver'da task bulunmalı.
+///
+/// **Backward-compat:** static Claim'ler (Paper 1) `task_id: None` ile çalışmaya devam
+/// eder — sadece Q5.b yolu task-bound gerektirir.
+#[derive(Debug, Clone)]
+pub struct TaskBoundClaim<'a> {
+    pub claim: &'a Claim,
+    pub task: &'a Task,
+}
+
+/// `bind_task_claim` hatası — claim task'a bağlanamadı.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingError {
+    /// `claim.task_id` None — standalone claim, Q5.b için task-bound değil.
+    MissingTaskId,
+    /// `claim.task_id` var ama resolver'da bulunamadı.
+    TaskNotFound(TaskId),
+}
+
+impl std::fmt::Display for BindingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BindingError::MissingTaskId => {
+                write!(
+                    f,
+                    "claim has no task_id (standalone — Q5.b requires TaskBoundClaim)"
+                )
+            }
+            BindingError::TaskNotFound(id) => {
+                write!(f, "task_id {id} not found in resolver")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BindingError {}
+
+/// INV-T5 — Claim'i Task'a bağla. `claim.task_id` None → `MissingTaskId`;
+/// resolver'da bulunamazsa → `TaskNotFound`. Başarılırsa `TaskBoundClaim`.
+///
+/// **Q5.b kuralı:** `PredicateGate::evaluate` sadece `TaskBoundClaim` kabul eder —
+/// çıplak Claim ile çağrılamaz (type-level, INV-T5).
+pub fn bind_task_claim<'a>(
+    claim: &'a Claim,
+    resolver: &'a impl TaskResolver,
+) -> Result<TaskBoundClaim<'a>, BindingError> {
+    let task_id = claim.task_id.ok_or(BindingError::MissingTaskId)?;
+    let task = resolver
+        .resolve(task_id)
+        .ok_or(BindingError::TaskNotFound(task_id))?;
+    Ok(TaskBoundClaim { claim, task })
+}
+
+/// Q5.b Predicate Gate — TaskBoundClaim'in predicate_set'ini değerlendirir ve
+/// deterministic `AttemptOutcome` üretir (Aşama B tezi).
+///
+/// **Akış:**
+/// 1. `measured` (engine ölçtü, INV-T3) → `PredicateSet::evaluate_completion` (INV-T4 source)
+/// 2. `Completed` → `AcceptAsCompleted`; `SourceInsufficient` → `Reject` (INV-T4)
+/// 3. `NotCompleted` → loss after hesapla, `is_improved` (INV-T6)
+/// 4. `TaskPolicy.predicate_failure_policy` + improved → `MutationDecision`
+/// 5. `AttemptOutcome { gate_decision: PassedAll, predicate_completion, mutation_decision, witness: None }`
+///
+/// **Not:** Hard gates (Q4/Q5/Q6) zaten geçti varsayılır (gate_decision: PassedAll).
+/// Bu fonksiyon sadece soft gate Q5.b'yi değerlendirir.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PredicateGate;
+
+/// Q5.b değerlendirme girdisi — engine'in ölçtüğü + loss context.
+#[derive(Debug, Clone)]
+pub struct PredicateGateInput<'a> {
+    pub bound: TaskBoundClaim<'a>,
+    /// Engine-measured simulated_after (INV-T3 — agent değiştiremez).
+    pub measured: &'a ProvenancedRawPosition,
+    /// Loss before (mevcut durumun preferred_vector'e uzaklığı).
+    pub loss_before: f64,
+    /// Preferred/target vector (loss & is_improved için).
+    pub target: &'a RawPosition,
+}
+
+/// Q5.b çıktısı — AttemptOutcome + hesaplanan loss_after.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredicateGateOutput {
+    pub outcome: AttemptOutcome,
+    pub loss_after: f64,
+}
+
+impl PredicateGate {
+    /// Q5.b — soft gate. Hard gates (Q4/Q5/Q6) zaten geçti (gate_decision: PassedAll).
+    pub fn evaluate(&self, input: PredicateGateInput<'_>) -> PredicateGateOutput {
+        let policy = &input.bound.task.policy;
+        let loss_after = trajectory_loss(input.measured, input.target);
+
+        // 1. PredicateSet completion (INV-T4 source check dahil).
+        let (predicate_completion, mutation_decision) = match input
+            .bound
+            .task
+            .target_predicate_set
+            .evaluate_completion(input.measured)
+        {
+            PredicateSetResult::Completed => (
+                PredicateCompletion::Completed,
+                MutationDecision::AcceptAsCompleted,
+            ),
+            PredicateSetResult::SourceInsufficient => {
+                // INV-T4 — placeholder/heuristic ile task kapatılamaz. Her zaman Reject.
+                (PredicateCompletion::NotCompleted, MutationDecision::Reject)
+            }
+            PredicateSetResult::NotCompleted => {
+                // 2. INV-T6 — policy'ye göre: improved mı, regressed mi?
+                let improved =
+                    is_improved_loss(input.loss_before, loss_after, input.measured, policy);
+                let completion = PredicateCompletion::NotCompleted;
+                let decision = match policy.predicate_failure_policy {
+                    PredicateFailurePolicy::StrictReject => MutationDecision::Reject,
+                    PredicateFailurePolicy::AcceptImprovement => {
+                        if policy.allow_progress_checkpoint && improved {
+                            MutationDecision::AcceptAsProgress
+                        } else {
+                            MutationDecision::Reject
+                        }
+                    }
+                    PredicateFailurePolicy::OperatorApproval => {
+                        MutationDecision::RequireOperatorApproval
+                    }
+                };
+                (completion, decision)
+            }
+        };
+
+        PredicateGateOutput {
+            outcome: AttemptOutcome {
+                gate_decision: GateDecision::PassedAll,
+                predicate_completion,
+                mutation_decision,
+                witness_status: None,
+            },
+            loss_after,
+        }
+    }
+}
+
+/// INV-T6 — loss-based improved kontrolü. `loss_after < loss_before - min_delta`
+/// AND max_axis_regression aşılmadı. (Aşama A'daki `is_improved`'un loss-input versiyonu.)
+fn is_improved_loss(
+    loss_before: f64,
+    loss_after: f64,
+    measured: &ProvenancedRawPosition,
+    policy: &TaskPolicy,
+) -> bool {
+    if loss_after >= loss_before - policy.min_improvement_delta {
+        return false;
+    }
+    // max_axis_regression: kritik eksenlerde regresyon kontrolü.
+    // measured'da her axis 0..1; regresyon = değerin threshold'u aşması (basit Aşama B;
+    // Aşama C'de before/after karşılaştırması + WeightedPredicate loss).
+    // Şimdilik: hiçbir axis 0.85'i aşmasın (hard cap, refine Aşama C).
+    measured.coupling.value < 0.85
+        && measured.instability.value < 0.85
+        && measured.cohesion.value > 0.15
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1048,5 +1246,253 @@ mod tests {
         let far = measured_pos(0.82, 0.50, 0.60);
         let closer = measured_pos(0.65, 0.60, 0.45);
         assert!(trajectory_loss(&closer, &target) < trajectory_loss(&far, &target));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Aşama B — Q5.b Predicate Gate done-criteria (10 test)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    use crate::coords::RawPosition;
+    use crate::witness::{Claim, Intent};
+
+    fn coupling_pred_le(threshold: f64, req_source: Option<MetricSource>) -> MetricPredicate {
+        MetricPredicate {
+            metric: PredicateAxis::Coupling,
+            operator: ComparisonOp::Le,
+            threshold,
+            scope: PredicateScope::Node(1),
+            required_source: req_source,
+            tolerance: 0.0,
+        }
+    }
+
+    /// Test için task üret — coupling ≤ threshold predicate + policy. Target vector da döner
+    /// (task move edilmeden önce preferred_vector alınmış olur).
+    fn test_task(id: TaskId, threshold: f64, policy: TaskPolicy) -> (Task, RawPosition) {
+        let target = RawPosition {
+            x: threshold,
+            y: 0.7,
+            z: 0.3,
+            w: 0.5,
+            v: 0.3,
+        };
+        let task = Task {
+            id,
+            milestone_id: 1,
+            label: format!("Reduce coupling to {threshold}"),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![WeightedPredicate {
+                    predicate: coupling_pred_le(threshold, Some(MetricSource::Scip)),
+                    weight: None,
+                }],
+                preferred_vector: Some(target),
+            },
+            policy,
+            allowed_operations: vec![OpKind::RemoveImport],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        (task, target)
+    }
+
+    /// Test için claim üret — task_id ile veya None (standalone).
+    fn test_claim(id: u64, task_id: Option<TaskId>, measured: ProvenancedRawPosition) -> Claim {
+        Claim {
+            id,
+            intent: Intent::new(42, measured.to_raw()),
+            author: 42,
+            computed_raw: measured.to_raw(),
+            delta_nodes: vec![],
+            delta_edges: vec![],
+            task_id,
+        }
+    }
+
+    fn gate_eval<'a>(
+        bound: TaskBoundClaim<'a>,
+        measured: &'a ProvenancedRawPosition,
+        loss_before: f64,
+        target: &'a RawPosition,
+    ) -> PredicateGateOutput {
+        PredicateGate.evaluate(PredicateGateInput {
+            bound,
+            measured,
+            loss_before,
+            target,
+        })
+    }
+
+    // 1. predicate_satisfied_completes_task
+    #[test]
+    fn predicate_satisfied_completes_task() {
+        let (task, target) = test_task(1, 0.55, TaskPolicy::default());
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        // coupling 0.40 ≤ 0.55 (measured/scip) → Completed.
+        let measured = measured_pos(0.40, 0.7, 0.3);
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 1.0, &target);
+        assert_eq!(
+            out.outcome.predicate_completion,
+            PredicateCompletion::Completed
+        );
+        assert_eq!(
+            out.outcome.mutation_decision,
+            MutationDecision::AcceptAsCompleted
+        );
+    }
+
+    // 2. placeholder_metric_cannot_close_task_gate (INV-T4 — gate seviyesi)
+    #[test]
+    fn placeholder_metric_cannot_close_task_gate() {
+        let (task, target) = test_task(1, 0.55, TaskPolicy::default());
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        // coupling 0.40 ≤ 0.55 ama placeholder → SourceInsufficient → Reject.
+        let measured = placeholder_pos(0.40);
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 1.0, &target);
+        assert_eq!(
+            out.outcome.predicate_completion,
+            PredicateCompletion::NotCompleted
+        );
+        assert_eq!(out.outcome.mutation_decision, MutationDecision::Reject);
+    }
+
+    // 3. predicate_uses_computed_raw_not_hint (INV-T3)
+    #[test]
+    fn predicate_uses_computed_raw_not_hint() {
+        // PositionHint "coupling 0.30" dese bile, computed_raw (measured) 0.70 → Unsatisfied.
+        // (Hint Aşama B'de yok; bu test measured'ın authoritative olduğunu doğrular.)
+        let (task, target) = test_task(1, 0.55, TaskPolicy::default());
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        let measured = measured_pos(0.70, 0.7, 0.3); // 0.70 > 0.55 → Unsatisfied
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 0.5, &target);
+        assert_eq!(
+            out.outcome.predicate_completion,
+            PredicateCompletion::NotCompleted
+        );
+    }
+
+    // 4. missing_task_id_rejects_claim (binding)
+    #[test]
+    fn missing_task_id_rejects_claim() {
+        let reg = InMemoryTaskRegistry::new();
+        let measured = measured_pos(0.40, 0.7, 0.3);
+        let claim = test_claim(1, None, measured); // standalone — task_id None
+        let result = bind_task_claim(&claim, &reg);
+        assert_eq!(result.unwrap_err(), BindingError::MissingTaskId);
+    }
+
+    // 5. strict_policy_rejects_unsatisfied_predicate
+    #[test]
+    fn strict_policy_rejects_unsatisfied_predicate() {
+        let (task, target) = test_task(1, 0.55, TaskPolicy::default()); // StrictReject default
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        let measured = measured_pos(0.70, 0.7, 0.3); // > 0.55 → NotCompleted
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 1.0, &target);
+        assert_eq!(out.outcome.mutation_decision, MutationDecision::Reject);
+    }
+
+    // 6. accept_improvement_policy_accepts_progress (INV-T6)
+    #[test]
+    fn accept_improvement_policy_accepts_progress() {
+        let mut policy = TaskPolicy::default();
+        policy.predicate_failure_policy = PredicateFailurePolicy::AcceptImprovement;
+        policy.allow_progress_checkpoint = true;
+        let (task, target) = test_task(1, 0.55, policy);
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        // coupling 0.65 > 0.55 → NotCompleted, ama loss_before'dan az (improved).
+        let measured = measured_pos(0.65, 0.6, 0.4);
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let loss_before = 0.9; // büyük — measured loss_after'dan çok daha büyük
+        let out = gate_eval(bound, &measured, loss_before, &target);
+        assert_eq!(
+            out.outcome.predicate_completion,
+            PredicateCompletion::NotCompleted
+        );
+        assert_eq!(
+            out.outcome.mutation_decision,
+            MutationDecision::AcceptAsProgress
+        );
+    }
+
+    // 7. regression_rejected_even_if_one_axis_improved (F5)
+    #[test]
+    fn regression_rejected_even_if_one_axis_improved() {
+        // coupling improved ama instability 0.90 (> 0.85 hard cap) → is_improved false → Reject.
+        let mut policy = TaskPolicy::default();
+        policy.predicate_failure_policy = PredicateFailurePolicy::AcceptImprovement;
+        policy.allow_progress_checkpoint = true;
+        let (task, target) = test_task(1, 0.55, policy);
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        let measured = measured_pos(0.60, 0.6, 0.90); // coupling OK ama instability patladı
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 0.9, &target);
+        assert_eq!(out.outcome.mutation_decision, MutationDecision::Reject);
+    }
+
+    // 8. progress_checkpoint_cannot_promote_to_mainline (INV-T8)
+    #[test]
+    fn progress_checkpoint_cannot_promote_to_mainline() {
+        // AcceptAsProgress → ApplyTarget::Lane(TrajectoryCheckpoint), asla Mainline.
+        assert_eq!(
+            MutationDecision::AcceptAsProgress.apply_target(),
+            ApplyTarget::Lane(CommitLane::TrajectoryCheckpoint)
+        );
+        assert_ne!(
+            MutationDecision::AcceptAsProgress.apply_target(),
+            ApplyTarget::Lane(CommitLane::Mainline)
+        );
+    }
+
+    // 9. reject_produces_not_applied (review v4 #3)
+    #[test]
+    fn reject_produces_not_applied() {
+        assert_eq!(
+            MutationDecision::Reject.apply_target(),
+            ApplyTarget::NotApplied
+        );
+    }
+
+    // 10. task_not_found_rejects_claim (binding)
+    #[test]
+    fn task_not_found_rejects_claim() {
+        let reg = InMemoryTaskRegistry::new(); // boş — task 999 yok
+        let measured = measured_pos(0.40, 0.7, 0.3);
+        let claim = test_claim(1, Some(999), measured);
+        let result = bind_task_claim(&claim, &reg);
+        assert_eq!(result.unwrap_err(), BindingError::TaskNotFound(999));
+    }
+
+    // Ek: operator_approval_policy (review v2 — critical domain)
+    #[test]
+    fn operator_approval_policy_requires_human_review() {
+        let mut policy = TaskPolicy::default();
+        policy.predicate_failure_policy = PredicateFailurePolicy::OperatorApproval;
+        let (task, target) = test_task(1, 0.55, policy);
+        let mut reg = InMemoryTaskRegistry::new();
+        reg.insert(task);
+        let measured = measured_pos(0.70, 0.7, 0.3); // NotCompleted
+        let claim = test_claim(1, Some(1), measured.clone());
+        let bound = bind_task_claim(&claim, &reg).unwrap();
+        let out = gate_eval(bound, &measured, 1.0, &target);
+        assert_eq!(
+            out.outcome.mutation_decision,
+            MutationDecision::RequireOperatorApproval
+        );
     }
 }

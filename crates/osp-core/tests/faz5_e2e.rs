@@ -199,6 +199,7 @@ fn e2e_agent_adds_valid_module_passes_all_gates() {
         computed_raw,
         delta_nodes,
         delta_edges,
+        task_id: None, // standalone (Paper 1, INV-T5)
     };
 
     // Step 7: Commit pipeline — Q4 → Q5 → Q6 → Q1-Q3
@@ -239,6 +240,7 @@ fn e2e_self_import_rejected_by_q4_syntax_gate() {
         computed_raw,
         delta_nodes,
         delta_edges,
+        task_id: None, // standalone (Paper 1, INV-T5)
     };
 
     let result = engine.commit(&claim, &two_witnesses());
@@ -282,6 +284,7 @@ fn e2e_vision_violation_rejected_by_q5() {
             ..Default::default()
         }],
         delta_edges: vec![],
+        task_id: None, // standalone (Paper 1, INV-T5)
     };
 
     let result = engine.commit(&claim, &two_witnesses());
@@ -318,6 +321,7 @@ fn e2e_insufficient_witnesses_hold() {
         computed_raw,
         delta_nodes,
         delta_edges,
+        task_id: None, // standalone (Paper 1, INV-T5)
     };
 
     // Only 1 witness → Hold (min_approvers=2 not met)
@@ -386,6 +390,7 @@ fn e2e_pipeline_diagnostic() {
         computed_raw,
         delta_nodes,
         delta_edges,
+        task_id: None, // standalone (Paper 1, INV-T5)
     };
     let result = engine.commit(&claim, &two_witnesses());
     eprintln!("\nStep 4: commit → Q4→Q5→Q6→Q1-Q3");

@@ -56,6 +56,7 @@ fn claim_aligned(id: u64, author: u64, vision_raw: RawPosition) -> Claim {
         computed_raw: vision_raw,
         delta_nodes: vec![mod_node(100 + id)],
         delta_edges: vec![],
+        task_id: None, // standalone (Paper 1, INV-T5)
     }
 }
 
@@ -68,6 +69,7 @@ fn claim_bad(id: u64, author: u64) -> Claim {
         computed_raw: RawPosition::default(),
         delta_nodes: vec![mod_node(200 + id)],
         delta_edges: vec![],
+        task_id: None, // standalone (Paper 1, INV-T5)
     }
 }
 

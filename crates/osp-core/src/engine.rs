@@ -831,6 +831,7 @@ mod tests {
             computed_raw,
             delta_nodes: vec![mod_node(10)],
             delta_edges: vec![],
+            task_id: None, // standalone (Paper 1 static flow, INV-T5)
         }
     }
 
@@ -1098,6 +1099,7 @@ v = 0.5
             computed_raw: RawPosition::default(),
             delta_nodes: nodes,
             delta_edges: edges,
+            task_id: None, // standalone (Paper 1 static flow, INV-T5)
         }
     }
 
