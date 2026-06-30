@@ -305,9 +305,12 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
         let mut total_tokens = TokenCost::default();
         let mut last_outcome: Option<AttemptOutcome> = None;
         let mut claim_id_counter = 1u64;
+        // D4 — Calibration feedback accumulation. Reject olunca hata mesajı ekle,
+        // sonraki attempt'te AgentTaskView'a geçir → LLM hatadan öğrenir.
+        let mut feedback_history: Vec<String> = Vec::new();
 
         for attempt_num in 1..=maneuver_limit {
-            // 1. AgentTaskView üret (INV-T1 — hedef koordinat YOK).
+            // 1. AgentTaskView üret (INV-T1 — hedef koordinat YOK + D4 feedback).
             let plan = InternalTaskPlan {
                 task_id,
                 milestone_target_vector: self.target_vector,
@@ -319,6 +322,7 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
                 self.current_measured.to_raw(),
                 task.allowed_operations.clone(),
                 task.constraints.clone(),
+                feedback_history.clone(),
             );
 
             // 2. LLM call → DeltaProposal.
@@ -354,7 +358,11 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
                     token_cost,
                     duration_ms: 0,
                 });
-                let _ = violation; // calibration feedback D2'de
+                // D4 — Calibration feedback: Q4 syntax hatasını LLM'e geri besle.
+                feedback_history.push(format!(
+                    "Attempt {attempt_num}: Structural hallucination — {}. Fix the DeltaProposal schema and retry.",
+                    violation.detail
+                ));
                 continue;
             }
 
@@ -439,7 +447,13 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
                         token_cost,
                         duration_ms: 0,
                     });
-                    let _ = e;
+                    // D4 — Calibration feedback: commit hatasını LLM'e geri besle.
+                    if let Some(hall) = crate::agent::HallucinationType::from_engine_error(&e) {
+                        feedback_history.push(format!(
+                            "Attempt {attempt_num}: {}",
+                            hall.calibration_message()
+                        ));
+                    }
                     continue;
                 }
             };
@@ -603,6 +617,7 @@ mod tests {
             },
             allowed_operations: vec![],
             constraints: vec![],
+            feedback_history: vec![],
         };
         let p1 = mock.complete(&view).unwrap();
         let p2 = mock.complete(&view).unwrap();
