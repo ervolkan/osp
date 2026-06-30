@@ -214,12 +214,15 @@ satisfied olsa bile `SourceInsufficient` → task Done olmaz.
 **İhlal örneği:** "Coupling ölçülmedi (placeholder 0.5) ama 0.55'in altında" → task kapanır →
 ölçülmemiş başarı iddiası. ProvenancedRawPosition ile source type-level, runtime check değil.
 
-### INV-T5 — Task ≠ Claim
-**Status:** planned (Aşama A)
+### INV-T5 — Task ≠ Claim (Aşama B güncelleme: static Claim taskless olabilir)
+**Status:** planned (Aşama A) + **implemented (Aşama B — Claim.task_id + TaskBoundClaim)**
 **Tanım:** Task bir **şart seti** (PredicateSet), Claim bir **iş** (structural delta).
 Bir task birden fazla claim/attempt gerektirebilir (TaskAttempt); bir claim bir task'a
-hizmet eder (Claim.task_id). Task multi-axis predicate taşır (PredicateSet — review v2 #4,
-tanım aşağıda).
+hizmet eder (`Claim.task_id: Option<TaskId>`). **Güncelleme (review v2):** static Claim
+(Paper 1, legacy, baseline) `task_id: None` ile çalışmaya devam eder — taskless olabilir.
+Ama **Q5.b Predicate Gate sadece `TaskBoundClaim`** kabul eder (`bind_task_claim` ile).
+Yani: trajectory-bound Claim requires task_id; static Claim may be taskless; Q5.b only
+accepts TaskBoundClaim.
 **Yapısal garanti:** `Claim.task_id: TaskId` (required); `Task.target_predicate_set: PredicateSet`;
 `TaskAttempt.outcome: AttemptOutcome` (zengin struct — review v2 #5).
 **Test:** `one_task_many_attempts` — 3 attempt senaryosu, hepsi aynı task_id, farklı outcome.

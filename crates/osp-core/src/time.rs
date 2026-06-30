@@ -82,9 +82,9 @@ mod tests {
                 ..Default::default()
             }],
             delta_edges: vec![],
+            task_id: None, // standalone (Paper 1 static flow, INV-T5)
         }
     }
-
     fn ev(id: EvidenceId, actor: AgentId) -> EvidenceEvent {
         EvidenceEvent::new(id, &format!("s{id}"), WitnessKind::MergeCommit, actor, 1)
     }
