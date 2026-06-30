@@ -46,9 +46,12 @@ pub struct TrajectoryAttemptArgs {
     pub task_id: u64,
     #[arg(long)]
     pub repo: PathBuf,
-    /// Scripted proposals JSON (MockLlmClient).
+    /// Scripted proposals JSON (MockLlmClient). --llm mock ile.
     #[arg(long)]
-    pub proposals: PathBuf,
+    pub proposals: Option<PathBuf>,
+    /// LLM mode: mock (FileMockLlm, --proposals) or real (RuntimeLlmClient, GPT-4o-mini).
+    #[arg(long, default_value = "mock")]
+    pub llm: String,
     /// Maneuver limit (default 5).
     #[arg(long, default_value = "5")]
     pub maneuver_limit: u32,
@@ -148,19 +151,14 @@ pub fn run_trajectory_init(args: TrajectoryInitArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `osp trajectory attempt` — D2 navigator + MockLlmClient.
+/// `osp trajectory attempt` — D2 navigator + MockLlmClient/RuntimeLlmClient.
 pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use osp_core::coords::CoordinateSystem;
     use osp_core::engine::{EngineConfig, SpaceEngine};
-    use osp_core::navigator::{AgentNavigator, NavigatorResult};
-    use osp_core::trajectory::{
-        InMemoryTaskRegistry, MilestoneId, OperatorCapability, PredicateFailurePolicy, Task,
-        TaskPolicy, TaskStatus, TrajectoryId,
-    };
     use osp_core::vision::VisionVector;
 
-    // 1. Analyze → space.
+    // 1. Analyze -> space.
     let registry = AdapterRegistry::default_all();
     let config = AnalysisConfig::default();
     let result = analyze_repo_with_config(&args.repo, &registry, &config)?;
@@ -183,13 +181,42 @@ pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()>
         vision,
         EngineConfig::default_calibrated(),
     );
-    // 3. Mock LLM (scripted proposals).
-    let proposals_json = std::fs::read_to_string(&args.proposals)?;
-    let proposals: Vec<osp_core::agent::DeltaProposal> = serde_json::from_str(&proposals_json)?;
-    let llm = crate::mock_llm::FileMockLlm::new(proposals);
-    // 4. Task registry (basit — coupling ≤ 0.55 predicate).
-    let cap = OperatorCapability::issue();
-    let _ = cap; // CLI = operator mode (INV-T2)
+    // 3. LLM seçimi: mock (FileMockLlm) veya real (RuntimeLlmClient, GPT-4o-mini).
+    match args.llm.as_str() {
+        "real" => {
+            let llm = osp_llm_runtime::RuntimeLlmClient::from_env()
+                .map_err(|e| anyhow::anyhow!("LLM runtime (OPENAI_API_KEY?): {e}"))?;
+            run_navigator(&llm, &mut engine, &args)?;
+        }
+        _ => {
+            // mock (default)
+            let proposals_path = args
+                .proposals
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("--proposals required for --llm mock"))?;
+            let proposals_json = std::fs::read_to_string(proposals_path)?;
+            let proposals: Vec<osp_core::agent::DeltaProposal> =
+                serde_json::from_str(&proposals_json)?;
+            let llm = crate::mock_llm::FileMockLlm::new(proposals);
+            run_navigator(&llm, &mut engine, &args)?;
+        }
+    }
+    Ok(())
+}
+
+/// Navigator çalıştır (generic LlmClient — mock veya real).
+fn run_navigator<L: osp_core::navigator::LlmClient>(
+    llm: &L,
+    engine: &mut osp_core::engine::SpaceEngine,
+    args: &TrajectoryAttemptArgs,
+) -> anyhow::Result<()> {
+    use osp_core::navigator::{AgentNavigator, NavigatorResult};
+    use osp_core::trajectory::{
+        InMemoryTaskRegistry, MilestoneId, OperatorCapability, PredicateFailurePolicy, Task,
+        TaskPolicy, TaskStatus, TrajectoryId,
+    };
+    // 4. Task registry (basit — coupling <= 0.55 predicate).
+    let _cap = OperatorCapability::issue(); // CLI = operator mode (INV-T2)
     let mut task_registry = InMemoryTaskRegistry::new();
     let mut policy = TaskPolicy::default();
     policy.maneuver_limit = args.maneuver_limit;
@@ -238,9 +265,9 @@ pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()>
     );
     let mut evidence = vec![];
     let mut nav = AgentNavigator {
-        llm: &llm,
+        llm,
         resolver: &task_registry,
-        engine: &mut engine,
+        engine,
         evidence: &mut evidence,
         trajectory_id: 1 as TrajectoryId,
         milestone_id: 1 as MilestoneId,

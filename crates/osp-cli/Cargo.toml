@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 osp-core = { path = "../osp-core" }
 osp-analyzer = { path = "../osp-analyzer" }
+osp-llm-runtime = { path = "../osp-llm-runtime" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
