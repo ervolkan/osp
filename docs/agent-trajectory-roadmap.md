@@ -504,48 +504,97 @@ Yorum 2'nin "Planla → Uygula → Kontrol Et → Düzelt" döngüsünün OSP ka
 
 Her aşama **kanıt/not toplar** (docs/paper2-notes/) — paper en son yazılır.
 
-### Aşama A — Ontolojik Tipler (minimal, test odaklı)
-**Hedef:** Trajectory/Milestone/Task/MetricPredicate tiplerini kodla, unit test.
-**Dosyalar:** `crates/osp-core/src/trajectory.rs` (yeni), `coords.rs` genişletme.
-**Kapsam Dışı:** Agent döngüsü, UI, gerçek planner.
-**Paper2 notları:** Ontolojik kararlar, invariant'ların korunması ispatı.
-**Efor:** S
+**Ürünleşme sırası (review — CLI first, MCP second, SDK third, UI later):**
+```
+osp-core (✅ A/B/C/D1) → D2 (gerçek measure) → osp-cli (execution surface)
+  → osp-mcp (AI access surface) → osp-sdk (integration) → osp-desktop/3D (exploration)
+```
+MCP otorite katmanı DEĞİL, osp-core üzerinde erişim katmanıdır (INV-T1..T8 bypass edilemez).
+UI/3D kanıt üretmez — keşif/görselleştirme; Paper 2 evidence CLI/MCP'den gelir.
 
-### Aşama B — Predicate Gate (Q5.b)
-**Hedef:** Engine'e Q5.b Predicate Gate ekle. `check_claim_predicate(claim, task)`.
-**Dosyalar:** `engine.rs` genişletme, `trajectory.rs`.
-**Test:** Predicate ihlali → reject, geçerse → witness'a geç.
-**Paper2 notları:** Deterministik reddin metric kaliteye etkisi.
-**Efor:** S-M
+### Aşama A — Ontolojik Tipler ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** Trajectory/Milestone/Task/MetricPredicate tiplerini kodla, INV-T1..T8 type-level.
+**Dosyalar:** `crates/osp-core/src/trajectory.rs` (yeni), `coords.rs`, `witness.rs`.
+**Sonuç:** 13 test, INV-T1..T8 type-level enforcement. Paper2 notları: stage-A-ontology.md.
 
-### Aşama B2 — TaskAttempt Ledger (review 1 — evidence olmadan Paper 2 eksik)
-**Hedef:** `TaskAttempt` + `TrajectoryEvidence` kayıt sistemi. Her attempt'in
-predicate_result (Satisfied/Improved/Regressed), token cost, duration'u kaydedilir.
-**Dosyalar:** `trajectory.rs` (TaskAttempt, AttemptOutcome, TrajectoryEvidence, TaskPolicy).
-**Test:** 3-attempt senaryosu (0.82→0.71→0.63→0.53) → under AcceptImprovement policy:
-AcceptAsProgress → AcceptAsProgress → AcceptAsCompleted.
-**Paper2 notları:** **RQ6/RQ7/RQ8 ham verisi** — kaç attempt'te success, gate kaç
-reddi önledi, token cost attempt başına. Bu aşama olmadan Paper 2 ölçüm eksik kalır.
-**Efor:** S-M
+### Aşama B — Predicate Gate Integration (Q5.b) ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** `check_claim_predicate` + Claim.task_id + TaskBoundClaim + PredicateGate.
+**Dosyalar:** `witness.rs` (Claim.task_id), `trajectory.rs` (TaskResolver, bind, PredicateGate).
+**Sonuç:** 11 test (10 done-criteria + 1 ek). Paper2 notları: stage-B-predicate-gate.md.
 
-### Aşama C — Planner (Milestone → Task → Intent)
-**Hedef:** `TargetRegion.predicates + preferred_vector` → `Task.target_predicate_set` dönüşümü (operator/planner).
-**Dosyalar:** `trajectory.rs`, `witness.rs` (Intent::from_task).
-**Risk:** N1 — predicate ↔ koordinat tutarlılığı (§9).
-**Paper2 notları:** Dematerialization of tasks — koordinattan predicate'e dönüşüm matematiği.
+### Aşama B2 — TaskAttempt Ledger (review 1) ✅ B'ye entegre
+**Hedef:** `TaskAttempt` + `TrajectoryEvidence` + `AttemptOutcome` + `TaskPolicy`.
+**Sonuç:** B ile birlikte (PredicateGateOutput AttemptOutcome üretir).
+
+### Aşama C — Planner / Milestone Decomposition ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** DecompositionStrategy (deterministic) + MilestoneDecomposer + Intent::from_task.
+**Dosyalar:** `trajectory.rs` (DecompositionPolicy/Strategy/Space), `witness.rs` (Intent::from_task).
+**Sonuç:** 9 test. Paper2 notları: stage-C-planner.md.
+
+### Aşama D1 — Agent Navigator Loop (mock LLM) ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** LlmClient trait + MockLlmClient + AgentNavigator.run_task + DeltaProposal→Claim bridge.
+**Dosyalar:** `crates/osp-core/src/navigator.rs` (yeni).
+**Sonuç:** 8 test, 9 boşluktan 7'si kapatıldı. Token cost accumulate (RQ6 ilk evidence).
+Paper2 notları: stage-D-agent-loop.md.
+
+### Aşama D2 — Gerçek engine measure + commit() Q5.b entegrasyon ⬜ SIRADAKİ
+**Hedef:** Navigator gerçek engine measure (compute_raw_from_delta gerçek node/edge),
+commit() içine Q5.b PredicateGate + permission entegrasyon, DecompositionSpace engine'den beslenir.
+**Dosyalar:** `engine.rs` (commit() Q5.b), `navigator.rs` (gerçek measure), trajectory.rs.
+**Test:** svelte corpus'ta gerçek task simülasyonu (maneuver limit, ExceededManeuverLimit).
+**Paper2 notları:** RQ6 (token) + RQ7 (task success) gerçek measure ile.
+**Efor:** M
+**Kritik:** D2 olmadan CLI navigator mock measure verir (gerçekçi değil).
+
+### Aşama F — osp-cli (CLI-first, execution surface) ⬜ D2 sonrası
+**Hedef:** `osp` CLI binary — execution surface. osp-core API'sini çağırır.
+**Crate:** `crates/osp-cli/` (yeni). Mevcut `osp-analyze` binary'si osp-cli'ye taşınır/sarılır.
+**Komutlar:**
+```bash
+osp analyze --repo ./repo --out .osp/space.json
+osp trajectory init --vision <toml>
+osp task add --scope node:X --predicate "coupling <= 0.55" --policy strict
+osp task view <task-id>
+osp claim bind --task <id> --proposal delta.json
+osp predicate check --task <id> --proposal delta.json
+osp trajectory attempt --task <id> --proposal delta.json --out .osp/attempts/
+osp evidence export --trajectory <id> --out evidence.json
+```
+**Prensip:** CLI = "truth surface". UI/MCP/SDK ne yaparsa yapsın, en altta CLI/osp-core
+aynı sonucu üretmeli. CI/CD'ye koyması kolay, agent çağırabilir, Paper 2 evidence üretir.
 **Efor:** M
 
-### Aşama D — Agent Döngüsü (Navigator)
-**Hedef:** Agent'a Task serialize → DeltaProposal → Claim → gate → trajectory update.
-**Dosyalar:** `agent.rs`, yeni `navigator.rs` modülü.
-**Test:** svelte corpus'ta gerçek task simulasyonu.
-**Paper2 notları:** **Token maliyeti** (RQ6 adayı), task success (RQ7 adayı).
+### Aşama G — osp-mcp (AI access surface, MCP second) ⬜ CLI sonrası
+**Hedef:** MCP server — AI agent'ların OSP çekirdeğini güvenli kullanması. INV-T1..T8 bypass edilemez.
+**Crate:** `crates/osp-mcp/` (yeni). osp-cli komutlarının MCP tool wrapper'ları.
+**Tools (ilk set, küçük):**
+```
+osp_analyze_repo           — repo → space snapshot
+osp_get_agent_task_view    — INV-T1 test: AgentTaskView (predicate, NO preferred_vector)
+osp_get_node               — node + measured position
+osp_check_predicate        — DeltaProposal → AttemptOutcome
+osp_submit_delta           — navigator attempt
+osp_get_attempt_history    — evidence ledger
+osp_get_relevant_context   — space_slice (k-hop)
+```
+**Kritik tasarım prensibi:** `MCP is not an authority layer; MCP is an access layer over osp-core.`
+MCP tool çağrısı → osp-core API → invariant checks → deterministic result. MCP kendi başına
+karar veremez. Özellikle `osp_get_agent_task_view` INV-T1'in gerçek dünyadaki testi olur
+(hedef koordinat ASLA döndürülmez).
 **Efor:** M-L
 
-### Aşama E — Trajectory Correction + UI (opsiyonel, 3D viewer ile birlikte)
+### Aşama H — osp-sdk (integration, third) ⬜ MCP sonrası
+**Hedef:** TypeScript/Python/Rust bindings. CLI/MCP deneyleri bittikten sonra hangi
+fonksiyonların stabil olduğu ortaya çıkar → SDK yüzeyi netleşir.
+**Kullanım:** LangGraph/CrewAI entegrasyon, CI/CD plugin, enterprise automation.
+**Efor:** L (erken SDK gereksiz bakım yükü).
+
+### Aşama E — Trajectory Correction + UI (opsiyonel, kanıt sonrası) ⬜
 **Hedef:** Commit sonrası progress tracking, trajectory replan, 3D viewer'da gösterim.
-**Bağımlılık:** 3D viewer Aşama 4 (selection glow) tamamlanmalı.
-**Paper2 notları:** Adaptive control loop'un gerçek reponlarda davranışı.
+**Bağımlılık:** 3D viewer Aşama 4 (selection glow) + D2 gerçek measure.
+**Konum:** UI/3D = "explanation/exploration layer" — kanıt üretmez, keşif için.
+osp-desktop/3D zaten var (Aşama 1-3 hover edge), durdu (agent işleri öncelik).
+**Paper2 notları:** Adaptive control loop'un gerçek reponlarda davranışı (görsel).
 **Efor:** M-L
 
 ---
@@ -662,6 +711,8 @@ Paper 1 statik uzayı oturtur, Paper 2 onun üzerine inşa eder.
 | 2026-06-30 | F5 Axis Oscillation | review 3 — multi-axis kayıp fonksiyonu, Aşama C. |
 | 2026-06-30 | F6 Maneuver Limit | review 3 — INV-T7 ile çözüldü. |
 | 2026-06-30 | invariant-spec.md önceliği | review 1 — kod yazmadan formal invariant spec. |
+| 2026-06-30 | A/B/B2/C/D1 TAMAMLANDI | Çekirdek (ontology + gate + planner + navigator mock) hazır. 478 test. |
+| 2026-06-30 | CLI-first + MCP ürünleşme sırası | review (beyin fırtınası) — CLI first, MCP second, SDK third, UI later. Çekirdek değişmez; CLI/MCP katmanları eklenir (§8 F/G/H). MCP otorite değil, osp-core erişim katmanı. UI/3D keşif, kanıt CLI/MCP'den. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.
