@@ -640,6 +640,11 @@ pub struct AgentTaskView {
     pub target_predicate: AgentPredicateView,
     pub allowed_operations: Vec<OpKind>,
     pub constraints: Vec<RuleRef>,
+    /// D4 — Calibration feedback history. Önceki attempt'lerin hata mesajları
+    /// (HallucinationType::calibration_message). LLM bu feedback'ten öğrenir — aynı
+    /// hatayı tekrarlamaz. INV-T1 uyumlu (hata mesajı, koordinat değil).
+    #[serde(default)]
+    pub feedback_history: Vec<String>,
 }
 
 /// INV-T1 — Agent'a verilen predicate view. `preferred_vector`/`target_region` YOK.
@@ -673,6 +678,7 @@ impl InternalTaskPlan {
         current_measurement: RawPosition,
         allowed_operations: Vec<OpKind>,
         constraints: Vec<RuleRef>,
+        feedback_history: Vec<String>,
     ) -> AgentTaskView {
         AgentTaskView {
             task_id: self.task_id,
@@ -685,6 +691,7 @@ impl InternalTaskPlan {
             },
             allowed_operations,
             constraints,
+            feedback_history,
         }
     }
 }
@@ -1532,6 +1539,7 @@ mod tests {
                 v: 0.3,
             },
             vec![OpKind::RemoveImport],
+            vec![],
             vec![],
         );
         let json = serde_json::to_string(&view).unwrap();

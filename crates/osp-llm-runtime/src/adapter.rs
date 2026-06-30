@@ -114,7 +114,19 @@ kind values: Module, Feature, Test, Config, Migration\n\
 edge kind values: Imports, Calls, Implements, Extends",
         m.x, m.y, m.z, view.task_id, view.label
     );
-    format!("{base}\n\n{ctx}")
+    // D4 - Calibration feedback: önceki attempt'lerin hatalarını LLM'e göster.
+    let feedback_section = if view.feedback_history.is_empty() {
+        String::new()
+    } else {
+        let items: String = view
+            .feedback_history
+            .iter()
+            .map(|f| format!("- {f}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("\n\nPREVIOUS ATTEMPTS FAILED — learn from these errors:\n{items}\n\nDo NOT repeat these mistakes. Adjust your approach.")
+    };
+    format!("{base}\n\n{ctx}{feedback_section}")
 }
 
 /// D3 - Runtime LlmError -> navigator LlmError mapping.
@@ -163,6 +175,7 @@ mod tests {
             },
             allowed_operations: vec![],
             constraints: vec![],
+            feedback_history: vec![],
         };
         let prompt = trajectory_system_prompt(&view);
         assert!(prompt.contains("task_id: 42"), "task_id in prompt");
