@@ -22,6 +22,7 @@ pub mod persistence;
 pub mod rule;
 pub mod space;
 pub mod time;
+pub mod trajectory;
 pub mod vision;
 pub mod vision_config;
 pub mod witness;
