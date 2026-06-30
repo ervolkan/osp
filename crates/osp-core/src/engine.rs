@@ -92,6 +92,38 @@ pub struct CommitOutcome {
     pub t_c: u64,
 }
 
+/// Aşama D2 — Task-bound Claim commit girdisi. Sizin önerdiğiniz structured input
+/// (tek parametre yerine — daha temiz, genişletilebilir). commit()'in (standalone)
+/// yanında, task-bound Claim'ler için Q5.b PredicateGate entegrasyonu.
+///
+/// **Prensip:** `commit() = legacy/standalone claim path; commit_task_claim() = trajectory/task-bound path.`
+/// Mevcut commit() korunur (Paper 1 uyumluluk); commit_task_claim Paper 2 için.
+pub struct TaskCommitInput<'a> {
+    pub claim: &'a crate::witness::Claim,
+    pub omega: &'a crate::witness::WitnessSet,
+    pub task_resolver: &'a dyn crate::trajectory::TaskResolver,
+    /// preferred_vector (loss/distance target — INV-T1 internal).
+    pub target: crate::coords::RawPosition,
+    /// Loss before (mevcut durumun preferred_vector'e uzaklığı).
+    pub loss_before: f64,
+    /// Engine-measured simulated_after (INV-T3 — claim.computed_raw'tan ProvenancedRawPosition).
+    pub measured: crate::trajectory::ProvenancedRawPosition,
+}
+
+/// Aşama D2 — commit_task_claim çıktısı. Attempt + outcome + apply_target + witness.
+/// Sizin önerdiğiniz TaskCommitResult yapısı.
+#[derive(Debug, Clone)]
+pub struct TaskCommitResult {
+    /// Q5.b PredicateGate attempt sonucu (gate_decision/predicate_completion/mutation_decision).
+    pub outcome: crate::trajectory::AttemptOutcome,
+    /// MutationDecision → ApplyTarget mapping (INV-T8 — Reject→NotApplied, Progress→Checkpoint).
+    pub apply_target: crate::trajectory::ApplyTarget,
+    /// Hesaplanan loss_after (preferred_vector'e distance, INV-T6 quantitative).
+    pub loss_after: f64,
+    /// Witness Q1-Q3 sonucu (AcceptAsCompleted/AcceptAsProgress ise). Reject ise None.
+    pub witness: Option<crate::witness::WitnessResult>,
+}
+
 /// Post-mutation: neighbor θ > bound (commit geçerli, komşu degrade — WARNING, §4.1).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DriftWarning {
@@ -336,6 +368,101 @@ impl SpaceEngine {
             safety_weakened,
             t_c: self.t_c,
         })
+    }
+
+    /// Aşama D2 — Task-bound Claim commit. Atomic pipeline: Q4 → bind → Q5 → Q5.b
+    /// (PredicateGate) → Q6 → MutationDecision → ApplyTarget → Q1-Q3 witness.
+    ///
+    /// **Prensip:** `commit() = legacy/standalone path; commit_task_claim() = trajectory path.`
+    /// Mevcut commit() (standalone, Paper 1) korunur — backward compatible. Bu metod
+    /// task-bound Claim'ler için Q5.b PredicateGate'i commit transaction içine alır
+    /// (atomic — navigator ayrı PredicateGate çağırmaz).
+    ///
+    /// **İç akış (sizin önerdiğiniz sıra):**
+    /// 1. Q4 Syntax (check_claim_syntax)
+    /// 2. bind_claim_to_task (TaskResolver → TaskBoundClaim, INV-T5)
+    /// 3. Q5 Vision (θ bound, check_claim_vision)
+    /// 4. Q5.b PredicateGate (task predicate, loss/policy → MutationDecision)
+    /// 5. Q6 Rule (check_claim_rules)
+    /// 6. MutationDecision → ApplyTarget (INV-T8: Reject→NotApplied, Progress→Checkpoint)
+    /// 7. Q1-Q3 Witness (AcceptAsCompleted/AcceptAsProgress ise — apply_delta)
+    /// 8. TaskCommitResult (outcome + apply_target + witness)
+    pub fn commit_task_claim(
+        &mut self,
+        input: TaskCommitInput<'_>,
+    ) -> Result<TaskCommitResult, EngineCommitError> {
+        use crate::trajectory::{ApplyTarget, MutationDecision, PredicateGate, PredicateGateInput};
+
+        // Phase 0a: Q4 Syntax (claim-based, deterministik).
+        self.check_claim_syntax(input.claim)?;
+
+        // Phase 0b: bind_claim_to_task (INV-T5 — TaskBoundClaim zorunlu).
+        // bind_task_claim generic (impl TaskResolver), &dyn ile çağrılamaz → manuel bind.
+        let task_id = input.claim.task_id.ok_or_else(|| {
+            EngineCommitError::PermissionDenied(
+                "claim has no task_id (standalone — commit_task_claim requires TaskBoundClaim)"
+                    .into(),
+            )
+        })?;
+        let task = input.task_resolver.resolve(task_id).ok_or_else(|| {
+            EngineCommitError::PermissionDenied(format!("task_id {task_id} not found in resolver"))
+        })?;
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: input.claim,
+            task,
+        };
+
+        // Phase 0c: Q5 Vision (θ bound — negatif-uzay safety).
+        self.check_claim_vision(input.claim)?;
+
+        // Phase 0d: Q5.b PredicateGate (soft gate — task completion + policy).
+        let gate_out = PredicateGate.evaluate(PredicateGateInput {
+            bound,
+            measured: &input.measured,
+            loss_before: input.loss_before,
+            target: &input.target,
+        });
+        let outcome = gate_out.outcome.clone();
+        let loss_after = gate_out.loss_after;
+        let apply_target = outcome.mutation_decision.apply_target();
+
+        // Phase 0e: Q6 Rule (claim-based, deterministik).
+        // Not: MutationDecision Reject ise bile Q6 çalışır (diagnostic — hangi gate reject etti).
+        if !matches!(outcome.mutation_decision, MutationDecision::Reject) {
+            self.check_claim_rules(input.claim)?;
+        }
+
+        // Phase 0f: MutationDecision → ApplyTarget kontrolü (INV-T8).
+        // Reject → NotApplied (commit yok, witness yok). Sadece evidence kaydı navigator'da.
+        if matches!(apply_target, ApplyTarget::NotApplied) {
+            return Ok(TaskCommitResult {
+                outcome,
+                apply_target,
+                loss_after,
+                witness: None,
+            });
+        }
+
+        // Phase 1: Q1-Q3 Witness (AcceptAsCompleted/AcceptAsProgress/OperatorApproval).
+        // apply_delta mutation — mevcut commit() gibi time.advance.
+        let witness = self.time.advance(&mut self.space, input.claim, input.omega);
+        match &witness {
+            crate::witness::WitnessResult::Commit { .. } => {
+                self.t_c += 1;
+                Ok(TaskCommitResult {
+                    outcome,
+                    apply_target,
+                    loss_after,
+                    witness: Some(witness.clone()),
+                })
+            }
+            crate::witness::WitnessResult::Hold(reason) => {
+                Err(EngineCommitError::Witness(reason.clone()))
+            }
+            crate::witness::WitnessResult::Reject(reason) => {
+                Err(EngineCommitError::Witness(reason.clone()))
+            }
+        }
     }
 
     // ── Claim-based gates (Q4-Q6, Phase 0 — witness öncesi, deterministik) ───

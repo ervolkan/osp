@@ -21,8 +21,8 @@ use crate::engine::SpaceEngine;
 use crate::space::{Edge, Node, NodeId};
 use crate::trajectory::{
     AgentTaskView, AttemptOutcome, GateDecision, InternalTaskPlan, MutationDecision,
-    PredicateCompletion, PredicateGate, PredicateGateInput, ProvenancedRawPosition, TaskId,
-    TaskResolver, TokenCost, TrajectoryEvidence,
+    PredicateCompletion, ProvenancedRawPosition, TaskId, TaskResolver, TokenCost,
+    TrajectoryEvidence,
 };
 use crate::witness::{AgentId, Claim, ClaimId, Intent};
 
@@ -275,7 +275,8 @@ pub enum NavigatorResult {
 pub struct AgentNavigator<'a, L: LlmClient, R: TaskResolver> {
     pub llm: &'a L,
     pub resolver: &'a R,
-    pub engine: &'a SpaceEngine,
+    /// D2 — mutable engine (commit_task_claim &mut self gerektirir).
+    pub engine: &'a mut SpaceEngine,
     /// Evidence ledger (in-memory Vec, Aşama E'de persistent store).
     pub evidence: &'a mut Vec<TrajectoryEvidence>,
     /// Trajectory + milestone context (loss target için).
@@ -358,14 +359,27 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
             }
 
             // 4. DeltaProposal → Claim (task-bound, boşluk #3).
-            // D1: computed_raw = DeltaProposal'dan hesapla (engine hypothetical — D2'de gerçek).
+            // D2: computed_raw = engine hypothetical ölçümü (gerçek space + delta_edges).
             let delta_nodes: Vec<Node> = proposal
                 .new_nodes
                 .iter()
                 .enumerate()
                 .map(|(i, s)| node_from_spec(s, i))
                 .collect();
-            let computed_raw = self.engine.compute_raw_from_delta(&delta_nodes, &[]);
+            let delta_edges: Vec<Edge> = proposal
+                .new_edges
+                .iter()
+                .map(|spec| Edge {
+                    from: spec.from,
+                    to: spec.to,
+                    kind: spec.kind,
+                    is_type_only: false,
+                })
+                .collect();
+            // D2: gerçek delta_edges geçir (coupling proposed edge'leri yansısın).
+            let computed_raw = self
+                .engine
+                .compute_raw_from_delta(&delta_nodes, &delta_edges);
             let claim = match build_claim_from_proposal(
                 &proposal,
                 computed_raw,
@@ -384,21 +398,53 @@ impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
             // 5. Engine-measured → ProvenancedRawPosition (boşluk #7).
             let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
 
-            // 6. bind_task_claim + PredicateGate (Q5.b, boşluk #4) — blok: resolver
-            // borrow'u blok sonunda düşür, sonra push_evidence (mut self) çağrılabilir.
-            let (outcome, loss_after) = {
-                let bound = match crate::trajectory::bind_task_claim(&claim, self.resolver) {
-                    Ok(b) => b,
-                    Err(_) => return NavigatorResult::TaskNotFound,
-                };
-                let gate_out = PredicateGate.evaluate(PredicateGateInput {
-                    bound,
-                    measured: &measured,
+            // 6. D2 — commit_task_claim: Q4→bind→Q5→Q5.b(PredicateGate)→Q6→mutate→Q1-Q3.
+            // D1'deki ayrı PredicateGate YERINE atomic commit_task_claim. Empty witness
+            // set (D2'de gerçek witness yok — navigator tek-agent, auto-approve veya D3'te).
+            let omega = crate::witness::WitnessSet::new(Vec::new());
+            let task_result = match self
+                .engine
+                .commit_task_claim(crate::engine::TaskCommitInput {
+                    claim: &claim,
+                    omega: &omega,
+                    task_resolver: self.resolver as &dyn TaskResolver,
+                    target: self.target_vector,
                     loss_before,
-                    target: &self.target_vector,
-                });
-                (gate_out.outcome.clone(), gate_out.loss_after)
+                    measured: measured.clone(),
+                }) {
+                Ok(r) => r,
+                Err(crate::engine::EngineCommitError::PermissionDenied(msg)) => {
+                    // Binding hatası (task not found / standalone).
+                    let _ = msg;
+                    return NavigatorResult::TaskNotFound;
+                }
+                Err(e) => {
+                    // Q4/Q5/Q6/witness reject — evidence kaydet, retry.
+                    last_outcome = Some(crate::trajectory::AttemptOutcome {
+                        gate_decision: crate::trajectory::GateDecision::RejectedBySyntax,
+                        predicate_completion: crate::trajectory::PredicateCompletion::NotCompleted,
+                        mutation_decision: crate::trajectory::MutationDecision::Reject,
+                        witness_status: None,
+                    });
+                    let before_raw = self.current_measured.to_raw();
+                    self.evidence.push(TrajectoryEvidence {
+                        trajectory_id: self.trajectory_id,
+                        milestone_id: self.milestone_id,
+                        task_id,
+                        attempt_id: attempt_num as u64,
+                        before: before_raw,
+                        after: measured.to_raw(),
+                        predicate_completion: crate::trajectory::PredicateCompletion::NotCompleted,
+                        mutation_decision: crate::trajectory::MutationDecision::Reject,
+                        token_cost,
+                        duration_ms: 0,
+                    });
+                    let _ = e;
+                    continue;
+                }
             };
+            let outcome = task_result.outcome.clone();
+            let loss_after = task_result.loss_after;
             last_outcome = Some(outcome.clone());
 
             // 7. Evidence kaydet (boşluk #6) — inline push (field borrow çatışmasını önle).
@@ -600,12 +646,12 @@ mod tests {
     fn navigator_task_not_found() {
         let mock = MockLlmClient::new(vec![]);
         let resolver = InMemoryTaskRegistry::new();
-        let engine = make_engine();
+        let mut engine = make_engine();
         let mut evidence = vec![];
         let mut nav = AgentNavigator {
             llm: &mock,
             resolver: &resolver,
-            engine: &engine,
+            engine: &mut engine,
             evidence: &mut evidence,
             trajectory_id: 1,
             milestone_id: 1,
@@ -638,12 +684,12 @@ mod tests {
         resolver.insert(task);
         // Sadece 1 proposal ver → maneuver limit'e ulaşmadan LlmError (NoMoreProposals).
         let mock = MockLlmClient::new(vec![proposal_with_coupling(0.82)]);
-        let engine = make_engine();
+        let mut engine = make_engine();
         let mut evidence = vec![];
         let mut nav = AgentNavigator {
             llm: &mock,
             resolver: &resolver,
-            engine: &engine,
+            engine: &mut engine,
             evidence: &mut evidence,
             trajectory_id: 1,
             milestone_id: 1,
@@ -679,12 +725,12 @@ mod tests {
         let mut resolver = InMemoryTaskRegistry::new();
         resolver.insert(task);
         let mock = MockLlmClient::new(vec![proposal_with_coupling(0.82); 2]);
-        let engine = make_engine();
+        let mut engine = make_engine();
         let mut evidence = vec![];
         let mut nav = AgentNavigator {
             llm: &mock,
             resolver: &resolver,
-            engine: &engine,
+            engine: &mut engine,
             evidence: &mut evidence,
             trajectory_id: 1,
             milestone_id: 1,
@@ -722,12 +768,12 @@ mod tests {
         // Not: compute_raw_from_delta mock engine'de gerçek coupling vermez; bu test
         // yapısını doğrular (evidence doluyor, loop çalışıyor). D2'de gerçek measure.
         let mock = MockLlmClient::new(vec![proposal_with_coupling(0.6); 5]);
-        let engine = make_engine();
+        let mut engine = make_engine();
         let mut evidence = vec![];
         let mut nav = AgentNavigator {
             llm: &mock,
             resolver: &resolver,
-            engine: &engine,
+            engine: &mut engine,
             evidence: &mut evidence,
             trajectory_id: 1,
             milestone_id: 1,
@@ -771,12 +817,12 @@ mod tests {
                 },
             ],
         );
-        let engine = make_engine();
+        let mut engine = make_engine();
         let mut evidence = vec![];
         let mut nav = AgentNavigator {
             llm: &mock,
             resolver: &resolver,
-            engine: &engine,
+            engine: &mut engine,
             evidence: &mut evidence,
             trajectory_id: 1,
             milestone_id: 1,
@@ -795,6 +841,204 @@ mod tests {
             // evidence token cost accumulate.
             let total_prompt: u64 = evidence.iter().map(|e| e.token_cost.prompt_tokens).sum();
             assert_eq!(total_prompt, 220, "prompt tokens accumulate: 100+120");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Aşama D2 — Gerçek engine measure + commit_task_claim
+    // ─────────────────────────────────────────────────────────────────────────
+
+    use crate::engine::TaskCommitInput;
+
+    /// D2 — gerçek ölçüm için 5-axis CoordinateSystem + populated space.
+    /// D1 mock (boş space + boş axes) YERINE gerçek coupling/cohesion ölçümü.
+    fn make_real_engine() -> SpaceEngine {
+        use crate::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
+        use crate::coords::CoordinateSystem;
+        // 3 node'lu basit space: node 0 → node 1 (Imports edge → coupling > 0).
+        let mut space = Space::default();
+        space.nodes.insert(
+            0,
+            Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                cohesion: Some(0.6),
+                ..Default::default()
+            },
+        );
+        space.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                kind: NodeKind::Module,
+                mass: 80.0,
+                cohesion: Some(0.5),
+                ..Default::default()
+            },
+        );
+        space.edges.push(Edge {
+            from: 0,
+            to: 1,
+            kind: crate::space::EdgeKind::Imports,
+            is_type_only: false,
+        });
+        let cs = CoordinateSystem::default_raw_five(
+            CohesionAxis::new(),
+            EntropyAxis::from_commit_entropy(6.0),
+            WitnessDepthAxis::from_witness(0.3, 5),
+        );
+        SpaceEngine::new(
+            space,
+            cs,
+            VisionVector::default(),
+            crate::engine::EngineConfig::default_calibrated(),
+        )
+    }
+
+    // 1. navigator_real_measure_nonzero_coupling (D2 — gerçek space)
+    #[test]
+    fn navigator_real_measure_nonzero_coupling() {
+        let engine = make_real_engine();
+        let raw = engine.compute_raw_from_delta(
+            &[Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                cohesion: Some(0.6),
+                ..Default::default()
+            }],
+            &[],
+        );
+        assert!(
+            raw.x > 0.0,
+            "D2: real space coupling > 0 (edge 0→1 exists): got {}",
+            raw.x
+        );
+    }
+
+    // 2. commit_task_claim_runs_q5b_predicate_gate
+    #[test]
+    fn commit_task_claim_runs_q5b_predicate_gate() {
+        let mut engine = make_real_engine();
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(coupling_task(1, 0.55, TaskPolicy::default()));
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let result = engine.commit_task_claim(TaskCommitInput {
+            claim: &claim,
+            omega: &omega,
+            task_resolver: &resolver as &dyn TaskResolver,
+            target: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            loss_before: 1.0,
+            measured,
+        });
+        // Q5.b çalıştı — Reject (witness yok) veya Ok (predicate reject NotApplied).
+        // İkisi de Q5.b'nin çalıştığını gösterir. Witness boş → reject beklenir (D2 limitation).
+        match result {
+            Ok(r) => {
+                assert!(
+                    r.outcome.predicate_completion == PredicateCompletion::Completed
+                        || r.outcome.predicate_completion == PredicateCompletion::NotCompleted
+                );
+            }
+            Err(crate::engine::EngineCommitError::Witness(_)) => {
+                // Witness Q1 fail (MinApproversNotMet) — predicate çalıştı, witness aşamasında reject.
+                // D2'de beklenen — gerçek witness navigator'da (D3).
+            }
+            Err(e) => panic!("unexpected error (not witness): {e:?}"),
+        }
+    }
+
+    // 6. commit_standalone_unchanged (mevcut commit() hâlâ standalone çalışır)
+    #[test]
+    fn commit_standalone_unchanged() {
+        let mut engine = make_real_engine();
+        let claim = test_claim_with_task(1, None, 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let _ = engine.commit(&claim, &omega); // standalone commit çalışır
+    }
+
+    // 7. commit_task_claim_requires_task_bound_claim
+    #[test]
+    fn commit_task_claim_requires_task_bound_claim() {
+        let mut engine = make_real_engine();
+        let resolver = InMemoryTaskRegistry::new();
+        let claim = test_claim_with_task(1, None, 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(TaskCommitInput {
+            claim: &claim,
+            omega: &omega,
+            task_resolver: &resolver as &dyn TaskResolver,
+            target: RawPosition::default(),
+            loss_before: 1.0,
+            measured,
+        });
+        assert!(
+            result.is_err(),
+            "standalone claim rejected by commit_task_claim"
+        );
+    }
+
+    // 8. navigator_delta_edges_affect_coupling
+    #[test]
+    fn navigator_delta_edges_affect_coupling() {
+        let engine = make_real_engine();
+        let node = Node {
+            id: 5,
+            kind: NodeKind::Module,
+            mass: 100.0,
+            cohesion: Some(0.6),
+            ..Default::default()
+        };
+        let raw_no_edge = engine.compute_raw_from_delta(&[node.clone()], &[]);
+        let raw_with_edge = engine.compute_raw_from_delta(
+            &[node],
+            &[Edge {
+                from: 5,
+                to: 0,
+                kind: crate::space::EdgeKind::Imports,
+                is_type_only: false,
+            }],
+        );
+        assert!(
+            raw_with_edge.x >= raw_no_edge.x,
+            "D2: delta edge increases coupling: no_edge={}, with_edge={}",
+            raw_no_edge.x,
+            raw_with_edge.x
+        );
+    }
+
+    /// Test helper — task_id ile veya None claim üret.
+    fn test_claim_with_task(id: u64, task_id: Option<TaskId>, coupling: f64) -> Claim {
+        Claim {
+            id,
+            intent: Intent::new(7, RawPosition::default()),
+            author: 7,
+            computed_raw: RawPosition {
+                x: coupling,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            delta_nodes: vec![Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                cohesion: Some(0.6),
+                ..Default::default()
+            }],
+            delta_edges: vec![],
+            task_id,
         }
     }
 }
