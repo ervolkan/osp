@@ -20,7 +20,10 @@ docs/paper2-notes/
   stage-D4-calibration.md      — Aşama D4: calibration feedback (LLM retry optimization)
   stage-F-osp-cli.md           — Aşama F1: CLI truth surface
   stage-G1-osp-mcp.md          — Aşama G1: MCP server (INV-T1 canlı doğrulama)
+  stage-G2-osp-mcp-operator-navigator.md — Aşama G2: operator tools + navigator loop
+  stage-G2c-corpus-runner.md   — Aşama G2c: corpus experiment runner (harness MVP)
   evidence/                    — ham ölçümler (JSON), corpus sonuçları
+    g2c-corpus-results.md      — G2c-1 mock harness results + threats/limitations
 ```
 
 ## İlişkili Formal Spec

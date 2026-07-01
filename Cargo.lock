@@ -2282,10 +2282,13 @@ name = "osp-analyzer"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "clap",
  "osp-core",
+ "osp-llm-runtime",
  "protobuf",
  "scip",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
