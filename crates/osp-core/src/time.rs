@@ -82,7 +82,8 @@ mod tests {
                 ..Default::default()
             }],
             delta_edges: vec![],
-            task_id: None, // standalone (Paper 1 static flow, INV-T5)
+            task_id: None,         // standalone (Paper 1 static flow, INV-T5)
+            removed_edges: vec![], // G2c-2
         }
     }
     fn ev(id: EvidenceId, actor: AgentId) -> EvidenceEvent {

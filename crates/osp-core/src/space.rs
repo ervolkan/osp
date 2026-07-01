@@ -490,6 +490,16 @@ impl Space {
         self
     }
 
+    /// **G2c-2 (arkadaş review 7 #3):** Kenar kaldır — kaç edge silindiğini döndür.
+    /// `0` = nonexistent edge removal (Q4/Q6 yakalar: agent olmayan edge'i
+    /// kaldırdığını iddia edemez). Coupling/instability düşürme = import kaldırma.
+    pub fn remove_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) -> usize {
+        let before = self.edges.len();
+        self.edges
+            .retain(|e| !(e.from == from && e.to == to && e.kind == kind));
+        before - self.edges.len()
+    }
+
     /// Düğüm sayısı `|V|`.
     pub fn node_count(&self) -> usize {
         self.nodes.len()

@@ -307,6 +307,7 @@ mod tests {
             delta: Delta {
                 new_nodes: new_node_ids.iter().map(|&id| mod_node(id)).collect(),
                 new_edges: new_edges.iter().map(|&(f, t)| edge(f, t)).collect(),
+                removed_edges: vec![], // G2c-2
                 repositioned: vec![],
             },
             safety_weakened: false,

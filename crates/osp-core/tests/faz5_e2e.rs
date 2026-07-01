@@ -184,7 +184,7 @@ fn e2e_agent_adds_valid_module_passes_all_gates() {
     );
 
     // Step 5: Engine computes actual position (LLM never declares — inv #4)
-    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges);
+    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges, &[], &[]);
     assert!(computed_raw.x.is_finite(), "coupling must be measured");
     assert!(
         computed_raw.z >= 0.0 && computed_raw.z <= 1.0,
@@ -199,7 +199,8 @@ fn e2e_agent_adds_valid_module_passes_all_gates() {
         computed_raw,
         delta_nodes,
         delta_edges,
-        task_id: None, // standalone (Paper 1, INV-T5)
+        task_id: None,         // standalone (Paper 1, INV-T5)
+        removed_edges: vec![], // G2c-2
     };
 
     // Step 7: Commit pipeline — Q4 → Q5 → Q6 → Q1-Q3
@@ -231,7 +232,7 @@ fn e2e_self_import_rejected_by_q4_syntax_gate() {
     let (delta_nodes, delta_edges) = mock_llm_self_import();
 
     // Engine computes position (even for bad proposals — measurement is neutral)
-    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges);
+    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges, &[], &[]);
 
     let claim = osp_core::witness::Claim {
         id: 1,
@@ -240,7 +241,8 @@ fn e2e_self_import_rejected_by_q4_syntax_gate() {
         computed_raw,
         delta_nodes,
         delta_edges,
-        task_id: None, // standalone (Paper 1, INV-T5)
+        task_id: None,         // standalone (Paper 1, INV-T5)
+        removed_edges: vec![], // G2c-2
     };
 
     let result = engine.commit(&claim, &two_witnesses());
@@ -284,7 +286,8 @@ fn e2e_vision_violation_rejected_by_q5() {
             ..Default::default()
         }],
         delta_edges: vec![],
-        task_id: None, // standalone (Paper 1, INV-T5)
+        task_id: None,         // standalone (Paper 1, INV-T5)
+        removed_edges: vec![], // G2c-2
     };
 
     let result = engine.commit(&claim, &two_witnesses());
@@ -312,7 +315,7 @@ fn e2e_insufficient_witnesses_hold() {
     let mut engine = make_engine(space);
 
     let (delta_nodes, delta_edges) = mock_llm_add_auth();
-    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges);
+    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges, &[], &[]);
 
     let claim = osp_core::witness::Claim {
         id: 1,
@@ -321,7 +324,8 @@ fn e2e_insufficient_witnesses_hold() {
         computed_raw,
         delta_nodes,
         delta_edges,
-        task_id: None, // standalone (Paper 1, INV-T5)
+        task_id: None,         // standalone (Paper 1, INV-T5)
+        removed_edges: vec![], // G2c-2
     };
 
     // Only 1 witness → Hold (min_approvers=2 not met)
@@ -376,7 +380,7 @@ fn e2e_pipeline_diagnostic() {
     eprintln!("  → NO positions declared (engine measures)");
 
     // 3. Position computation
-    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges);
+    let computed_raw = engine.compute_raw_from_delta(&delta_nodes, &delta_edges, &[], &[]);
     eprintln!("\nStep 3: compute_raw_from_delta (engine measures)");
     eprintln!("  → coupling = {:.3}", computed_raw.x);
     eprintln!("  → cohesion = {:.3}", computed_raw.y);
@@ -390,7 +394,8 @@ fn e2e_pipeline_diagnostic() {
         computed_raw,
         delta_nodes,
         delta_edges,
-        task_id: None, // standalone (Paper 1, INV-T5)
+        task_id: None,         // standalone (Paper 1, INV-T5)
+        removed_edges: vec![], // G2c-2
     };
     let result = engine.commit(&claim, &two_witnesses());
     eprintln!("\nStep 4: commit → Q4→Q5→Q6→Q1-Q3");

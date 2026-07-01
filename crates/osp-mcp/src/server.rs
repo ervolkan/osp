@@ -785,10 +785,20 @@ impl Workspace {
             }
         }
 
-        // 2. Engine measure (INV-T3 — agent değiştiremez).
-        let computed_raw = self
-            .engine_mut()
-            .compute_raw_from_delta(&delta_nodes, &delta_edges);
+        // 2. Engine measure (INV-T3 — agent değiştiremez). G2c-2: removed_edges +
+        // affected_nodes geçir (coupling-reducing proposals için).
+        let mut affected: Vec<osp_core::space::NodeId> = proposal.affected_nodes.clone();
+        for er in &proposal.removed_edges {
+            if !affected.contains(&er.from) {
+                affected.push(er.from);
+            }
+        }
+        let computed_raw = self.engine_mut().compute_raw_from_delta(
+            &delta_nodes,
+            &delta_edges,
+            &proposal.removed_edges,
+            &affected,
+        );
 
         // 3. Claim build + commit_task_claim.
         let claim = match build_claim_from_proposal(&proposal, computed_raw, task_id, 1, 1) {

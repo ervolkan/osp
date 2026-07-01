@@ -850,19 +850,33 @@ impl SpaceEngine {
     ///
     /// **Centroid:** ΔS'deki tüm node'ların mass-weighted ortalama pozisyonu.
     /// Bu, "bu değişiklik uzayın neresinde?" sorusunun cevabıdır.
+    /// **G2c-2 (arkadaş review 7):** Hypothetical graph ölçümü — delta node/edge ekleme
+    /// + delta_removed edge kaldırma + affected_nodes ölçüm scope'u.
+    ///
+    /// `affected_nodes` (review 7 #6): ölçülecek MEVCUT node ID'leri. Boşsa delta_nodes
+    /// kullanılır. Target node'u buraya koy — new_nodes'a DEĞİL (ontolojik tutarsızlık).
+    /// `delta_removed`: hypothetical'ta uygulanır, coupling/instability düşürür (import kaldırma).
     pub fn compute_raw_from_delta(
         &self,
         delta_nodes: &[crate::space::Node],
         delta_edges: &[crate::space::Edge],
+        delta_removed: &[crate::agent::EdgeRef],
+        affected_nodes: &[crate::space::NodeId],
     ) -> RawPosition {
-        if delta_nodes.is_empty() {
+        // Ölçülecek node seti: affected_nodes (boşsa delta_nodes) — review 7 #6.
+        if delta_nodes.is_empty() && affected_nodes.is_empty() {
             return RawPosition::default();
         }
 
-        // 1. Hypothetical graph: clone current space
+        // 1. Hypothetical graph: clone current space.
         let mut hypothetical = self.space.clone();
 
-        // 2. Apply structural changes (pre-mutation, no commit)
+        // 2. G2c-2: subtractive delta uygula (edge kaldırma) — eklemelerden ÖNCE.
+        for er in delta_removed {
+            hypothetical.remove_edge(er.from, er.to, er.kind);
+        }
+
+        // 3. Additive delta uygula (node + edge ekleme).
         for node in delta_nodes {
             hypothetical.insert_node(node.clone());
         }
@@ -870,13 +884,19 @@ impl SpaceEngine {
             hypothetical.insert_edge(*edge);
         }
 
-        // 3. Compute raw position for each delta node in the hypothetical graph
-        let positions: Vec<(f64, RawPosition)> = delta_nodes
+        // 4. Ölçülecek node setini belirle.
+        let measure_ids: Vec<crate::space::NodeId> = if !affected_nodes.is_empty() {
+            affected_nodes.to_vec()
+        } else {
+            delta_nodes.iter().map(|n| n.id).collect()
+        };
+
+        // 5. Measure edilen node'ların pozisyonunu hesapla.
+        let positions: Vec<(f64, RawPosition)> = measure_ids
             .iter()
-            .filter_map(|n| {
-                let node = hypothetical.nodes.get(&n.id)?;
+            .filter_map(|&id| {
+                let node = hypothetical.nodes.get(&id)?;
                 let raw = self.coord_system.raw_position_of(node, &hypothetical);
-                // Mass as weight (minimum 0.01 to avoid div-by-zero)
                 Some((node.mass.max(0.01), raw))
             })
             .collect();
@@ -885,7 +905,7 @@ impl SpaceEngine {
             return RawPosition::default();
         }
 
-        // 4. Mass-weighted centroid
+        // 6. Mass-weighted centroid.
         let total_mass: f64 = positions.iter().map(|(m, _)| m).sum();
         RawPosition {
             x: positions.iter().map(|(m, r)| m * r.x).sum::<f64>() / total_mass,
@@ -958,7 +978,8 @@ mod tests {
             computed_raw,
             delta_nodes: vec![mod_node(10)],
             delta_edges: vec![],
-            task_id: None, // standalone (Paper 1 static flow, INV-T5)
+            task_id: None,         // standalone (Paper 1 static flow, INV-T5)
+            removed_edges: vec![], // G2c-2
         }
     }
 
@@ -1226,7 +1247,8 @@ v = 0.5
             computed_raw: RawPosition::default(),
             delta_nodes: nodes,
             delta_edges: edges,
-            task_id: None, // standalone (Paper 1 static flow, INV-T5)
+            task_id: None,         // standalone (Paper 1 static flow, INV-T5)
+            removed_edges: vec![], // G2c-2
         }
     }
 
@@ -1489,7 +1511,7 @@ v = 0.5
     #[test]
     fn compute_raw_empty_delta_returns_default() {
         let engine = make_engine();
-        let raw = engine.compute_raw_from_delta(&[], &[]);
+        let raw = engine.compute_raw_from_delta(&[], &[], &[], &[]);
         assert_eq!(
             raw,
             RawPosition::default(),
@@ -1508,7 +1530,7 @@ v = 0.5
             mass: 10.0,
             ..Default::default()
         }];
-        let _ = engine.compute_raw_from_delta(&nodes, &[]);
+        let _ = engine.compute_raw_from_delta(&nodes, &[], &[], &[]);
 
         assert_eq!(
             engine.space().node_count(),
@@ -1526,7 +1548,7 @@ v = 0.5
             mass: 10.0,
             ..Default::default()
         }];
-        let raw = engine.compute_raw_from_delta(&nodes, &[]);
+        let raw = engine.compute_raw_from_delta(&nodes, &[], &[], &[]);
         // Isolated node: coupling = out_degree / (1 + out_degree) = 0 / 1 = 0
         assert!(
             (raw.x - 0.0).abs() < 1e-9,
@@ -1566,7 +1588,7 @@ v = 0.5
             ..Default::default()
         }];
 
-        let raw = engine.compute_raw_from_delta(&nodes, &edges);
+        let raw = engine.compute_raw_from_delta(&nodes, &edges, &[], &[]);
 
         // Node 1: out_degree(Imports) = 1 → coupling = 1/(1+1) = 0.5
         // Node 2: out_degree(Imports) = 0 → coupling = 0
@@ -1602,7 +1624,7 @@ v = 0.5
             ..Default::default()
         }];
 
-        let raw = engine.compute_raw_from_delta(&nodes, &edges);
+        let raw = engine.compute_raw_from_delta(&nodes, &edges, &[], &[]);
         let expected = 100.0 * 0.5 / 101.0;
         assert!(
             (raw.x - expected).abs() < 1e-6,
@@ -1622,7 +1644,7 @@ v = 0.5
             cohesion: Some(0.85),
             ..Default::default()
         }];
-        let raw = engine.compute_raw_from_delta(&nodes, &[]);
+        let raw = engine.compute_raw_from_delta(&nodes, &[], &[], &[]);
         assert!(
             (raw.y - 0.85).abs() < 1e-9,
             "cohesion should come from node.cohesion, got {}",

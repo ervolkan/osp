@@ -320,6 +320,11 @@ pub struct Claim {
     /// ama Q5.b sadece TaskBoundClaim kabul eder).
     #[serde(default)]
     pub task_id: Option<crate::trajectory::TaskId>,
+    /// **G2c-2 (arkadaş review 7 #5):** Kaldırılacak kenarlar. DeltaProposal → Claim →
+    /// Delta zinciri — `evaluate` bunu `Delta.removed_edges`'e geçirir, `apply_delta`
+    /// uygular. Coupling/instability düşürme = import kaldırma.
+    #[serde(default)]
+    pub removed_edges: Vec<crate::agent::EdgeRef>,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -358,7 +363,8 @@ pub fn evaluate(claim: &Claim, omega: &WitnessSet) -> WitnessResult {
     let delta = crate::bigbang::Delta {
         new_nodes: claim.delta_nodes.clone(), // Faz 2.4: full Node objects (replay için)
         new_edges: claim.delta_edges.clone(),
-        repositioned: vec![], // Faz 1.8: ΔV ∪ N₁(ΔV) hesaplar
+        removed_edges: claim.removed_edges.clone(), // G2c-2: subtractive delta
+        repositioned: vec![],                       // Faz 1.8: ΔV ∪ N₁(ΔV) hesaplar
     };
 
     WitnessResult::Commit {
@@ -403,7 +409,8 @@ mod tests {
             computed_raw: RawPosition::default(),
             delta_nodes: vec![],
             delta_edges: vec![],
-            task_id: None, // standalone (Paper 1 static flow, INV-T5)
+            task_id: None,         // standalone (Paper 1 static flow, INV-T5)
+            removed_edges: vec![], // G2c-2
         }
     }
 

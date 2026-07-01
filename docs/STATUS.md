@@ -23,7 +23,7 @@ osp-analyzer      ✅ Paper 1 (SCIP + tree-sitter, 5 dil)
 osp-spike         ✅ Paper 1 korpuslar (svelte, 23 repo)
 osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 
-G2c corpus runner ⚠️ G2c-1 ✅ + G2c-1b ✅ (reject-evidence); G2c-2/3 fix, G2c-4 real LLM, G2c-5 external corpus kaldı
+G2c corpus runner ⚠️ G2c-1 ✅ + G2c-1b ✅ + G2c-2 ✅ (remove_edges); G2c-3 incremental, G2c-4 real LLM, G2c-5 external corpus kaldı
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
 Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
@@ -65,6 +65,7 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 | osp-mcp G2 (operator + loop) | ✅ done | **high** | INV-T2 gate canlı, navigator loop |
 | **G2c-1 Corpus runner (harness)** | ✅ done | **required** | RQ6-9 altyapı; 24 cell deterministik |
 | **G2c-1b Reject-evidence** | ✅ done | **required** | navigator tüm attempt'ler evidence'a girer (gate_decision) |
+| **G2c-2 remove_edges** | ✅ done | **required** | DeltaProposal +removed_edges, OpKind::RemoveImport onurlandırılır |
 | Evidence JSON + failure notes | ⬜ pending | **required** | data-driven yazım |
 | osp-sdk (H) | ⬜ pending | **optional** | ürünleşme, paper'ı geciktirmez |
 | 3D UI / trajectory correction (E) | ⏸ paused | **optional** | sunum katmanı |
@@ -82,13 +83,13 @@ H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Sonraki Adım Önerisi
 
-**G2c-2/3 — Proposal realism fix.** G2c-1b tamam: navigator'ın tüm attempt'leri (empty/Q4/
-commit-error/success) artık evidence ledger'a girer, `gate_decision` hangi gate'te kaldığını
-söyler (evidence 0 → 120'ye çıktı). Sıradaki: target-edge-aware proposals (G2c-2, RQ8 Completed
-farkı) + incremental coupling-dropping proposals (G2c-3, RQ9 state accumulation). Sonra gerçek
-LLM küçük subset (G2c-4) ve external corpus (G2c-5).
+**G2c-3 — Incremental coupling-dropping + policy accumulation.** G2c-2 tamam: `OpKind::RemoveImport`
+artık gerçek operasyon (etiket değil), engine coupling-reducing structural proposals ölçüyor.
+Sıradaki: incremental proposals (1'er import kaldırma → AcceptImprovement state ilerler,
+StrictReject sabit) ile RQ9 Completed vs LimitExceeded sinyali. Sonra gerçek LLM küçük subset
+(G2c-4) ve external corpus (G2c-5).
 
-Paper 2 minimum gate: G2c-2/3 fix + gerçek LLM corpus + evidence JSON + failure notes.
+Paper 2 minimum gate: G2c-3 + gerçek LLM corpus + evidence JSON + failure notes.
 
 ## Test Durumu
 

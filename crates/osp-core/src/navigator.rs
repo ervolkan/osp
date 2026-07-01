@@ -213,7 +213,12 @@ pub fn build_claim_from_proposal(
     agent: AgentId,
     claim_id: ClaimId,
 ) -> Result<Claim, ClaimBuildError> {
-    if proposal.new_nodes.is_empty() && proposal.new_edges.is_empty() {
+    // G2c-2: empty check — removed_edges veya affected_nodes varsa proposal boş değil.
+    // (sadece additive delta değil, subtractive delta da geçerli proposal).
+    if proposal.new_nodes.is_empty()
+        && proposal.new_edges.is_empty()
+        && proposal.removed_edges.is_empty()
+    {
         return Err(ClaimBuildError::EmptyProposal);
     }
     // NewNodeSpec → Node (resolve: connected_to ile yeni ID'ler ata).
@@ -255,6 +260,7 @@ pub fn build_claim_from_proposal(
         delta_nodes,
         delta_edges,
         task_id: Some(task_id),
+        removed_edges: proposal.removed_edges.clone(), // G2c-2: subtractive delta
     })
 }
 
@@ -395,6 +401,39 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                 continue;
             }
 
+            // G2c-2 (arkadaş review 7 #8 — güvenlik kritik): removed_edges için
+            // allowed_operations kontrolü. OpKind::RemoveImport yoksa policy ihlali → RejectedByRule.
+            if !proposal.removed_edges.is_empty()
+                && !task
+                    .allowed_operations
+                    .contains(&crate::trajectory::OpKind::RemoveImport)
+            {
+                last_outcome = Some(crate::trajectory::AttemptOutcome {
+                    gate_decision: GateDecision::RejectedByRule,
+                    predicate_completion: PredicateCompletion::NotCompleted,
+                    mutation_decision: MutationDecision::Reject,
+                    witness_status: None,
+                });
+                let before_raw = self.current_measured.to_raw();
+                self.evidence.push(TrajectoryEvidence {
+                    trajectory_id: self.trajectory_id,
+                    milestone_id: self.milestone_id,
+                    task_id,
+                    attempt_id: attempt_num as u64,
+                    before: before_raw,
+                    after: before_raw,
+                    gate_decision: GateDecision::RejectedByRule,
+                    predicate_completion: PredicateCompletion::NotCompleted,
+                    mutation_decision: MutationDecision::Reject,
+                    token_cost,
+                    duration_ms: 0,
+                });
+                feedback_history.push(format!(
+                    "Attempt {attempt_num}: Policy violation — removed_edges requires OpKind::RemoveImport in task.allowed_operations."
+                ));
+                continue;
+            }
+
             // 4. DeltaProposal → Claim (task-bound, boşluk #3).
             // D2: computed_raw = engine hypothetical ölçümü (gerçek space + delta_edges).
             let delta_nodes: Vec<Node> = proposal
@@ -413,10 +452,22 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                     is_type_only: false,
                 })
                 .collect();
-            // D2: gerçek delta_edges geçir (coupling proposed edge'leri yansısın).
-            let computed_raw = self
-                .engine
-                .compute_raw_from_delta(&delta_nodes, &delta_edges);
+            // G2c-2: affected_nodes = removed_edges.from (coupling düşen node'lar) +
+            // proposal.affected_nodes. compute_raw_from_delta bu node'ları ölçer.
+            let mut affected: Vec<NodeId> = proposal.affected_nodes.clone();
+            for er in &proposal.removed_edges {
+                if !affected.contains(&er.from) {
+                    affected.push(er.from);
+                }
+            }
+            // D2: computed_raw = engine hypothetical ölçümü (gerçek space + delta_edges +
+            // G2c-2 delta_removed + affected_nodes ölçüm scope).
+            let computed_raw = self.engine.compute_raw_from_delta(
+                &delta_nodes,
+                &delta_edges,
+                &proposal.removed_edges,
+                &affected,
+            );
             let claim = match build_claim_from_proposal(
                 &proposal,
                 computed_raw,
@@ -641,6 +692,7 @@ mod tests {
             modified_entities: vec![],
             position_hints: vec![],
             reasoning: format!("target coupling {coupling}"),
+            ..Default::default() // G2c-2: removed_edges, affected_nodes default
         }
     }
 
@@ -977,6 +1029,8 @@ mod tests {
                 ..Default::default()
             }],
             &[],
+            &[], // G2c-2: removed_edges
+            &[], // G2c-2: affected_nodes
         );
         assert!(
             raw.x > 0.0,
@@ -1067,7 +1121,7 @@ mod tests {
             cohesion: Some(0.6),
             ..Default::default()
         };
-        let raw_no_edge = engine.compute_raw_from_delta(&[node.clone()], &[]);
+        let raw_no_edge = engine.compute_raw_from_delta(&[node.clone()], &[], &[], &[]);
         let raw_with_edge = engine.compute_raw_from_delta(
             &[node],
             &[Edge {
@@ -1076,6 +1130,8 @@ mod tests {
                 kind: crate::space::EdgeKind::Imports,
                 is_type_only: false,
             }],
+            &[], // G2c-2: removed_edges
+            &[], // G2c-2: affected_nodes
         );
         assert!(
             raw_with_edge.x >= raw_no_edge.x,
@@ -1107,6 +1163,7 @@ mod tests {
             }],
             delta_edges: vec![],
             task_id,
+            removed_edges: vec![], // G2c-2
         }
     }
 
@@ -1122,6 +1179,7 @@ mod tests {
             modified_entities: vec![],
             position_hints: vec![],
             reasoning: "intentionally empty".into(),
+            ..Default::default() // G2c-2: removed_edges, affected_nodes default
         }
     }
 
@@ -1297,5 +1355,158 @@ mod tests {
         assert!(json.contains("gate_decision"));
         assert!(json.contains("PassedAll"));
         assert!(json.contains("AcceptAsProgress"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // G2c-2 (arkadaş review 7) — DeltaProposal remove_edges + coupling reduction
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// G2c-2 #1: remove_edge count döner, nonexistent edge → 0 (review 7 #3).
+    #[test]
+    fn g2c_remove_edge_returns_count_and_nonexistent_returns_zero() {
+        let mut space = Space::default();
+        space.insert_edge(Edge {
+            from: 0,
+            to: 1,
+            kind: crate::space::EdgeKind::Imports,
+            is_type_only: false,
+        });
+        space.insert_edge(Edge {
+            from: 0,
+            to: 2,
+            kind: crate::space::EdgeKind::Imports,
+            is_type_only: false,
+        });
+        // 2 edge kaldır (0→1 Imports) — count 1 döner (sadece 0→1 mevcut).
+        let count = space.remove_edge(0, 1, crate::space::EdgeKind::Imports);
+        assert_eq!(count, 1);
+        // Tekrar aynı edge'i kaldır → 0 (nonexistent).
+        let count_again = space.remove_edge(0, 1, crate::space::EdgeKind::Imports);
+        assert_eq!(count_again, 0, "nonexistent edge removal must return 0");
+        // Diğer edge hâlâ duruyor.
+        assert_eq!(space.edges.len(), 1);
+    }
+
+    /// G2c-2 #2: removed_edges requires OpKind::RemoveImport in allowed_operations
+    /// (review 7 #8 — güvenlik kritik). Yoksa RejectedByRule.
+    #[test]
+    fn g2c_removed_edges_requires_allowed_operation() {
+        use crate::agent::EdgeRef;
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 1;
+        policy.predicate_failure_policy = PredicateFailurePolicy::StrictReject;
+        // Task allowed_operations'ta RemoveImport YOK → removed_edges reject edilmeli.
+        let mut task = coupling_task(1, 0.55, policy);
+        task.allowed_operations = vec![]; // RemoveImport yok
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        // removed_edges içeren proposal.
+        let proposal = DeltaProposal {
+            new_nodes: vec![],
+            new_edges: vec![],
+            removed_edges: vec![EdgeRef {
+                from: 0,
+                to: 1,
+                kind: crate::space::EdgeKind::Imports,
+            }],
+            affected_nodes: vec![0],
+            modified_entities: vec![],
+            position_hints: vec![],
+            reasoning: "remove import".into(),
+        };
+        let mock = MockLlmClient::new(vec![proposal]);
+        let mut engine = make_real_engine(); // node 0→1 import var
+        let mut evidence = vec![];
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.5),
+            output_contract: OutputContract::strict(),
+        };
+        let _ = nav.run_task(1, 7);
+        // Policy violation → RejectedByRule evidence.
+        assert!(!evidence.is_empty());
+        assert!(
+            evidence
+                .iter()
+                .any(|e| e.gate_decision == GateDecision::RejectedByRule),
+            "removed_edges without RemoveImport in allowed_ops must be RejectedByRule"
+        );
+    }
+
+    /// G2c-2 #3: compute_raw_from_delta removed_edges ile coupling düşer (arkadaş review 7 #7).
+    /// make_real_engine: node 0→1 import (coupling 0.5). remove edince coupling 0.
+    #[test]
+    fn g2c_compute_raw_from_delta_applies_removals() {
+        use crate::agent::EdgeRef;
+        let engine = make_real_engine();
+        // Baseline: node 0 coupling = 1/(1+1) = 0.5 (tek outgoing import).
+        let baseline = engine.compute_raw_from_delta(&[], &[], &[], &[0]);
+        assert!(
+            baseline.x > 0.4 && baseline.x < 0.6,
+            "baseline coupling ~0.5 (1 import): got {}",
+            baseline.x
+        );
+        // Remove the import edge → coupling 0.
+        let removed = vec![EdgeRef {
+            from: 0,
+            to: 1,
+            kind: crate::space::EdgeKind::Imports,
+        }];
+        let after = engine.compute_raw_from_delta(&[], &[], &removed, &[0]);
+        assert!(after.x < 0.01, "after removal coupling ~0: got {}", after.x);
+        assert!(
+            after.x < baseline.x,
+            "coupling must decrease after edge removal"
+        );
+    }
+
+    /// G2c-2 #4: coupling-reducing proposal engine'de coupling düşürür (compute_raw_from_delta).
+    /// Tam Completed pipeline (predicate gate + vision + witness) G2c-3'te ele alınır —
+    /// burada engine-level coupling reduction kanıtlanır (#3 ile complementer).
+    /// navigator build_claim_from_proposal removed_edges'i Claim'e geçirir (serde round-trip).
+    #[test]
+    fn g2c_removed_edges_serde_and_claim_round_trip() {
+        use crate::agent::EdgeRef;
+        let proposal = DeltaProposal {
+            new_nodes: vec![],
+            new_edges: vec![],
+            removed_edges: vec![EdgeRef {
+                from: 5,
+                to: 7,
+                kind: crate::space::EdgeKind::Imports,
+            }],
+            affected_nodes: vec![5],
+            modified_entities: vec![],
+            position_hints: vec![],
+            reasoning: "G2c-2 serde test".into(),
+        };
+        // DeltaProposal serde round-trip (removed_edges + affected_nodes backward-compat).
+        let json = serde_json::to_string(&proposal).unwrap();
+        assert!(json.contains("removed_edges"));
+        assert!(json.contains("affected_nodes"));
+        let back: DeltaProposal = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.removed_edges.len(), 1);
+        assert_eq!(back.removed_edges[0].from, 5);
+        assert_eq!(back.affected_nodes, vec![5]);
+        // build_claim_from_proposal removed_edges'i Claim'e geçirir.
+        let claim = build_claim_from_proposal(&proposal, RawPosition::default(), 1, 7, 1)
+            .expect("non-empty proposal builds claim");
+        assert_eq!(
+            claim.removed_edges.len(),
+            1,
+            "Claim must carry removed_edges"
+        );
     }
 }

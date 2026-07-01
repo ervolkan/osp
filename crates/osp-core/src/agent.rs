@@ -97,6 +97,10 @@ impl PermissionMask {
 ///
 /// **KRİTİK (inv #4):** Pozisyon **içermez** — sadece yapısal değişiklikler.
 /// Pozisyonlar `SpaceEngine` tarafından compute edilir (agent-prompt-semantics.md §2.2).
+///
+/// **G2c-2 (arkadaş review 7):** `removed_edges` (subtractive structural delta) +
+/// `affected_nodes` (ölçüm scope — `new_nodes`'a target koyma ontolojik tutarsızlık).
+/// `OpKind::RemoveImport` artık engine'de onurlandırılır.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct DeltaProposal {
@@ -104,12 +108,29 @@ pub struct DeltaProposal {
     pub new_nodes: Vec<NewNodeSpec>,
     /// Yeni eklenecek tiplenmiş kenarlar.
     pub new_edges: Vec<NewEdgeSpec>,
+    /// **G2c-2:** Kaldırılacak kenarlar (coupling/instability düşürme = import kaldırma).
+    /// `OpKind::RemoveImport` operation policy ile bağlanır — allowed_ops kontrolü navigator'da.
+    pub removed_edges: Vec<EdgeRef>,
+    /// **G2c-2 (review 7 #6):** Ölçülecek/etkilenen MEVCUT node ID'leri.
+    /// `compute_raw_from_delta` bu node'ların pozisyonunu ölçer (target node DAHİL).
+    /// Boşsa `new_nodes`'un ID'leri kullanılır. `new_nodes`'a mevcut node koyma —
+    /// ontolojik tutarsızlık (yeni varlık vs ölçüm scope).
+    pub affected_nodes: Vec<NodeId>,
     /// Mevcut düğümlerin entity özelliklerinde değişiklikler (kind/mass/metadata — POZİSYON DEĞİL).
     pub modified_entities: Vec<EntityChangeSpec>,
     /// LLM'in pozisyonla ilgili tavsiyeleri — ADVISORY ONLY, authoritative değil.
     pub position_hints: Vec<PositionHint>,
     /// LLM'in kararlarını açıklayan gerekçe (şahitler tarafından okunabilir).
     pub reasoning: String,
+}
+
+/// **G2c-2:** Edge referansı — kaldırma için from/to/kind triplet.
+/// `Space::remove_edge` ve `compute_raw_from_delta` tarafından kullanılır.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EdgeRef {
+    pub from: NodeId,
+    pub to: NodeId,
+    pub kind: EdgeKind,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -643,6 +664,7 @@ mod tests {
             modified_entities: vec![],
             position_hints: vec![],
             reasoning: "adding auth module".to_string(),
+            ..Default::default() // G2c-2: removed_edges, affected_nodes default
         };
         assert!(contract.validate(&proposal).is_ok());
     }

@@ -743,7 +743,22 @@ semantiği, progress test).
 **Paper2 notları:** stage-G2c-1b-reject-evidence.md.
 **Efor:** S-M (tamamlandı).
 
-### Aşama G2c-2/3 — Proposal realism fix ⬜ SIRADAKI
+### Aşama G2c-2 — DeltaProposal + remove_edges (ontolojik dürüstlük) ✅ TAMAMLANDI (2026-06-29)
+**Hedef:** `OpKind::RemoveImport` engine'de onurlandırılsın. Coupling düşürme = edge kaldırma.
+DeltaProposal additive-only → subtractive delta. G2c-3'ün (incremental + accumulation) önkoşulu.
+**Değişiklikler:**
+- `Space::remove_edge` count döndürür (0 = nonexistent — Q4/Q6 yakalar).
+- `EdgeRef` tipi + `DeltaProposal +removed_edges +affected_nodes`.
+- Zincir: `DeltaProposal → Claim → Delta → apply_delta → Space.remove_edge`.
+- `compute_raw_from_delta` kaldırma uygular + `affected_nodes` ölçüm scope.
+- `allowed_operations` validation: removed_edges + RemoveImport zorunlu (güvenlik).
+**Ontoloji (review 7 #6):** target node `new_nodes`'a DEĞİL, `affected_nodes`'ta (ölçüm scope).
+**Test:** 4 G2c-2 test (remove_edge count, allowed_ops, coupling düşer, serde round-trip).
+**Dürüst not (review 7 #10):** graph-level structural harness — gerçek code patch değil.
+**Paper2 notları:** stage-G2c-2-remove-edges.md.
+**Efor:** M (tamamlandı).
+
+### Aşama G2c-3 — Incremental coupling-dropping + policy accumulation ⬜ SIRADAKI
 **Hedef:** Mock proposals target node coupling'ini gerçek düşürsün → RQ8/RQ9 Completed sinyali.
 - **G2c-2:** Target-edge-aware proposals (delta node target'a edge remove/add ile bağlansın).
 - **G2c-3:** Incremental coupling-dropping (0.82→0.71→0.63→0.53) → RQ9 state accumulation.
@@ -932,6 +947,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | G2 kullanıcı kararı: ikisini de tut | `osp_submit_delta` (agent delta single-attempt) KORUNDU + `osp_run_task` (navigator loop) EKLENDİ. İki farklı semantik (delta test vs uçtan uca loop). |
 | 2026-06-29 | G2c-1 TAMAMLANDI (harness MVP) | Corpus runner example (FeedbackSensitiveMock, NoFeedbackWrapper, deterministik top-offender). 24 cell koştu, 0/24 Completed — mock proposal realism yetersiz (G2c-2/3 fix). Review 5 entegre. |
 | 2026-06-29 | G2c-1b TAMAMLANDI (reject-evidence) | Navigator tüm attempt'ler evidence'a girer + gate_decision. Empty-proposal site YENİ. GateDecision +Unknown/RejectedByTaskBinding. Helper mapping. Evidence 0→120. Review 6 entegre. |
+| 2026-06-29 | G2c-2 TAMAMLANDI (remove_edges) | DeltaProposal +removed_edges (subtractive delta). OpKind::RemoveImport onurlandırılır. Space::remove_edge count. affected_nodes (new_nodes'a target KOYMA). allowed_ops validation. Review 7 entegre. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

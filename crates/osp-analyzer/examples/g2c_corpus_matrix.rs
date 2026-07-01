@@ -26,12 +26,12 @@ use clap::Parser;
 use osp_analyzer::contract::AnalysisConfig;
 use osp_analyzer::language::AdapterRegistry;
 use osp_analyzer::pipeline::analyze_repo_with_config;
-use osp_core::agent::{DeltaProposal, NewNodeSpec, OutputContract};
+use osp_core::agent::{DeltaProposal, EdgeRef, NewNodeSpec, OutputContract};
 use osp_core::coords::{CoordinateSystem, MetricSource, RawPosition};
 use osp_core::navigator::{
     provenanced_from_raw, AgentNavigator, LlmClient, LlmError, NavigatorResult,
 };
-use osp_core::space::{Node, NodeId, NodeKind, Space};
+use osp_core::space::{EdgeKind, Node, NodeId, NodeKind, Space};
 use osp_core::trajectory::{
     ComparisonOp, InMemoryTaskRegistry, MetricPredicate, OpKind, PredicateAxis,
     PredicateFailurePolicy, PredicateScope, Task, TaskId, TaskPolicy, TaskStatus,
@@ -231,6 +231,7 @@ fn valid_proposal(label: &str) -> DeltaProposal {
         modified_entities: vec![],
         position_hints: vec![],
         reasoning: label.into(),
+        ..Default::default() // G2c-2: removed_edges, affected_nodes default
     }
 }
 
@@ -245,6 +246,53 @@ fn bad_format_proposal() -> DeltaProposal {
         modified_entities: vec![],
         position_hints: vec![],
         reasoning: "intentionally malformed for Q4 gate test".into(),
+        ..Default::default() // G2c-2: removed_edges, affected_nodes default
+    }
+}
+
+/// **G2c-2 (arkadaş review 7 #9):** Target node'un outgoing Imports'larını deterministik
+/// sırayla kaldıran proposal — coupling düşürme (graph-level structural harness).
+///
+/// target_imports: target node'un import ettiği node ID'leri (outgoing Imports edge'ler).
+/// remove_count: kaç import kaldırılacak (coupling düşürme miktarı).
+///
+/// **Ontoloji (review 7 #6):** target node'u `new_nodes`'a KOYMA — `affected_nodes`'ta
+/// (ölçüm scope). `removed_edges` engine'de `OpKind::RemoveImport` olarak onurlandırılır.
+///
+/// **Dürüst not (review 7 #10):** Bu graph-level structural proposal — gerçek repo
+/// code patch'i değil. Paper 2 "controlled structural harness" olarak kullanılır.
+///
+/// **G2c-3:** Matris döngüsüne entegre edilecek (incremental removal + policy accumulation).
+#[allow(dead_code)] // G2c-3'te matris döngüsünde kullanılacak
+fn coupling_reducing_proposal(
+    target_node: NodeId,
+    target_imports: Vec<NodeId>,
+    remove_count: usize,
+) -> DeltaProposal {
+    // Deterministik sıralama (review 7 #9): sort by dep id asc, take remove_count.
+    let mut deps = target_imports;
+    deps.sort();
+    let removed: Vec<EdgeRef> = deps
+        .iter()
+        .take(remove_count)
+        .map(|&dep| EdgeRef {
+            from: target_node,
+            to: dep,
+            kind: EdgeKind::Imports,
+        })
+        .collect();
+    DeltaProposal {
+        new_nodes: vec![], // review 7 #6: mevcut node'u new_nodes'a KOYMA
+        new_edges: vec![],
+        removed_edges: removed.clone(),
+        affected_nodes: vec![target_node], // ölçüm scope — target node ölçülür
+        modified_entities: vec![],
+        position_hints: vec![],
+        reasoning: format!(
+            "G2c-2 coupling reduction: remove {} imports from node {} (graph-level)",
+            removed.len(),
+            target_node
+        ),
     }
 }
 

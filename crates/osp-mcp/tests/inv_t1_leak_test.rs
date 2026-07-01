@@ -203,6 +203,7 @@ fn inv_t1_submit_delta_outcome_has_no_target_coordinate() {
         modified_entities: vec![],
         position_hints: vec![],
         reasoning: "reduce coupling by abstracting imports".into(),
+        ..Default::default() // G2c-2: removed_edges, affected_nodes default
     };
     let mut ws = handle.lock().unwrap();
     let outcome = ws

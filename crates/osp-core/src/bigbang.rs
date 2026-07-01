@@ -12,6 +12,7 @@
 //! `apply_delta` pozisyon recomputasyonu **YAPMAZ** — sadece `ΔV ∪ N₁(ΔV)` setini
 //! döner (inv #6). Pozisyon güncelleme `SpaceEngine::commit()`'te `CosineDeviation` ile (inv #5).
 
+use crate::agent::EdgeRef;
 use crate::space::{Edge, Node, NodeId, Space};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -19,11 +20,18 @@ use crate::space::{Edge, Node, NodeId, Space};
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Uzay genişlemesi sonucu — mutasyonun çıktısı.
+///
+/// **G2c-2 (arkadaş review 7 #5):** `removed_edges` eklendi — subtractive structural delta.
+/// Coupling/instability düşürme (import kaldırma) artık Delta'da temsil edilir.
+/// `apply_delta` hem ekleme hem kaldırma uygular.
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Delta {
     /// Faz 2.4: full Node objects — event-sourcing replay için (DeltaRecord'tan geri yükle).
     pub new_nodes: Vec<Node>,
     pub new_edges: Vec<Edge>,
+    /// **G2c-2:** Kaldırılacak kenarlar. Claim.removed_edges → Delta.removed_edges.
+    #[serde(default)]
+    pub removed_edges: Vec<EdgeRef>,
     /// `ΔV ∪ N₁(ΔV)` (inv #6). Engine `CosineDeviation` ile reposition yapar.
     pub repositioned: Vec<NodeId>,
 }
@@ -66,6 +74,10 @@ pub fn apply_delta(space: &mut Space, delta: &Delta) -> Vec<NodeId> {
     }
     for e in &delta.new_edges {
         space.insert_edge(*e);
+    }
+    // G2c-2: subtractive structural delta — edge kaldırma (coupling/instability düşürme).
+    for er in &delta.removed_edges {
+        space.remove_edge(er.from, er.to, er.kind);
     }
     compute_reposition_set(space, &new_node_ids)
 }
@@ -121,6 +133,7 @@ mod tests {
         Delta {
             new_nodes: nodes,
             new_edges: edges,
+            removed_edges: vec![], // G2c-2
             repositioned: vec![],
         }
     }

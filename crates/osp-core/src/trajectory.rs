@@ -1646,6 +1646,7 @@ mod tests {
             delta_nodes: vec![],
             delta_edges: vec![],
             task_id,
+            removed_edges: vec![], // G2c-2
         }
     }
 
