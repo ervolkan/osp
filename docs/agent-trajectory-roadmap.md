@@ -729,6 +729,20 @@ target node coupling'ini düşürmüyor (isolated node). Bu, G2c-2/G2c-3 fix iç
 **Paper2 notları:** stage-G2c-corpus-runner.md, evidence/g2c-corpus-results.md.
 **Efor:** M (altyapı tamam, proposal realism fix kaldı).
 
+### Aşama G2c-1b — Navigator Reject-Evidence ✅ TAMAMLANDI (2026-06-29)
+**Hedef:** Navigator'ın tüm attempt'leri (empty/Q4-syntax/commit-error/success) evidence ledger'a
+girer + `gate_decision` hangi gate'te kaldığını söyler. G2c-2/3'ün ölçülebilir olması için önkoşul.
+**Değişiklikler:**
+- GateDecision enum: +`Unknown` (serde default), +`RejectedByTaskBinding` (Q5.b binding).
+- TrajectoryEvidence: +`gate_decision` alan (`#[serde(default)]` backward-compat).
+- `gate_decision_from_engine_error` helper (tek noktada mapping).
+- Empty-proposal YENİ evidence site (öncesi `continue`, şimdi evidence push).
+**Sonuç:** G2c runner evidence 0 → 120 entry. gate_decision JSON'da (RejectedBySyntax/Unknown).
+**Review 6 entegrasyonu:** 5 nokta tamam (Unknown default, helper, TaskBinding, before/after
+semantiği, progress test).
+**Paper2 notları:** stage-G2c-1b-reject-evidence.md.
+**Efor:** S-M (tamamlandı).
+
 ### Aşama G2c-2/3 — Proposal realism fix ⬜ SIRADAKI
 **Hedef:** Mock proposals target node coupling'ini gerçek düşürsün → RQ8/RQ9 Completed sinyali.
 - **G2c-2:** Target-edge-aware proposals (delta node target'a edge remove/add ile bağlansın).
@@ -917,6 +931,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | G2 TAMAMLANDI | MCP operator tools (trajectory_init, task_add) + navigator loop (osp_run_task) + evidence history. INV-T2 runtime gate canlı doğrulandı. `LlmClient: Send + Sync` (Cell→AtomicUsize/Miosk). `--llm mock\|real` flag. |
 | 2026-06-29 | G2 kullanıcı kararı: ikisini de tut | `osp_submit_delta` (agent delta single-attempt) KORUNDU + `osp_run_task` (navigator loop) EKLENDİ. İki farklı semantik (delta test vs uçtan uca loop). |
 | 2026-06-29 | G2c-1 TAMAMLANDI (harness MVP) | Corpus runner example (FeedbackSensitiveMock, NoFeedbackWrapper, deterministik top-offender). 24 cell koştu, 0/24 Completed — mock proposal realism yetersiz (G2c-2/3 fix). Review 5 entegre. |
+| 2026-06-29 | G2c-1b TAMAMLANDI (reject-evidence) | Navigator tüm attempt'ler evidence'a girer + gate_decision. Empty-proposal site YENİ. GateDecision +Unknown/RejectedByTaskBinding. Helper mapping. Evidence 0→120. Review 6 entegre. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

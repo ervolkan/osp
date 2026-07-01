@@ -850,7 +850,9 @@ impl Workspace {
             osp_core::trajectory::GateDecision::RejectedBySyntax => "RejectedBySyntax",
             osp_core::trajectory::GateDecision::RejectedByVision => "RejectedByVision",
             osp_core::trajectory::GateDecision::RejectedByRule => "RejectedByRule",
+            osp_core::trajectory::GateDecision::RejectedByTaskBinding => "RejectedByTaskBinding",
             osp_core::trajectory::GateDecision::BlockedByManeuverLimit => "BlockedByManeuverLimit",
+            osp_core::trajectory::GateDecision::Unknown => "Unknown",
         };
         let pred_str = match result.outcome.predicate_completion {
             osp_core::trajectory::PredicateCompletion::Completed => "Completed",

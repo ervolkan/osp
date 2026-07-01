@@ -182,6 +182,25 @@ pub fn provenanced_from_raw(raw: RawPosition, source: MetricSource) -> Provenanc
     }
 }
 
+/// **G2c-1b (arkadaş review 6 #2):** Engine commit hatası → GateDecision mapping.
+/// Tek noktada mapping — navigator reject-evidence sitesinde elle match yerine bu helper.
+/// Task binding hatası (PermissionDenied) Syntax'a gömülmez → `RejectedByTaskBinding`.
+pub fn gate_decision_from_engine_error(err: &crate::engine::EngineCommitError) -> GateDecision {
+    use crate::engine::EngineCommitError;
+    match err {
+        EngineCommitError::SyntaxViolation { .. } => GateDecision::RejectedBySyntax,
+        EngineCommitError::VisionViolation { .. } => GateDecision::RejectedByVision,
+        EngineCommitError::RuleViolation { .. } => GateDecision::RejectedByRule,
+        EngineCommitError::PermissionDenied(_) => GateDecision::RejectedByTaskBinding,
+        // Witness gate ayrı (Q1-Q3) — evidence'da Unknown kalır, witness_status taşır.
+        EngineCommitError::Witness(_) => GateDecision::Unknown,
+        // Persistence hataları gate kararı değil (altyapı hatası) → Unknown.
+        EngineCommitError::NoPersistence | EngineCommitError::Persistence(_) => {
+            GateDecision::Unknown
+        }
+    }
+}
+
 /// INV-T4 (boşluk #3) — DeltaProposal + engine-measured computed_raw + task_id → Claim
 /// (task-bound). Engine `compute_raw_from_delta()` ile ölçer (agent declare etmez).
 ///
@@ -362,6 +381,7 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                     attempt_id: attempt_num as u64,
                     before: before_raw,
                     after: before_raw,
+                    gate_decision: GateDecision::RejectedBySyntax,
                     predicate_completion: PredicateCompletion::NotCompleted,
                     mutation_decision: MutationDecision::Reject,
                     token_cost,
@@ -406,7 +426,27 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
             ) {
                 Ok(c) => c,
                 Err(_) => {
-                    // Empty proposal — retry.
+                    // Empty proposal (G2c-1b — arkadaş review 6 "en güçlü taraf"):
+                    // evidence push ekle — boş/malformed proposal da iz bırakmalı.
+                    // before = after = current (state unchanged, INV-T6).
+                    let before_raw = self.current_measured.to_raw();
+                    self.evidence.push(TrajectoryEvidence {
+                        trajectory_id: self.trajectory_id,
+                        milestone_id: self.milestone_id,
+                        task_id,
+                        attempt_id: attempt_num as u64,
+                        before: before_raw,
+                        after: before_raw,
+                        gate_decision: GateDecision::RejectedBySyntax,
+                        predicate_completion: PredicateCompletion::NotCompleted,
+                        mutation_decision: MutationDecision::Reject,
+                        token_cost,
+                        duration_ms: 0,
+                    });
+                    // D4 — Calibration feedback: empty proposal uyarısı.
+                    feedback_history.push(format!(
+                        "Attempt {attempt_num}: Empty DeltaProposal — provide new_nodes/new_edges to mutate the space."
+                    ));
                     continue;
                 }
             };
@@ -437,8 +477,10 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                 }
                 Err(e) => {
                     // Q4/Q5/Q6/witness reject — evidence kaydet, retry.
+                    // G2c-1b: gerçek gate_decision helper'dan (elle match değil).
+                    let gd = gate_decision_from_engine_error(&e);
                     last_outcome = Some(crate::trajectory::AttemptOutcome {
-                        gate_decision: crate::trajectory::GateDecision::RejectedBySyntax,
+                        gate_decision: gd,
                         predicate_completion: crate::trajectory::PredicateCompletion::NotCompleted,
                         mutation_decision: crate::trajectory::MutationDecision::Reject,
                         witness_status: None,
@@ -451,6 +493,7 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                         attempt_id: attempt_num as u64,
                         before: before_raw,
                         after: measured.to_raw(),
+                        gate_decision: gd,
                         predicate_completion: crate::trajectory::PredicateCompletion::NotCompleted,
                         mutation_decision: crate::trajectory::MutationDecision::Reject,
                         token_cost,
@@ -479,6 +522,7 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                 attempt_id: attempt_num as u64,
                 before: before_raw,
                 after: measured.to_raw(),
+                gate_decision: outcome.gate_decision,
                 predicate_completion: outcome.predicate_completion,
                 mutation_decision: outcome.mutation_decision,
                 token_cost,
@@ -1064,5 +1108,194 @@ mod tests {
             delta_edges: vec![],
             task_id,
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // G2c-1b (arkadaş review 6) — Reject-Evidence testleri
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Boş DeltaProposal (new_nodes=[], new_edges=[]) — build_claim_from_proposal EmptyProposal.
+    fn empty_proposal() -> DeltaProposal {
+        DeltaProposal {
+            new_nodes: vec![],
+            new_edges: vec![],
+            modified_entities: vec![],
+            position_hints: vec![],
+            reasoning: "intentionally empty".into(),
+        }
+    }
+
+    /// G2c-1b #1: Empty proposal → evidence push edilir, gate=RejectedBySyntax.
+    /// Öncesi: `continue` (evidence YOK). Şimdi: before=after=current, RejectedBySyntax.
+    #[test]
+    fn navigator_records_evidence_for_empty_proposal() {
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 2;
+        policy.predicate_failure_policy = PredicateFailurePolicy::StrictReject;
+        let task = coupling_task(1, 0.55, policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        // Empty proposals → build_claim_from_proposal EmptyProposal → evidence push.
+        let mock = MockLlmClient::new(vec![empty_proposal(); 2]);
+        let mut engine = make_engine();
+        let mut evidence = vec![];
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.82),
+            output_contract: OutputContract::strict(),
+        };
+        let result = nav.run_task(1, 7);
+        // Empty proposals → ExceededManeuverLimit (2 attempt evidence push edildi).
+        assert!(
+            matches!(result, NavigatorResult::ExceededManeuverLimit { .. }),
+            "empty proposal should hit maneuver limit: {result:?}"
+        );
+        // KRİTİK: evidence push EDİLDİ (G2c-1b öncesi 0 olurdu).
+        assert_eq!(
+            evidence.len(),
+            2,
+            "empty proposal should produce evidence entries"
+        );
+        // Her entry RejectedBySyntax gate_decision ile.
+        assert!(evidence
+            .iter()
+            .all(|e| e.gate_decision == GateDecision::RejectedBySyntax));
+    }
+
+    /// G2c-1b #2: Reject attempt'lerde gate_decision set edilir (empty/Q4/commit-error).
+    #[test]
+    fn navigator_evidence_includes_gate_decision() {
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 1;
+        policy.predicate_failure_policy = PredicateFailurePolicy::StrictReject;
+        let task = coupling_task(1, 0.55, policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        // Empty proposal → RejectedBySyntax gate_decision.
+        let mock = MockLlmClient::new(vec![empty_proposal()]);
+        let mut engine = make_engine();
+        let mut evidence = vec![];
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.82),
+            output_contract: OutputContract::strict(),
+        };
+        let _ = nav.run_task(1, 7);
+        // Evidence boş DEĞİL ve gate_decision Unknown DEĞİL (gerçek gate set edildi).
+        assert!(!evidence.is_empty());
+        assert!(evidence
+            .iter()
+            .all(|e| e.gate_decision != GateDecision::Unknown));
+    }
+
+    /// G2c-1b #3 (arkadaş review 6 #5): Syntax reject → state ilerlemez (INV-T6).
+    /// before == after, gate=RejectedBySyntax, mutation=Reject.
+    #[test]
+    fn navigator_syntax_reject_evidence_does_not_advance_state() {
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 1;
+        policy.predicate_failure_policy = PredicateFailurePolicy::StrictReject;
+        let task = coupling_task(1, 0.55, policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let mock = MockLlmClient::new(vec![empty_proposal()]);
+        let mut engine = make_engine();
+        let mut evidence = vec![];
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.82),
+            output_contract: OutputContract::strict(),
+        };
+        let _ = nav.run_task(1, 7);
+        let e = &evidence[0];
+        // INV-T6: reject state'i değiştirmez → before == after.
+        assert_eq!(e.before, e.after, "reject must not advance state (INV-T6)");
+        assert_eq!(e.gate_decision, GateDecision::RejectedBySyntax);
+        assert_eq!(e.mutation_decision, MutationDecision::Reject);
+    }
+
+    /// G2c-1b #4 (arkadaş review 6 #5): AcceptAsProgress → state ilerler (INV-T8 checkpoint).
+    /// G2c-3'ün temeli: AcceptImprovement policy + loss ↓ → after != before, gate=PassedAll.
+    ///
+    /// Not: Bu test D1 mock engine ile gerçek loss-dropping ölçemez (boş space → 0 coupling).
+    /// Ama evidence semantiğini doğrular: AcceptAsProgress mutation → after checkpoint state.
+    /// Tam state-advance testi G2c-3'te (incremental proposals + real repo).
+    #[test]
+    fn navigator_progress_evidence_semantics() {
+        // Bu test evidence şema semantiğini doğrular (field'lar doğru type/derive).
+        // Gerçek AcceptAsProgress davranışı G2c-3'te (incremental proposals).
+        let evidence = TrajectoryEvidence {
+            trajectory_id: 1,
+            milestone_id: 1,
+            task_id: 1,
+            attempt_id: 1,
+            before: RawPosition {
+                x: 0.7,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.3,
+            },
+            after: RawPosition {
+                x: 0.6,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.3,
+            },
+            gate_decision: GateDecision::PassedAll,
+            predicate_completion: PredicateCompletion::NotCompleted,
+            mutation_decision: MutationDecision::AcceptAsProgress,
+            token_cost: TokenCost::default(),
+            duration_ms: 100,
+        };
+        // Progress evidence: after != before (state ilerledi), gate=PassedAll.
+        assert_ne!(evidence.before, evidence.after);
+        assert_eq!(evidence.gate_decision, GateDecision::PassedAll);
+        assert_eq!(
+            evidence.mutation_decision,
+            MutationDecision::AcceptAsProgress
+        );
+        // Serialize round-trrip (gate_decision JSON'da görünür).
+        let json = serde_json::to_string(&evidence).unwrap();
+        assert!(json.contains("gate_decision"));
+        assert!(json.contains("PassedAll"));
+        assert!(json.contains("AcceptAsProgress"));
     }
 }

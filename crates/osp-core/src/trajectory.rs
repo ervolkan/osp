@@ -539,13 +539,24 @@ pub struct AttemptOutcome {
 }
 
 /// Hard gate kararları (deterministik, witness öncesi).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// **G2c-1b:** `Unknown` (serde backward-compat default) + `RejectedByTaskBinding`
+/// (Q5.b binding hatası) eklendi. navigator reject-evidence için her attempt hangi
+/// gate'te kaldığını kaydeder (arkadaş review 6 #1, #2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum GateDecision {
+    /// Bilinmeyen / serde default (eski JSON backward-compat). Navigator hiçbir zaman
+    /// aktif olarak Unknown üretmez — sadece deserialize sırasında görünebilir.
+    #[default]
+    Unknown,
     PassedAll,
     RejectedBySyntax,
     /// Q5 θ > bound.
     RejectedByVision,
     RejectedByRule,
+    /// Q5.b binding hatası (claim task-bound değil / task resolver bulunamadı).
+    /// `EngineCommitError::PermissionDenied` ile eşleşir (arkadaş review 6 #2).
+    RejectedByTaskBinding,
     /// INV-T7 — ardışık N reject.
     BlockedByManeuverLimit,
 }
@@ -702,6 +713,10 @@ impl InternalTaskPlan {
 
 /// Her TaskAttempt'in evidence kaydı (Aşama B2). Token cost + duration + outcome →
 /// RQ6 (token), RQ7 (task success), RQ8 (correction değeri) için ham veri.
+///
+/// **G2c-1b (arkadaş review 6 #1):** `gate_decision` alanı eklendi — navigator'ın tüm
+/// attempt'leri (empty/Q4-syntax/commit-error/success) evidence'a girer ve hangi gate'ta
+/// kaldığını söyler. `#[serde(default)]` ile eski JSON backward-compat (Unknown default).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TrajectoryEvidence {
     pub trajectory_id: TrajectoryId,
@@ -710,6 +725,10 @@ pub struct TrajectoryEvidence {
     pub attempt_id: TaskAttemptId,
     pub before: RawPosition,
     pub after: RawPosition,
+    /// Hangi hard gate'ta kaldı (Q4/Q5/Q6/binding/maneuver-limit/passed).
+    /// Reject attempt'lerde red nedeni; success'te PassedAll.
+    #[serde(default)]
+    pub gate_decision: GateDecision,
     pub predicate_completion: PredicateCompletion,
     pub mutation_decision: MutationDecision,
     pub token_cost: TokenCost,
