@@ -60,12 +60,20 @@ Without feedback: 12 cells, 0 completed, 0 evidence entries
 ```
 **MVP sonucu:** feedback farkı görünmüyor (her iki kol da limit). **Yorum:** feedback-sensitive mock çalışıyor ama proposals predicate sağlamadığı için feedback'in "retry başarısı" etkisi ölçülemiyor. Gerçek LLM (G2c-4) veya target-edge'li mock proposals (G2c-2 fix) gerek.
 
-### RQ9 (policy)
+### RQ9 (policy) — G2c-3 synthetic controlled fixture ✅ İLK KANIT
 ```
-StrictReject:     12 cells, 0 completed
-AcceptImprovement:12 cells, 0 completed
+synthetic/StrictReject:     ExceededManeuverLimit attempts=3, completed=false
+synthetic/AcceptImprovement: Completed attempts=3, completed=true
 ```
-**MVP sonucu:** policy farkı görünmüyor. **Yorum:** AcceptImprovement `AcceptAsProgress` ancak loss ↓ olduğunda emit olur; proposals loss düşürmüyor → AcceptImprovement de StrictReject gibi davranıyor. State accumulation farkı için **loss-dropping incremental proposals** gerek (G2c-3 fix).
+**G2c-3 sonucu (arkadaş review 8):** Policy accumulation mekanizması kanıtlandı.
+- **AcceptImprovement** + incremental removal (3 attempt): state ilerler (coupling 0.80→0.75→0.667→0.50), 3. attempt'te predicate satisfied → **Completed**
+- **StrictReject** + aynı incremental removal: state donmuş (coupling hep 0.80 ölçülür), predicate hep NotCompleted → **ExceededManeuverLimit**
+
+**Paper 2 cümlesi:** "OSP'de progress checkpoint politikası, uzun refactor benzeri görevlerde state'i adım adım hedefe yaklaştırırken, strict reject politikası aynı task'ı ilerletemez."
+
+**Etiket (review 8 #1):** synthetic controlled fixture — gerçek repo corpus değil. Policy accumulation *mekanizması* kanıtlandı; external corpus genellemesi G2c-5'te.
+
+**Local crate corpus (G2c-3 witness fix sonrası):** navigator `min_approvers=0` fix'i ile local crate corpus artık Completed üretiyor (G2c-1'in 0/24 gizli sebebi witness gate idi). Bu ek bir bulgu — navigator witness policy ayrı bir konu (operator approval vs auto-approve).
 
 ## 3. Real LLM Preliminary Results
 

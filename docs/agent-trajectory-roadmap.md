@@ -764,6 +764,21 @@ DeltaProposal additive-only → subtractive delta. G2c-3'ün (incremental + accu
 - **G2c-3:** Incremental coupling-dropping (0.82→0.71→0.63→0.53) → RQ9 state accumulation.
 **Efor:** S-M.
 
+### Aşama G2c-3 — Incremental coupling-dropping + policy accumulation ✅ TAMAMLANDI (2026-06-29)
+**Hedef:** RQ9 policy accumulation kanıtı. AcceptImprovement → Completed (state ilerler),
+StrictReject → ExceededManeuverLimit (state donmuş). İlk güçlü kontrollü deney sonucu.
+**Sonuç (synthetic fixture):**
+```
+synthetic/StrictReject:      ExceededManeuverLimit, completed=false
+synthetic/AcceptImprovement: Completed (3 attempts), completed=true
+```
+**Gizli keşif:** G2c-1 0/24 Completed'in sebebi navigator witness gate (min_approvers=2 boş set).
+Fix: navigator `with_quorum(0, 0.0)` (tek-agent auto-approve). Local crate corpus artık Completed üretiyor.
+**Review 8 entegrasyonu:** synthetic controlled harness etiketi, maneuver_limit=3, feedback sabit,
+Completed evidence PassedAll (PR #21 Unknown borcu kapandı).
+**Paper2 notları:** stage-G2c-3-incremental-accumulation.md, evidence/g2c-corpus-results.md RQ9.
+**Efor:** M (tamamlandı).
+
 ### Aşama G2c-4 — Gerçek LLM smoke ⬜ (manual, cost-limited)
 **Hedef:** GPT-4o-mini ile küçük subset. RQ6 (token cost), RQ7 (success rate).
 OPENAI_API_KEY gerekir, manual çalıştırma. **Efor:** S (altyapı hazır).
@@ -948,6 +963,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | G2c-1 TAMAMLANDI (harness MVP) | Corpus runner example (FeedbackSensitiveMock, NoFeedbackWrapper, deterministik top-offender). 24 cell koştu, 0/24 Completed — mock proposal realism yetersiz (G2c-2/3 fix). Review 5 entegre. |
 | 2026-06-29 | G2c-1b TAMAMLANDI (reject-evidence) | Navigator tüm attempt'ler evidence'a girer + gate_decision. Empty-proposal site YENİ. GateDecision +Unknown/RejectedByTaskBinding. Helper mapping. Evidence 0→120. Review 6 entegre. |
 | 2026-06-29 | G2c-2 TAMAMLANDI (remove_edges) | DeltaProposal +removed_edges (subtractive delta). OpKind::RemoveImport onurlandırılır. Space::remove_edge count. affected_nodes (new_nodes'a target KOYMA). allowed_ops validation. Review 7 entegre. |
+| 2026-06-29 | G2c-3 TAMAMLANDI (RQ9 kanıt) | Incremental coupling-dropping + policy accumulation. AcceptImprovement→Completed, StrictReject→LimitExceeded (synthetic fixture). Gizli keşif: navigator witness gate fix (min_approvers=0). Review 8 entegre. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

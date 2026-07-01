@@ -24,6 +24,7 @@ docs/paper2-notes/
   stage-G2c-corpus-runner.md   — Aşama G2c: corpus experiment runner (harness MVP)
   stage-G2c-1b-reject-evidence.md — Aşama G2c-1b: navigator reject-evidence (gate_decision)
   stage-G2c-2-remove-edges.md    — Aşama G2c-2: DeltaProposal +remove_edges (ontolojik dürüstlük)
+  stage-G2c-3-incremental-accumulation.md — Aşama G2c-3: RQ9 policy accumulation (ilk kanıt)
   evidence/                    — ham ölçümler (JSON), corpus sonuçları
     g2c-corpus-results.md      — G2c-1 mock harness results + threats/limitations
 ```

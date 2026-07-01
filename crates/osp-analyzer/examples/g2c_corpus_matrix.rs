@@ -29,9 +29,9 @@ use osp_analyzer::pipeline::analyze_repo_with_config;
 use osp_core::agent::{DeltaProposal, EdgeRef, NewNodeSpec, OutputContract};
 use osp_core::coords::{CoordinateSystem, MetricSource, RawPosition};
 use osp_core::navigator::{
-    provenanced_from_raw, AgentNavigator, LlmClient, LlmError, NavigatorResult,
+    provenanced_from_raw, AgentNavigator, LlmClient, LlmError, MockLlmClient, NavigatorResult,
 };
-use osp_core::space::{EdgeKind, Node, NodeId, NodeKind, Space};
+use osp_core::space::{Edge, EdgeKind, Node, NodeId, NodeKind, Space};
 use osp_core::trajectory::{
     ComparisonOp, InMemoryTaskRegistry, MetricPredicate, OpKind, PredicateAxis,
     PredicateFailurePolicy, PredicateScope, Task, TaskId, TaskPolicy, TaskStatus,
@@ -655,6 +655,242 @@ enum FeedbackMode {
     Without,
 }
 
+/// **G2c-3 (review 8 #2):** Synthetic RQ9 experiment — policy accumulation mekanizması.
+/// 5 node'lu fixture: target (node 0) → 4 import (coupling 0.80). 3 incremental removal.
+/// AcceptImprovement → Completed, StrictReject → LimitExceeded.
+///
+/// **Dürüst not (review 8 #1):** synthetic controlled fixture — gerçek repo değil.
+fn run_synthetic_rq9(policy: PredicateFailurePolicy, run_meta: &RunMeta) -> Result<G2cEvidenceRow> {
+    use osp_core::agent::EdgeRef;
+    let start = std::time::Instant::now();
+    let task_id: TaskId = 1;
+
+    // 1. Synthetic fixture space: node 0 → node 1,2,3,4 (4 import, coupling 0.80).
+    let mut space = Space::default();
+    for id in 0..=4u64 {
+        space.nodes.insert(
+            id,
+            Node {
+                id,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                cohesion: Some(0.6),
+                ..Default::default()
+            },
+        );
+    }
+    for dep in 1..=4u64 {
+        space.edges.push(Edge {
+            from: 0,
+            to: dep,
+            kind: EdgeKind::Imports,
+            is_type_only: false,
+        });
+    }
+    // node 1→0 incoming import → instability balanced.
+    space.edges.push(Edge {
+        from: 1,
+        to: 0,
+        kind: EdgeKind::Imports,
+        is_type_only: false,
+    });
+
+    // 2. Engine — değerlendirilebilir vision (instability measured'a yakın).
+    let cs = CoordinateSystem::default_raw_five(
+        osp_core::axes::CohesionAxis::new(),
+        osp_core::axes::EntropyAxis::from_commit_entropy(6.0),
+        osp_core::axes::WitnessDepthAxis::from_witness(0.3, 5),
+    );
+    let vision = osp_core::vision::VisionVector::new(RawPosition {
+        x: 0.55,
+        y: 0.6,
+        z: 0.80,
+        w: 0.5,
+        v: 0.3,
+    });
+    let mut engine = osp_core::engine::SpaceEngine::with_default_rules(
+        space,
+        cs,
+        vision,
+        osp_core::engine::EngineConfig::default_calibrated(),
+    );
+
+    // 3. Target node 0, target_vector instability measured'a yakın.
+    let target_node: NodeId = 0;
+    let target_vector = RawPosition {
+        x: 0.55,
+        y: 0.6,
+        z: 0.80,
+        w: 0.5,
+        v: 0.3,
+    };
+    let current_measured = provenanced_from_raw(
+        engine.coord_system().raw_position_of(
+            engine.space().nodes.get(&target_node).unwrap(),
+            engine.space(),
+        ),
+        MetricSource::TreeSitter,
+    );
+    let loss_before = osp_core::trajectory::trajectory_loss(&current_measured, &target_vector);
+
+    // 4. Task — coupling ≤ 0.55, policy'ye göre allow_progress_checkpoint.
+    let task_policy = TaskPolicy {
+        maneuver_limit: 3,
+        predicate_failure_policy: policy,
+        allow_progress_checkpoint: matches!(policy, PredicateFailurePolicy::AcceptImprovement),
+        ..Default::default()
+    };
+    let task = Task {
+        id: task_id,
+        milestone_id: 1,
+        label: "G2c-3 synthetic coupling reduction".into(),
+        target_predicate_set: osp_core::trajectory::PredicateSet {
+            mode: osp_core::trajectory::PredicateMode::All,
+            predicates: vec![osp_core::trajectory::WeightedPredicate {
+                predicate: MetricPredicate {
+                    metric: PredicateAxis::Coupling,
+                    operator: ComparisonOp::Le,
+                    threshold: 0.55,
+                    scope: PredicateScope::Node(target_node),
+                    required_source: None,
+                    tolerance: 0.0,
+                },
+                weight: None,
+            }],
+            preferred_vector: Some(target_vector),
+        },
+        policy: task_policy,
+        allowed_operations: vec![OpKind::RemoveImport],
+        constraints: vec![],
+        status: TaskStatus::Pending,
+    };
+    let mut resolver = InMemoryTaskRegistry::new();
+    resolver.insert(task);
+
+    // 5. Incremental proposals (review 8 #5: feedback SABİT with — RQ9 net).
+    let proposals: Vec<DeltaProposal> = (1..=3u64)
+        .map(|dep| DeltaProposal {
+            new_nodes: vec![],
+            new_edges: vec![],
+            removed_edges: vec![EdgeRef {
+                from: target_node,
+                to: dep,
+                kind: EdgeKind::Imports,
+            }],
+            affected_nodes: vec![target_node],
+            modified_entities: vec![],
+            position_hints: vec![],
+            reasoning: format!("G2c-3 incremental: remove import {target_node}→{dep}"),
+        })
+        .collect();
+    let llm: Arc<dyn LlmClient> = Arc::new(MockLlmClient::new(proposals));
+
+    // 6. Navigator run.
+    let mut evidence: Vec<TrajectoryEvidence> = Vec::new();
+    let nav_result = {
+        let mut nav = AgentNavigator {
+            llm: llm.as_ref(),
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector,
+            current_measured: current_measured.clone(),
+            output_contract: OutputContract::strict(),
+        };
+        nav.run_task(task_id, 1)
+    };
+
+    // 7. Evidence row.
+    let (final_outcome, attempts) = match &nav_result {
+        NavigatorResult::Completed { attempts, .. } => ("Completed".to_string(), *attempts),
+        NavigatorResult::ExceededManeuverLimit { attempts, .. } => {
+            ("ExceededManeuverLimit".to_string(), *attempts)
+        }
+        NavigatorResult::RequiresOperatorApproval { attempts, .. } => {
+            ("RequiresOperatorApproval".to_string(), *attempts)
+        }
+        NavigatorResult::TaskNotFound => ("TaskNotFound".to_string(), 0),
+        NavigatorResult::LlmError(_) => ("LlmError".to_string(), 0),
+    };
+    let completed = final_outcome == "Completed";
+    let loss_after = evidence
+        .last()
+        .map(|e| {
+            let prov = provenanced_from_raw(e.after, MetricSource::TreeSitter);
+            osp_core::trajectory::trajectory_loss(&prov, &target_vector)
+        })
+        .unwrap_or(loss_before);
+    let total_tokens = evidence.iter().map(|e| e.token_cost.total_tokens).sum();
+    let feedback_count = evidence
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.mutation_decision,
+                osp_core::trajectory::MutationDecision::Reject
+            )
+        })
+        .count();
+    let final_mutation_decision = evidence
+        .last()
+        .map(|e| format!("{:?}", e.mutation_decision))
+        .unwrap_or_default();
+    let final_apply_target = match evidence.last() {
+        Some(e) => format!("{:?}", e.mutation_decision.apply_target()),
+        None => "None".into(),
+    };
+
+    Ok(G2cEvidenceRow {
+        run_id: run_meta.run_id.clone(),
+        osp_version: run_meta.osp_version.clone(),
+        git_commit: run_meta.git_commit.clone(),
+        corpus_kind: run_meta.corpus_kind.clone(),
+        timestamp: run_meta.timestamp.clone(),
+        repo: "synthetic-balanced-high-coupling".into(),
+        analyzed_path: "<synthetic-fixture>".into(),
+        lang: "synthetic".into(),
+        node_count: 5,
+        edge_count: 5,
+        task_id,
+        task_type: "CouplingReduction".into(),
+        policy: format!("{policy:?}"),
+        feedback: "fixed_with".into(), // review 8 #5 — RQ9 için feedback sabit
+        llm: "Mock".into(),
+        maneuver_limit: 3,
+        target_node_id: target_node,
+        target_node_path: "<synthetic-node-0>".into(),
+        target_node_role: "Module".into(),
+        selection_reason: "synthetic high-coupling target (4 imports)".into(),
+        attempts,
+        completed,
+        final_outcome,
+        final_mutation_decision,
+        final_apply_target,
+        total_tokens,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        feedback_count,
+        rejected_by: evidence
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.mutation_decision,
+                    osp_core::trajectory::MutationDecision::Reject
+                )
+            })
+            .map(|_| "PredicateGate".into())
+            .collect(),
+        loss_before,
+        loss_after,
+        axis_regression: false,
+        regression_axes: vec![],
+        max_regression_delta: 0.0,
+        duration_ms: start.elapsed().as_millis() as u64,
+        evidence,
+    })
+}
+
 struct RunMeta {
     run_id: String,
     osp_version: String,
@@ -745,6 +981,39 @@ fn main() -> Result<()> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // G2c-3: RQ9 synthetic controlled fixture (arkadaş review 8 #2)
+    // Gerçek repo corpus değil — policy accumulation mekanizması kanıtı.
+    // 5 node'lu fixture: target (node 0) → 4 import (coupling 0.80).
+    // AcceptImprovement → Completed (state accumulation), StrictReject → LimitExceeded.
+    // ═══════════════════════════════════════════════════════════════════════════════
+    println!("\n=== G2c-3 RQ9 synthetic fixture (policy accumulation) ===");
+    let synthetic_meta = RunMeta {
+        run_id: run_meta.run_id.clone(),
+        osp_version: run_meta.osp_version.clone(),
+        git_commit: run_meta.git_commit.clone(),
+        corpus_kind: "synthetic-controlled-fixture".into(), // review 8 #1 etiket
+        timestamp: run_meta.timestamp.clone(),
+    };
+    for policy in [
+        PredicateFailurePolicy::StrictReject,
+        PredicateFailurePolicy::AcceptImprovement,
+    ] {
+        match run_synthetic_rq9(policy, &synthetic_meta) {
+            Ok(row) => {
+                println!(
+                    "  synthetic/{policy:?}: {} attempts={}, completed={}",
+                    row.final_outcome, row.attempts, row.completed
+                );
+                rows.push(row);
+            }
+            Err(e) => {
+                println!("  synthetic/{policy:?}: ERROR: {e:#}");
+                errors.push(format!("synthetic/{policy:?}: {e:#}"));
             }
         }
     }
