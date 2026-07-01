@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-06-29 (Aşama G1 merge sonrası)
+> **Son güncelleme:** 2026-07-02 (Aşama G2c-5 merge sonrası)
 > **Detaylı roadmap:** [`agent-trajectory-roadmap.md`](agent-trajectory-roadmap.md)
 > **Invariant spec:** [`invariant-spec.md`](invariant-spec.md)
 > **MCP tasarım:** [`mcp-design.md`](mcp-design.md)
@@ -8,7 +8,7 @@
 
 OSP (Ontological Space Protocol / Software Physics) — software architecture analysis +
 AI agent navigation. İki makale stratejisi: **Paper 1** (statik uzay, kanıtlandı) +
-**Paper 2** (dinamik/agent, kanıt toplanıyor).
+**Paper 2** (dinamik/agent, **kanıt toplandı — yazıma hazır**).
 
 ---
 
@@ -23,10 +23,10 @@ osp-analyzer      ✅ Paper 1 (SCIP + tree-sitter, 5 dil)
 osp-spike         ✅ Paper 1 korpuslar (svelte, 23 repo)
 osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 
-G2c corpus runner ⚠️ G2c-1→4 ✅ (RQ9 kanıt + gerçek LLM 2/2 Completed); G2c-5 external corpus kaldı
-osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings
+G2c corpus runner ✅ G2c-1→5 TAMAM (RQ9 kanıt + gerçek LLM + external corpus 26/26 Completed)
+osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings (opsiyonel)
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
-Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
+Paper 2           ⬜ YAZIMA HAZIR — tüm implementation + evidence + threats toplandı
 ```
 
 ## Aşama Tablosu
@@ -68,12 +68,13 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 | **G2c-2 remove_edges** | ✅ done | **required** | DeltaProposal +removed_edges, OpKind::RemoveImport onurlandırılır |
 | **G2c-3 incremental + accumulation** | ✅ done | **high** | RQ9 kanıtlandı: AcceptImprovement→Completed, StrictReject→LimitExceeded |
 | **G2c-4 real LLM smoke** | ✅ done | **high** | RQ6/RQ7 preliminary: GPT-4o-mini 2/2 Completed, ~1160-1180 tokens |
-| Evidence JSON + failure notes | ⬜ pending | **required** | data-driven yazım |
+| **G2c-5 external corpus** | ✅ done | **required** | RQ6-9 external: chalk/click/cobra 3 dil, 26/26 Completed, ~1100 tok/cell |
+| Evidence JSON + failure notes | ✅ done | **required** | data-driven yazım — g2c-external-corpus-results.md + JSON |
 | osp-sdk (H) | ⬜ pending | **optional** | ürünleşme, paper'ı geciktirmez |
 | 3D UI / trajectory correction (E) | ⏸ paused | **optional** | sunum katmanı |
 
 **Paper 2 minimum gate:** G2 + gerçek LLM corpus deneyleri + evidence JSON + failure notes.
-H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
+✅ **DOLDU (G2c-5).** H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Çekirdek Disiplinler
 
@@ -85,10 +86,11 @@ H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Sonraki Adım Önerisi
 
-**G2c-5 — External corpus.** G2c-4 tamam: gerçek LLM (GPT-4o-mini) prompt enhancement ile
-2/2 Completed (RQ6 ~1160-1180 tokens, RQ7 smoke outcome). Sıradaki: external cloneable corpus
-(chalk/click/cobra) ile paper-ready evidence. Paper 2 minimum gate doluyor (G2c ✅ + corpus +
-evidence + failures).
+**Paper 2 yazımı.** G2c-5 tamam: gerçek LLM (GPT-4o-mini) external corpus (chalk/click/cobra)
+üzerinde 26/26 Completed, RQ6 (~1100 tok/cell), RQ7 (100%), RQ8/RQ9 sinyalleri toplandı.
+Paper 2 minimum gate doldu (G2c ✅ + external corpus + evidence + threats).
+
+Paper 2 data-driven yazılabilir — tüm kanıt `docs/paper2-notes/` altında.
 
 H (SDK) ve E (3D) opsiyonel — paper'ı geciktirmez.
 

@@ -16,6 +16,10 @@
 //!
 //! # Gerçek LLM (GPT-4o-mini, OPENAI_API_KEY, cost-limited)
 //! cargo run --release --example g2c_corpus_matrix -- --llm real --out evidence-real.json
+//!
+//! # G2c-5: External corpus (chalk/click/cobra) — paper-ready evidence
+//! cargo run --release --example g2c_corpus_matrix -- --llm real --external \
+//!   --out docs/paper2-notes/evidence/g2c-external-corpus-<date>.json
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -63,6 +67,11 @@ struct Cli {
     /// Gerçek LLM smoke için — API maliyeti/kontrol.
     #[arg(long, default_value_t = false)]
     synthetic_only: bool,
+    /// **G2c-5:** External cloneable corpus (chalk/click/cobra) çalıştır.
+    /// Paper-ready external-validity evidence — `corpus_kind: "external-repo"`.
+    /// Local crate corpus'tan ayrı (maliyet/kontrol).
+    #[arg(long, default_value_t = false)]
+    external: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -415,9 +424,14 @@ fn build_task(
 }
 
 /// Tek experiment hücresi çalıştır.
+///
+/// **G2c-5:** `lang` parametresi eklendi — repo başına doğru dil etiketi
+/// (rust/javascript/python/go). Analyzer auto-detect eder (`AdapterRegistry::default_all()`
+/// extension'a göre dispatch), `lang` yalnızca evidence metadata etiketi.
 fn run_one_experiment(
     repo_path: &Path,
     repo_label: &str,
+    lang: &str,
     task_type: TaskType,
     policy: PredicateFailurePolicy,
     feedback_mode: FeedbackMode,
@@ -626,7 +640,7 @@ fn run_one_experiment(
         timestamp: run_meta.timestamp.clone(),
         repo: repo_label.into(),
         analyzed_path: repo_path.display().to_string(),
-        lang: "rust".into(),
+        lang: lang.into(),
         node_count,
         edge_count,
         task_id,
@@ -989,6 +1003,7 @@ fn main() -> Result<()> {
                         match run_one_experiment(
                             repo_path,
                             repo_label,
+                            "rust",
                             task_type,
                             policy,
                             feedback_mode,
@@ -1015,6 +1030,78 @@ fn main() -> Result<()> {
             }
         }
     } // end if !synthetic_only
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // G2c-5: External cloneable corpus (chalk/click/cobra) — paper-ready evidence.
+    // 3 dil çeşitliliği: JavaScript (chalk), Python (click), Go (cobra).
+    // `corpus_kind: "external-repo"` — local crate corpus'tan ayrı (external validity).
+    // Full matris: her repo 8 cell (2 task × 2 policy × 2 feedback).
+    //
+    // Dürüst sınır (review 8 #1): external repo'larda target node'un internal import
+    // sayısı düşük olabilir (external imports Space'e Module-Module edge olarak girmez)
+    // → düşük coupling skoru → düşük-sinyal target. Bu Paper 2 threats için gerçek veri.
+    // ═══════════════════════════════════════════════════════════════════════════════
+    if cli.external {
+        println!("\n=== G2c-5 External corpus (chalk/click/cobra) ===");
+        // Absolute path'ler — clone-corpus.ps1 `P:\Work\repos` altına shallow-clone eder.
+        // Paper-reproducible: clone-corpus.ps1 ile aynı repo seti.
+        let external_corpus: Vec<(&str, PathBuf, &str)> = vec![
+            ("chalk", PathBuf::from(r"P:\Work\repos\chalk"), "javascript"),
+            ("click", PathBuf::from(r"P:\Work\repos\click"), "python"),
+            ("cobra", PathBuf::from(r"P:\Work\repos\cobra"), "go"),
+        ];
+        let external_meta = RunMeta {
+            run_id: run_meta.run_id.clone(),
+            osp_version: run_meta.osp_version.clone(),
+            git_commit: run_meta.git_commit.clone(),
+            corpus_kind: "external-repo".into(),
+            timestamp: run_meta.timestamp.clone(),
+        };
+        for (repo_label, repo_path, lang) in &external_corpus {
+            if !repo_path.exists() {
+                println!("  {repo_label}: SKIP (path not found: {})", repo_path.display());
+                errors.push(format!("{repo_label}: path not found ({})", repo_path.display()));
+                continue;
+            }
+            for task_type in [TaskType::CouplingReduction, TaskType::InstabilityReduction] {
+                for policy in [
+                    PredicateFailurePolicy::StrictReject,
+                    PredicateFailurePolicy::AcceptImprovement,
+                ] {
+                    for feedback_mode in [FeedbackMode::With, FeedbackMode::Without] {
+                        print!(
+                            "  {repo_label}/{lang}/{task_type:?}/{policy:?}/{feedback_mode:?} ... ",
+                        );
+                        match run_one_experiment(
+                            repo_path,
+                            repo_label,
+                            lang,
+                            task_type,
+                            policy,
+                            feedback_mode,
+                            cli.llm,
+                            cli.maneuver_limit,
+                            &external_meta,
+                        ) {
+                            Ok(row) => {
+                                println!(
+                                    "{} attempts={}, completed={}",
+                                    row.final_outcome, row.attempts, row.completed
+                                );
+                                rows.push(row);
+                            }
+                            Err(e) => {
+                                println!("ERROR: {e:#}");
+                                errors.push(format!(
+                                    "{repo_label}/{task_type:?}/{policy:?}/{feedback_mode:?}: {e:#}"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } // end if external
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // G2c-3: RQ9 synthetic controlled fixture (arkadaş review 8 #2)

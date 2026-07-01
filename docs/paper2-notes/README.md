@@ -26,8 +26,10 @@ docs/paper2-notes/
   stage-G2c-2-remove-edges.md    — Aşama G2c-2: DeltaProposal +remove_edges (ontolojik dürüstlük)
   stage-G2c-3-incremental-accumulation.md — Aşama G2c-3: RQ9 policy accumulation (ilk kanıt)
   stage-G2c-4-real-llm-smoke.md     — Aşama G2c-4: gerçek LLM smoke (RQ6/RQ7 preliminary)
+  stage-G2c-5-external-corpus.md    — Aşama G2c-5: external corpus (paper-ready evidence, 3 dil)
   evidence/                    — ham ölçümler (JSON), corpus sonuçları
     g2c-corpus-results.md      — G2c-1 mock harness results + threats/limitations
+    g2c-external-corpus-results.md — G2c-5 external corpus real-LLM results (RQ6-9)
 ```
 
 ## İlişkili Formal Spec
@@ -58,12 +60,12 @@ Her implementasyon aşaması bitiminde o aşamanın notu yazılır. Not şunlar�
 | §6 Task success (RQ7) | stage-D-agent-loop.md + evidence/ |
 | §7 Epistemic projection (RQ5) | stage-G1-osp-mcp.md (INV-T1 canlı doğrulama) |
 
-## Mevcut Durum (2026-06-29)
+## Mevcut Durum (2026-07-02)
 
-- **Aşama A-G1:** TAMAMLANDI (ontoloji → predicate gate → planner → navigator → gerçek
-  measure → gerçek LLM → calibration feedback → CLI → MCP)
-- **Aşama G2:** Operator-only tools, WorkspaceRegistry, navigator loop (gelecek)
-- **3D viewer:** DURDURULDU (Aşama E için gerekli, ama agent işleri öncelik)
+- **Aşama A-G2c-5:** TAMAMLANDI (ontoloji → predicate gate → planner → navigator → gerçek
+  measure → gerçek LLM → calibration feedback → CLI → MCP → corpus runner → external corpus)
+- **Paper 2 minimum gate:** DOLDU ✅ — tüm implementation + evidence + threats toplandı
+- **Sonraki:** Paper 2 yazımı (data-driven). D5 (prompt unification) + H (sdk) opsiyonel.
 - **Paper 1:** Tamamlandı (statik uzay, kanıtlanmış)
 
 ## RQ Adayları (Paper 2 için)

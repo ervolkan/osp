@@ -795,13 +795,15 @@ GPT-4o-mini prompt enhancement ile **ilk attempt'ta** geçerli coupling-reducing
 **Paper2 notları:** stage-G2c-4-real-llm-smoke.md, evidence/g2c-real-llm-smoke.json.
 **Efor:** M (tamamlandı).
 
-### Aşama G2c-5 — External corpus ⬜ (paper-ready evidence)
-**Hedef:** GPT-4o-mini ile küçük subset. RQ6 (token cost), RQ7 (success rate).
-OPENAI_API_KEY gerekir, manual çalıştırma. **Efor:** S (altyapı hazır).
+### Aşama G2c-5 — External corpus ✅ (paper-ready evidence)
+**Hedef:** GPT-4o-mini ile external cloneable corpus (chalk/click/cobra, 3 dil). RQ6-9.
+OPENAI_API_KEY gerekir, manual çalıştırma. **Efor:** S-M (altyapı hazır, tamamlandı).
 
-### Aşama G2c-5 — External corpus ⬜ (paper-ready evidence)
-**Hedef:** chalk/click/cobra gibi küçük public repos. Paper-ready evidence.
-**Efor:** M.
+### Aşama G2c-5 — External corpus ✅ (paper-ready evidence)
+**Hedef:** chalk/click/cobra (3 dil) external cloneable corpus. Paper-ready evidence.
+**Sonuç (2026-07-02):** 26/26 Completed (gerçek GPT-4o-mini), ~1100 tok/cell, 0 axis
+regression. Paper 2 minimum gate doldu → yazıma hazır.
+**Efor:** M (tamamlandı).
 
 ### Aşama H — osp-sdk (integration, third) ⬜ MCP sonrası
 **Hedef:** TypeScript/Python/Rust bindings. CLI/MCP deneyleri bittikten sonra hangi
@@ -982,6 +984,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | G2c-3 TAMAMLANDI (RQ9 kanıt) | Incremental coupling-dropping + policy accumulation. AcceptImprovement→Completed, StrictReject→LimitExceeded (synthetic fixture). Gizli keşif: navigator witness gate fix (min_approvers=0). Review 8 entegre. |
 | 2026-06-29 | G2c-3b witness policy isolation (review 9) | `with_quorum(0,0.0)` navigator loop'tan çıkarıldı → `NavigatorWitnessPolicy` enum (Production default, HarnessAutoApprove scoped). Production güven iddiası korundu. Evidence `witness_mode` alanı. RQ9 ifadesi sıkılaştır (bounded attempts). |
 | 2026-06-29 | G2c-4 TAMAMLANDI (gerçek LLM smoke) | Prompt enhancement (removed_edges/affected_nodes + AgentStructuralContext). Parse error→feedback retry. GPT-4o-mini 2/2 Completed (~1160-1180 tokens). RQ6/RQ7 preliminary. Review 10 entegre. |
+| 2026-07-02 | G2c-5 TAMAMLANDI (external corpus) | chalk/click/cobra (3 dil) external cloneable corpus. `--external` flag + `lang` param. GPT-4o-mini 26/26 Completed (~1100 tok/cell, 0 axis regression). RQ6-9 external evidence. Paper 2 minimum gate DOLDU → yazıma hazır. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

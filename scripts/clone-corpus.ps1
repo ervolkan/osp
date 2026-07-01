@@ -8,7 +8,10 @@ $repos = @(
     @('gin',     'https://github.com/gin-gonic/gin'),
     @('viper',   'https://github.com/spf13/viper'),
     @('cobra',   'https://github.com/spf13/cobra'),
-    @('prometheus','https://github.com/prometheus/prometheus')
+    @('prometheus','https://github.com/prometheus/prometheus'),
+    # G2c-5 external corpus — 3 dil çeşitliliği (JS/Python/Go).
+    @('chalk',   'https://github.com/chalk/chalk'),
+    @('click',   'https://github.com/pallets/click')
 )
 $root = 'P:\Work\repos'
 New-Item -ItemType Directory -Path $root -Force | Out-Null
