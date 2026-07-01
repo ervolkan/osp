@@ -274,9 +274,9 @@ fn g2_inv_t2_operator_mode_allows_operator_tools() {
 
 #[test]
 fn g2_navigator_result_llm_error_has_no_coordinate_leak() {
-    use osp_core::navigator::{LlmClient, MockLlmClient, NavigatorResult};
+    use osp_core::navigator::{MockLlmClient, NavigatorResult};
     // Boş proposals → navigator ilk complete()'te NoMoreProposals → LlmError.
-    let llm = MockLlmClient::new(Vec::new());
+    let _llm = MockLlmClient::new(Vec::new());
     // NavigatorResult::LlmError simüle et (gerçek loop navigator.rs testlerinde).
     let result = NavigatorResult::LlmError(osp_core::navigator::LlmError::NoMoreProposals);
     // JSON'a serialize et — preferred_vector YOK olmalı (INV-T1).
