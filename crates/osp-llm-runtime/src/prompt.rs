@@ -18,9 +18,36 @@ pub fn osp_system_prompt() -> &'static str {
      those).\n\n\
      Coordinate axes: x=coupling, y=cohesion, z=instability, w=entropy, \
      v=witness-depth.\n\
-     Vision: x<=0.30, y>=0.70, z<=0.50.\n\
-     Output format: JSON with fields: new_nodes, new_edges, \
-     modified_entities, reasoning."
+     Vision: x<=0.30, y>=0.70, z<=0.50.\n\n\
+     Output format — DeltaProposal JSON (G2c-4: removed_edges + affected_nodes):"
+}
+
+/// **G2c-4 (arkadaş review 10 #2):** Ortak DeltaProposal output format snippet.
+/// `osp_system_prompt` + `trajectory_system_prompt` ikisi de bunu kullanır —
+/// prompt debt önlenir (iki kopya ayrı güncellenmez).
+///
+/// `removed_edges` (subtractive delta, G2c-2) + `affected_nodes` (ölçüm scope)
+/// içerir. LLM bu şemayı gördüğünde coupling düşürmek için edge kaldırmayı öğrenebilir.
+pub fn delta_proposal_output_format_snippet() -> &'static str {
+    r#"{
+  "new_nodes": [],
+  "new_edges": [],
+  "removed_edges": [
+    {"from": 0, "to": 1, "kind": "Imports"}
+  ],
+  "affected_nodes": [0],
+  "modified_entities": [],
+  "position_hints": [],
+  "reasoning": "explain your structural changes"
+}
+
+RULES:
+- removed_edges: remove existing edges (e.g. to reduce coupling, remove outgoing Imports).
+  Each entry: {"from": <node_id>, "to": <node_id>, "kind": "Imports"}.
+- affected_nodes: node IDs whose position should be re-measured after the change.
+  For coupling reduction, list the node whose imports you removed (the "from" node).
+- new_nodes / new_edges: add new structural elements (abstractions, modules).
+- Do NOT declare positions — the engine measures them."#
 }
 
 /// User message: the serialized `OspPrompt` packet + the produce instruction.
@@ -30,7 +57,10 @@ pub fn osp_system_prompt() -> &'static str {
 pub fn osp_user_prompt(prompt: &OspPrompt) -> String {
     let json =
         serde_json::to_string_pretty(prompt).unwrap_or_else(|_| "<serialize failed>".to_string());
-    format!("OspPrompt:\n{json}\n\nProduce a DeltaProposal for this intent.")
+    format!(
+        "OspPrompt:\n{json}\n\nProduce a DeltaProposal for this intent.\n\nOutput format:\n{}",
+        delta_proposal_output_format_snippet()
+    )
 }
 
 /// System message for the raw source-dump baseline (RQ5 comparison only).

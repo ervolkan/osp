@@ -284,6 +284,7 @@ impl OspMcpServer {
             task.allowed_operations.clone(),
             task.constraints.clone(),
             Vec::new(),
+            None, // G2c-4: structural context (MCP get_agent_task_view opsiyonel)
         );
         // 4. Serialize + INV-T1 leak check.
         let view_json = serde_json::to_value(&agent_view).map_err(|e| e.to_string())?;

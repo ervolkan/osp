@@ -59,6 +59,10 @@ struct Cli {
     /// Maneuver limit override (default: task.policy.maneuver_limit = 5).
     #[arg(long, default_value_t = 5)]
     maneuver_limit: u32,
+    /// **G2c-4:** Sadece synthetic fixture çalıştır (local crate corpus'u atla).
+    /// Gerçek LLM smoke için — API maliyeti/kontrol.
+    #[arg(long, default_value_t = false)]
+    synthetic_only: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
@@ -668,7 +672,11 @@ enum FeedbackMode {
 /// AcceptImprovement → Completed, StrictReject → LimitExceeded.
 ///
 /// **Dürüst not (review 8 #1):** synthetic controlled fixture — gerçek repo değil.
-fn run_synthetic_rq9(policy: PredicateFailurePolicy, run_meta: &RunMeta) -> Result<G2cEvidenceRow> {
+fn run_synthetic_rq9(
+    policy: PredicateFailurePolicy,
+    llm_backend: LlmBackendArg,
+    run_meta: &RunMeta,
+) -> Result<G2cEvidenceRow> {
     use osp_core::agent::EdgeRef;
     let start = std::time::Instant::now();
     let task_id: TaskId = 1;
@@ -791,7 +799,15 @@ fn run_synthetic_rq9(policy: PredicateFailurePolicy, run_meta: &RunMeta) -> Resu
             reasoning: format!("G2c-3 incremental: remove import {target_node}→{dep}"),
         })
         .collect();
-    let llm: Arc<dyn LlmClient> = Arc::new(MockLlmClient::new(proposals));
+    // G2c-4: llm_backend'e göre mock (scripted) veya real (GPT-4o-mini).
+    let llm: Arc<dyn LlmClient> = match llm_backend {
+        LlmBackendArg::Mock => Arc::new(MockLlmClient::new(proposals)),
+        LlmBackendArg::Real => {
+            let real = osp_llm_runtime::RuntimeLlmClient::from_env()
+                .context("OPENAI_API_KEY required for --llm real")?;
+            Arc::new(real)
+        }
+    };
 
     // 6. Navigator run.
     let mut evidence: Vec<TrajectoryEvidence> = Vec::new();
@@ -866,7 +882,7 @@ fn run_synthetic_rq9(policy: PredicateFailurePolicy, run_meta: &RunMeta) -> Resu
         task_type: "CouplingReduction".into(),
         policy: format!("{policy:?}"),
         feedback: "fixed_with".into(), // review 8 #5 — RQ9 için feedback sabit
-        llm: "Mock".into(),
+        llm: format!("{llm_backend:?}"),
         maneuver_limit: 3,
         // G2c synthetic fixture = harness → witness_mode auto-approve.
         witness_mode: "harness_auto_approve".into(),
@@ -960,42 +976,45 @@ fn main() -> Result<()> {
     let mut rows = Vec::new();
     let mut errors = Vec::new();
 
-    for (repo_label, repo_path) in &corpus {
-        for task_type in [TaskType::CouplingReduction, TaskType::InstabilityReduction] {
-            for policy in [
-                PredicateFailurePolicy::StrictReject,
-                PredicateFailurePolicy::AcceptImprovement,
-            ] {
-                for feedback_mode in [FeedbackMode::With, FeedbackMode::Without] {
-                    print!("  {repo_label}/{task_type:?}/{policy:?}/{feedback_mode:?} ... ",);
-                    match run_one_experiment(
-                        repo_path,
-                        repo_label,
-                        task_type,
-                        policy,
-                        feedback_mode,
-                        cli.llm,
-                        cli.maneuver_limit,
-                        &run_meta,
-                    ) {
-                        Ok(row) => {
-                            println!(
-                                "{} attempts={}, completed={}",
-                                row.final_outcome, row.attempts, row.completed
-                            );
-                            rows.push(row);
-                        }
-                        Err(e) => {
-                            println!("ERROR: {e:#}");
-                            errors.push(format!(
+    // G2c-4: --synthetic-only local crate corpus'u atlar (gerçek LLM API maliyeti).
+    if !cli.synthetic_only {
+        for (repo_label, repo_path) in &corpus {
+            for task_type in [TaskType::CouplingReduction, TaskType::InstabilityReduction] {
+                for policy in [
+                    PredicateFailurePolicy::StrictReject,
+                    PredicateFailurePolicy::AcceptImprovement,
+                ] {
+                    for feedback_mode in [FeedbackMode::With, FeedbackMode::Without] {
+                        print!("  {repo_label}/{task_type:?}/{policy:?}/{feedback_mode:?} ... ",);
+                        match run_one_experiment(
+                            repo_path,
+                            repo_label,
+                            task_type,
+                            policy,
+                            feedback_mode,
+                            cli.llm,
+                            cli.maneuver_limit,
+                            &run_meta,
+                        ) {
+                            Ok(row) => {
+                                println!(
+                                    "{} attempts={}, completed={}",
+                                    row.final_outcome, row.attempts, row.completed
+                                );
+                                rows.push(row);
+                            }
+                            Err(e) => {
+                                println!("ERROR: {e:#}");
+                                errors.push(format!(
                                 "{repo_label}/{task_type:?}/{policy:?}/{feedback_mode:?}: {e:#}"
                             ));
+                            }
                         }
                     }
                 }
             }
         }
-    }
+    } // end if !synthetic_only
 
     // ═══════════════════════════════════════════════════════════════════════════════
     // G2c-3: RQ9 synthetic controlled fixture (arkadaş review 8 #2)
@@ -1015,7 +1034,7 @@ fn main() -> Result<()> {
         PredicateFailurePolicy::StrictReject,
         PredicateFailurePolicy::AcceptImprovement,
     ] {
-        match run_synthetic_rq9(policy, &synthetic_meta) {
+        match run_synthetic_rq9(policy, cli.llm, &synthetic_meta) {
             Ok(row) => {
                 println!(
                     "  synthetic/{policy:?}: {} attempts={}, completed={}",

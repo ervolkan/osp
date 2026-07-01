@@ -23,7 +23,7 @@ osp-analyzer      ✅ Paper 1 (SCIP + tree-sitter, 5 dil)
 osp-spike         ✅ Paper 1 korpuslar (svelte, 23 repo)
 osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 
-G2c corpus runner ⚠️ G2c-1 ✅ + G2c-1b ✅ + G2c-2 ✅ + G2c-3 ✅ (RQ9 kanıtlandı); G2c-4 real LLM, G2c-5 external corpus kaldı
+G2c corpus runner ⚠️ G2c-1→4 ✅ (RQ9 kanıt + gerçek LLM 2/2 Completed); G2c-5 external corpus kaldı
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
 Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
@@ -67,6 +67,7 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 | **G2c-1b Reject-evidence** | ✅ done | **required** | navigator tüm attempt'ler evidence'a girer (gate_decision) |
 | **G2c-2 remove_edges** | ✅ done | **required** | DeltaProposal +removed_edges, OpKind::RemoveImport onurlandırılır |
 | **G2c-3 incremental + accumulation** | ✅ done | **high** | RQ9 kanıtlandı: AcceptImprovement→Completed, StrictReject→LimitExceeded |
+| **G2c-4 real LLM smoke** | ✅ done | **high** | RQ6/RQ7 preliminary: GPT-4o-mini 2/2 Completed, ~1160-1180 tokens |
 | Evidence JSON + failure notes | ⬜ pending | **required** | data-driven yazım |
 | osp-sdk (H) | ⬜ pending | **optional** | ürünleşme, paper'ı geciktirmez |
 | 3D UI / trajectory correction (E) | ⏸ paused | **optional** | sunum katmanı |
@@ -84,12 +85,12 @@ H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Sonraki Adım Önerisi
 
-**G2c-4 — Gerçek LLM smoke.** G2c-3 RQ9 policy accumulation kanıtlandı (synthetic fixture:
-AcceptImprovement→Completed, StrictReject→LimitExceeded). Ayrıca G2c-1 0/24 gizli sebebi
-bulundu (navigator witness gate min_approvers=2 fix). Sıradaki: gerçek LLM (GPT-4o-mini) küçük
-subset ile RQ6 (token cost) + RQ7 (success rate). Sonra external corpus (G2c-5).
+**G2c-5 — External corpus.** G2c-4 tamam: gerçek LLM (GPT-4o-mini) prompt enhancement ile
+2/2 Completed (RQ6 ~1160-1180 tokens, RQ7 smoke outcome). Sıradaki: external cloneable corpus
+(chalk/click/cobra) ile paper-ready evidence. Paper 2 minimum gate doluyor (G2c ✅ + corpus +
+evidence + failures).
 
-Paper 2 minimum gate: G2c-4 + gerçek LLM corpus + evidence JSON + failure notes.
+H (SDK) ve E (3D) opsiyonel — paper'ı geciktirmez.
 
 ## Test Durumu
 

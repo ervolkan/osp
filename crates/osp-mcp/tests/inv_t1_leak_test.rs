@@ -100,6 +100,7 @@ fn inv_t1_get_agent_task_view_has_no_preferred_vector() {
         allowed_operations: vec![osp_core::trajectory::OpKind::RemoveImport],
         constraints: vec![],
         feedback_history: vec![],
+        structural_context: None, // G2c-4
     };
     let json = serde_json::to_string(&view).expect("serialize");
     assert_no_leak(&json, "osp_get_agent_task_view");

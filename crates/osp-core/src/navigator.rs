@@ -21,7 +21,7 @@ use crate::engine::SpaceEngine;
 use crate::space::{Edge, Node, NodeId};
 use crate::trajectory::{
     AgentTaskView, AttemptOutcome, GateDecision, InternalTaskPlan, MutationDecision,
-    PredicateCompletion, ProvenancedRawPosition, TaskId, TaskResolver, TokenCost,
+    PredicateCompletion, PredicateScope, ProvenancedRawPosition, TaskId, TaskResolver, TokenCost,
     TrajectoryEvidence,
 };
 use crate::witness::{AgentId, Claim, ClaimId, Intent};
@@ -52,10 +52,17 @@ pub trait LlmClient: Send + Sync {
 }
 
 /// LLM hatası (parse, network, rate limit, scripted proposals tükendi).
+///
+/// **G2c-4 (arkadaş review 10 #5):** `ProposalParse` artık `token_cost` taşıyabilir —
+/// parse edilemeyen cevap da token harcamıştır (RQ6 accounting için kritik).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LlmError {
     /// DeltaProposal JSON parse edilemedi (Q4 syntax agent-shell'de yakalanır).
-    ProposalParse(String),
+    /// G2c-4: token_cost — parse error da API çağrısı yaptı, token harcadı.
+    ProposalParse {
+        message: String,
+        token_cost: Option<TokenCost>,
+    },
     /// Network/HTTP hatası (production only).
     Network(String),
     /// Mock — scripted proposals tükendi (test senaryosu bitişi).
@@ -65,7 +72,9 @@ pub enum LlmError {
 impl std::fmt::Display for LlmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LlmError::ProposalParse(d) => write!(f, "LLM proposal parse error: {d}"),
+            LlmError::ProposalParse { message, .. } => {
+                write!(f, "LLM proposal parse error: {message}")
+            }
             LlmError::Network(d) => write!(f, "LLM network error: {d}"),
             LlmError::NoMoreProposals => write!(f, "mock LLM ran out of scripted proposals"),
         }
@@ -384,17 +393,89 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                 task_predicate: task.target_predicate_set.clone(),
                 tolerance: 0.02,
             };
+            // G2c-4 (review 10 #3): structural context — focus node + outgoing imports.
+            // Task predicate scope'tan focus_node_id çıkar, engine.space()'ten import'ları oku.
+            let structural_context = task
+                .target_predicate_set
+                .predicates
+                .first()
+                .and_then(|wp| match wp.predicate.scope {
+                    PredicateScope::Node(nid) => Some(nid),
+                    _ => None,
+                })
+                .map(|focus_node_id| {
+                    let imports: Vec<crate::agent::EdgeRef> = self
+                        .engine
+                        .space()
+                        .edges
+                        .iter()
+                        .filter(|e| {
+                            e.from == focus_node_id
+                                && e.kind == crate::space::EdgeKind::Imports
+                                && !e.is_type_only
+                        })
+                        .map(|e| crate::agent::EdgeRef {
+                            from: e.from,
+                            to: e.to,
+                            kind: e.kind,
+                        })
+                        .collect();
+                    crate::trajectory::AgentStructuralContext {
+                        focus_node_id,
+                        current_outgoing_imports: imports,
+                    }
+                });
             let agent_view = plan.to_agent_view(
                 &task.label,
                 self.current_measured.to_raw(),
                 task.allowed_operations.clone(),
                 task.constraints.clone(),
                 feedback_history.clone(),
+                structural_context,
             );
 
             // 2. LLM call → DeltaProposal.
+            // G2c-4 (review 10 #5): ProposalParse terminal DEĞİL — feedback retry.
+            // Network/NoMoreProposals terminal (navigator loop'a güvenilmez).
             let proposal = match self.llm.complete(&agent_view) {
                 Ok(p) => p,
+                Err(LlmError::ProposalParse {
+                    message,
+                    token_cost,
+                }) => {
+                    // Parse error → evidence + feedback, retry (API budget korunur).
+                    let tc = token_cost.unwrap_or_default();
+                    total_tokens.prompt_tokens += tc.prompt_tokens;
+                    total_tokens.completion_tokens += tc.completion_tokens;
+                    total_tokens.total_tokens += tc.total_tokens;
+                    let before_raw = self.current_measured.to_raw();
+                    self.evidence.push(TrajectoryEvidence {
+                        trajectory_id: self.trajectory_id,
+                        milestone_id: self.milestone_id,
+                        task_id,
+                        attempt_id: attempt_num as u64,
+                        before: before_raw,
+                        after: before_raw,
+                        gate_decision: GateDecision::RejectedBySyntax,
+                        predicate_completion: PredicateCompletion::NotCompleted,
+                        mutation_decision: MutationDecision::Reject,
+                        token_cost: tc,
+                        duration_ms: 0,
+                    });
+                    feedback_history.push(format!(
+                        "Attempt {attempt_num}: Your previous response was not valid \
+                         DeltaProposal JSON. Parse error: {message}. Output ONLY a JSON object \
+                         with fields: new_nodes, new_edges, removed_edges, affected_nodes, \
+                         modified_entities, position_hints, reasoning. No markdown fences."
+                    ));
+                    last_outcome = Some(AttemptOutcome {
+                        gate_decision: GateDecision::RejectedBySyntax,
+                        predicate_completion: PredicateCompletion::NotCompleted,
+                        mutation_decision: MutationDecision::Reject,
+                        witness_status: None,
+                    });
+                    continue;
+                }
                 Err(e) => return NavigatorResult::LlmError(e),
             };
             let token_cost = self.llm.last_token_cost();
@@ -761,6 +842,7 @@ mod tests {
             allowed_operations: vec![],
             constraints: vec![],
             feedback_history: vec![],
+            structural_context: None, // G2c-4
         };
         let p1 = mock.complete(&view).unwrap();
         let p2 = mock.complete(&view).unwrap();

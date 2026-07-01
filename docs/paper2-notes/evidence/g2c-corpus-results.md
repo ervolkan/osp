@@ -82,13 +82,33 @@ Her iki path de 3 attempt kullandı — fark maliyet değil, **bounded attempts 
 
 **Local crate corpus (G2c-3 witness fix sonrası):** navigator `min_approvers=0` fix'i ile local crate corpus artık Completed üretüyor (G2c-1'in 0/24 gizli sebebi witness gate idi). Bu ek bir bulgu — navigator witness policy ayrı bir konu (operator approval vs auto-approve).
 
-## 3. Real LLM Preliminary Results
+## 3. Real LLM Preliminary Results — G2c-4 ✅
 
-**G2c-4 (bu PR altyapı hazır, manual run):**
+**Çalıştırma:**
 ```bash
-OPENAI_API_KEY=... cargo run --example g2c_corpus_matrix --release -- --llm real --out evidence-real.json
+export OPENAI_API_KEY=$(cat docs/llm-apikey.md | tr -d '[:space:]')
+cargo run --example g2c_corpus_matrix --release -- --llm real --synthetic-only \
+  --out docs/paper2-notes/evidence/g2c-real-llm-smoke.json
 ```
-Gerçek LLM (GPT-4o-mini) ile cost-limited küçük subset. Bu MVP'de çalıştırılmadı (API maliyeti).
+
+### Sonuç (GPT-4o-mini, synthetic fixture)
+```
+synthetic/StrictReject:      Completed, attempts=1, total_tokens=1162
+synthetic/AcceptImprovement: Completed, attempts=1, total_tokens=1179
+```
+
+**Her iki hücrede Completed, 1 attempt!** Prompt enhancement (removed_edges/affected_nodes +
+structural context) sayesinde GPT-4o-mini ilk denemede geçerli coupling-reducing proposal üretti.
+
+### RQ6 preliminary token cost
+- ~1160-1180 tokens/Completed (gerçek GPT-4o-mini)
+- Evidence: `g2c-real-llm-smoke.json`
+
+### RQ7 real-LLM smoke outcome (review 10 #7 — "rate" değil)
+- 2/2 Completed (preliminary — synthetic fixture, küçük subset)
+- gate_decision: PassedAll, mutation: AcceptAsCompleted
+
+**Dürüst sınır (review 10):** real_llm_preliminary etiketi. Dış corpus genellemesi G2c-5'te.
 
 ## 4. Threats / Limitations (review 5 #9)
 

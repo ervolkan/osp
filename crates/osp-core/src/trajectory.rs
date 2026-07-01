@@ -656,6 +656,27 @@ pub struct AgentTaskView {
     /// hatayı tekrarlamaz. INV-T1 uyumlu (hata mesajı, koordinat değil).
     #[serde(default)]
     pub feedback_history: Vec<String>,
+    /// **G2c-4 (arkadaş review 10 #3):** Mevcut yapısal çevre — focus node + outgoing
+    /// import edge'leri. INV-T1 uyumlu: hedef koordinat DEĞİL, sadece structural context.
+    /// LLM bu bağlamı görüp removed_edges üretebilir (coupling düşürme).
+    /// `None` = structural context yok (eski backward-compat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural_context: Option<AgentStructuralContext>,
+}
+
+/// **G2c-4 (arkadaş review 10 #3):** Agent'a verilen mevcut yapısal çevre.
+/// `focus_node_id` (üzerinde çalışılan node) + `current_outgoing_imports` (mevcut
+/// import edge'leri). INV-T1 uyumlu — hedef koordinat İÇERMEZ, sadece structural context.
+///
+/// LLM bu bağlamı görüp `removed_edges` üretir: "focus_node_id'nin şu import'larını kaldır."
+/// `Vec<EdgeRef>` (Vec<NodeId> değil) — LLM gördüğü edge'i doğrudan removed_edges'a taşır.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentStructuralContext {
+    /// Üzerinde çalışılan mevcut node (task'ın hedef node'u, ama koordinat değil — ID).
+    pub focus_node_id: crate::space::NodeId,
+    /// Focus node'un mevcut outgoing Imports edge'leri. LLM bunları removed_edges'a
+    /// taşıyarak coupling düşürebilir.
+    pub current_outgoing_imports: Vec<crate::agent::EdgeRef>,
 }
 
 /// INV-T1 — Agent'a verilen predicate view. `preferred_vector`/`target_region` YOK.
@@ -690,6 +711,7 @@ impl InternalTaskPlan {
         allowed_operations: Vec<OpKind>,
         constraints: Vec<RuleRef>,
         feedback_history: Vec<String>,
+        structural_context: Option<AgentStructuralContext>,
     ) -> AgentTaskView {
         AgentTaskView {
             task_id: self.task_id,
@@ -703,6 +725,7 @@ impl InternalTaskPlan {
             allowed_operations,
             constraints,
             feedback_history,
+            structural_context,
         }
     }
 }
@@ -1560,6 +1583,7 @@ mod tests {
             vec![OpKind::RemoveImport],
             vec![],
             vec![],
+            None, // G2c-4: structural context (bu test INV-T1 leak check)
         );
         let json = serde_json::to_string(&view).unwrap();
         // INV-T1: hedef koordinat sızıntısı yok (spesifik alan adları).
@@ -1570,6 +1594,83 @@ mod tests {
         assert!(!json.contains("target_region"));
         // current_measurement SERBEST — mevcut durum, hedef değil.
         assert!(json.contains("current_measurement"));
+    }
+
+    /// G2c-4 (arkadaş review 10): INV-T1 — structural context SERBEST, hedef koordinat YASAK.
+    /// Agent structural context görebilir (focus_node_id, current_outgoing_imports) ama
+    /// hedef koordinatı GÖREMEZ. Bu ayrım Paper 2 reviewer'ı için kritik.
+    #[test]
+    fn g2c4_structural_context_allowed_but_target_coordinate_forbidden() {
+        use crate::agent::EdgeRef;
+        use crate::space::{EdgeKind, NodeId};
+        let plan = InternalTaskPlan {
+            task_id: 1,
+            milestone_target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            task_predicate: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![],
+                preferred_vector: Some(RawPosition {
+                    x: 0.55,
+                    y: 0.6,
+                    z: 0.4,
+                    w: 0.5,
+                    v: 0.3,
+                }),
+            },
+            tolerance: 0.02,
+        };
+        let sc = AgentStructuralContext {
+            focus_node_id: 0 as NodeId,
+            current_outgoing_imports: vec![EdgeRef {
+                from: 0,
+                to: 1,
+                kind: EdgeKind::Imports,
+            }],
+        };
+        let view = plan.to_agent_view(
+            "Reduce coupling",
+            RawPosition {
+                x: 0.80,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            vec![],
+            vec![],
+            vec![],
+            Some(sc),
+        );
+        let json = serde_json::to_string(&view).unwrap();
+        // Structural context SERBEST (G2c-4) — agent mevcut yapısal çevreyi görür.
+        assert!(
+            json.contains("structural_context"),
+            "structural context allowed"
+        );
+        assert!(json.contains("focus_node_id"), "focus_node_id allowed");
+        assert!(
+            json.contains("current_outgoing_imports"),
+            "current_outgoing_imports allowed"
+        );
+        // Hedef koordinat hâlâ YASAK (INV-T1 korunur).
+        assert!(
+            !json.contains("preferred_vector"),
+            "target coordinate forbidden"
+        );
+        assert!(
+            !json.contains("milestone_target_vector"),
+            "target coordinate forbidden"
+        );
+        assert!(
+            !json.contains("target_region"),
+            "target region forbidden (structural context != target)"
+        );
     }
 
     // ── INV-T6: failure ≠ regression (loss-based) ──

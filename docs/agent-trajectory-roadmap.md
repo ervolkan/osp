@@ -779,7 +779,23 @@ Completed evidence PassedAll (PR #21 Unknown borcu kapandı).
 **Paper2 notları:** stage-G2c-3-incremental-accumulation.md, evidence/g2c-corpus-results.md RQ9.
 **Efor:** M (tamamlandı).
 
-### Aşama G2c-4 — Gerçek LLM smoke ⬜ (manual, cost-limited)
+### Aşama G2c-4 — Gerçek LLM smoke ✅ TAMAMLANDI (2026-06-29)
+**Hedef:** Gerçek LLM (GPT-4o-mini) OSP structural proposal üretebiliyor mu? RQ6/RQ7 preliminary.
+**Gap çözümleri (review 10):**
+- Gap A: `delta_proposal_output_format_snippet` ortak helper (removed_edges + affected_nodes)
+- Gap B: `AgentStructuralContext` (focus_node_id + current_outgoing_imports) — INV-T1 uyumlu
+- Gap C: parse error → feedback retry + token cost korunması
+**Sonuç (synthetic fixture, --llm real):**
+```
+synthetic/StrictReject:      Completed, attempts=1, total_tokens=1162
+synthetic/AcceptImprovement: Completed, attempts=1, total_tokens=1179
+```
+GPT-4o-mini prompt enhancement ile **ilk attempt'ta** geçerli coupling-reducing proposal üretti.
+**RQ6 preliminary:** ~1160-1180 tokens/Completed. **RQ7 smoke outcome:** 2/2 Completed.
+**Paper2 notları:** stage-G2c-4-real-llm-smoke.md, evidence/g2c-real-llm-smoke.json.
+**Efor:** M (tamamlandı).
+
+### Aşama G2c-5 — External corpus ⬜ (paper-ready evidence)
 **Hedef:** GPT-4o-mini ile küçük subset. RQ6 (token cost), RQ7 (success rate).
 OPENAI_API_KEY gerekir, manual çalıştırma. **Efor:** S (altyapı hazır).
 
@@ -965,6 +981,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | G2c-2 TAMAMLANDI (remove_edges) | DeltaProposal +removed_edges (subtractive delta). OpKind::RemoveImport onurlandırılır. Space::remove_edge count. affected_nodes (new_nodes'a target KOYMA). allowed_ops validation. Review 7 entegre. |
 | 2026-06-29 | G2c-3 TAMAMLANDI (RQ9 kanıt) | Incremental coupling-dropping + policy accumulation. AcceptImprovement→Completed, StrictReject→LimitExceeded (synthetic fixture). Gizli keşif: navigator witness gate fix (min_approvers=0). Review 8 entegre. |
 | 2026-06-29 | G2c-3b witness policy isolation (review 9) | `with_quorum(0,0.0)` navigator loop'tan çıkarıldı → `NavigatorWitnessPolicy` enum (Production default, HarnessAutoApprove scoped). Production güven iddiası korundu. Evidence `witness_mode` alanı. RQ9 ifadesi sıkılaştır (bounded attempts). |
+| 2026-06-29 | G2c-4 TAMAMLANDI (gerçek LLM smoke) | Prompt enhancement (removed_edges/affected_nodes + AgentStructuralContext). Parse error→feedback retry. GPT-4o-mini 2/2 Completed (~1160-1180 tokens). RQ6/RQ7 preliminary. Review 10 entegre. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.
