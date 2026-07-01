@@ -23,7 +23,7 @@ osp-analyzer      ✅ Paper 1 (SCIP + tree-sitter, 5 dil)
 osp-spike         ✅ Paper 1 korpuslar (svelte, 23 repo)
 osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 
-G2c corpus runner ⬜ SIRADAKİ — Paper 2 RQ6-9 evidence üretimi
+G2c corpus runner ⚠️ G2c-1 MVP (harness); G2c-2/3 fix, G2c-4 real LLM, G2c-5 external corpus kaldı
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
 Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
@@ -63,7 +63,7 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 | osp-cli (truth surface) | ✅ done | **high** | evidence export |
 | osp-mcp G1 (agent access) | ✅ done | **medium-high** | INV-T1 canlı |
 | osp-mcp G2 (operator + loop) | ✅ done | **high** | INV-T2 gate canlı, navigator loop |
-| **Corpus experiment runner (G2c)** | ⬜ **pending** | **required** | RQ6-9 ham veri |
+| **G2c-1 Corpus runner (harness)** | ⚠️ MVP done | **required** | RQ6-9 altyapı; G2c-2/3 fix, G2c-4 real LLM, G2c-5 external corpus kaldı |
 | Evidence JSON + failure notes | ⬜ pending | **required** | data-driven yazım |
 | osp-sdk (H) | ⬜ pending | **optional** | ürünleşme, paper'ı geciktirmez |
 | 3D UI / trajectory correction (E) | ⏸ paused | **optional** | sunum katmanı |
@@ -81,14 +81,13 @@ H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Sonraki Adım Önerisi
 
-**G2c — Corpus experiment runner.** G2 tamamlandı (operator tools + navigator loop
-çalışıyor, INV-T2 gate canlı doğrulandı). Sıradaki: N repo × M task × {mock,real} ×
-{strict, accept-improvement} × {feedback, no-feedback} matrisi ile Paper 2 RQ6-9
-evidence üretimi. Çıktı: repo/task_type/policy/llm/attempt_count/completed/token_total/
-duration/loss_before/loss_after/axis_regression tablosu + evidence JSON + failure notes.
+**G2c-2/3 — Corpus runner proposal realism fix.** G2c-1 altyapı hazır (24 cell deterministik
+koşuyor, JSON üretiliyor, INV-T1..T8 enforced). Ama mock proposals target node coupling'ini
+düşürmüyor → 0/24 Completed. Sıradaki: target-edge-aware proposals (G2c-2, RQ8 Completed farkı)
++ incremental coupling-dropping proposals (G2c-3, RQ9 state accumulation). Sonra gerçek LLM
+küçük subset (G2c-4) ve external corpus (G2c-5). Detay: `docs/paper2-notes/evidence/g2c-corpus-results.md`.
 
-G2c sonrası Paper 2 minimum gate doluyor (G2 ✅ + corpus + evidence + failures).
-H (SDK) ve E (3D) opsiyonel — paper'ı geciktirmez.
+Paper 2 minimum gate: G2c-2/3 fix + gerçek LLM corpus + evidence JSON + failure notes.
 
 ## Test Durumu
 

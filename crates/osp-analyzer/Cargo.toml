@@ -31,3 +31,8 @@ protobuf = "3"
 
 [dev-dependencies]
 tempfile = "3"
+# G2c corpus runner example için: navigator loop (RuntimeLlmClient + MockLlmClient).
+# Examples sadece dev-dependencies üzerinden erişir — release osp-analyze binary'sine eklenmez.
+osp-llm-runtime = { path = "../osp-llm-runtime" }
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }

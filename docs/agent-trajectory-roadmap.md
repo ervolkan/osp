@@ -719,13 +719,29 @@ error code round-trip). Tüm workspace yeşil (16 grup).
 **Paper2 notları:** stage-G2-osp-mcp-operator-navigator.md.
 **Efor:** M-L (tamamlandı).
 
-### Aşama G2c — Corpus Experiment Runner ⬜ SIRADAKİ (Paper 2 zorunlu)
-**Hedef:** N repo × M task × {mock,real} × {strict, accept-improvement} × {feedback, no-feedback}
-matrisi ile Paper 2 RQ6-9 evidence üretimi.
-**Çıktı:** repo/task_type/policy/llm/attempt_count/completed/token_total/duration/loss_before/
-loss_after/axis_regression tablosu + evidence JSON + failure notes (stage-X-failures.md).
-**RQ'lar:** RQ6 (token cost), RQ7 (task success), RQ8 (calibration feedback), RQ9 (policy).
-**Efor:** M (G2 altyapısı hazır, runner + corpus + analysis script).
+### Aşama G2c-1 — Corpus Experiment Runner (harness MVP) ⚠️ TAMAMLANDI (2026-06-29)
+**Hedef:** Navigator loop N repo × M task × {policy, feedback} matrisinde koşar.
+**Runner:** `crates/osp-analyzer/examples/g2c_corpus_matrix.rs` (Rust example, mock + real LLM).
+**Review 5 entegrasyonu:** FeedbackSensitiveMock (#1), NoFeedbackWrapper, deterministik
+top-offender (#4), zengin evidence şeması (#6), INV-T4 source kontrol (#5).
+**Sonuç (mock):** 24 cell deterministik koştu, JSON üretildi. **0/24 Completed** — mock proposals
+target node coupling'ini düşürmüyor (isolated node). Bu, G2c-2/G2c-3 fix için gerçek bulgu.
+**Paper2 notları:** stage-G2c-corpus-runner.md, evidence/g2c-corpus-results.md.
+**Efor:** M (altyapı tamam, proposal realism fix kaldı).
+
+### Aşama G2c-2/3 — Proposal realism fix ⬜ SIRADAKI
+**Hedef:** Mock proposals target node coupling'ini gerçek düşürsün → RQ8/RQ9 Completed sinyali.
+- **G2c-2:** Target-edge-aware proposals (delta node target'a edge remove/add ile bağlansın).
+- **G2c-3:** Incremental coupling-dropping (0.82→0.71→0.63→0.53) → RQ9 state accumulation.
+**Efor:** S-M.
+
+### Aşama G2c-4 — Gerçek LLM smoke ⬜ (manual, cost-limited)
+**Hedef:** GPT-4o-mini ile küçük subset. RQ6 (token cost), RQ7 (success rate).
+OPENAI_API_KEY gerekir, manual çalıştırma. **Efor:** S (altyapı hazır).
+
+### Aşama G2c-5 — External corpus ⬜ (paper-ready evidence)
+**Hedef:** chalk/click/cobra gibi küçük public repos. Paper-ready evidence.
+**Efor:** M.
 
 ### Aşama H — osp-sdk (integration, third) ⬜ MCP sonrası
 **Hedef:** TypeScript/Python/Rust bindings. CLI/MCP deneyleri bittikten sonra hangi
@@ -900,6 +916,7 @@ H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 | 2026-06-29 | Review 4 entegrasyonu | D3 prompt debt işaretlendi, D5 (OspPrompt unification) eklendi. INV-T8 §6'ya eklendi. Paper 2 minimum gate netleştirildi (G2+corpus zorunlu, H/E opsiyonel). RQ8 (calibration) + RQ9 (AcceptAsProgress policy) adayları eklendi. Tarih satırı kronolojik düzeltildi. |
 | 2026-06-29 | G2 TAMAMLANDI | MCP operator tools (trajectory_init, task_add) + navigator loop (osp_run_task) + evidence history. INV-T2 runtime gate canlı doğrulandı. `LlmClient: Send + Sync` (Cell→AtomicUsize/Miosk). `--llm mock\|real` flag. |
 | 2026-06-29 | G2 kullanıcı kararı: ikisini de tut | `osp_submit_delta` (agent delta single-attempt) KORUNDU + `osp_run_task` (navigator loop) EKLENDİ. İki farklı semantik (delta test vs uçtan uca loop). |
+| 2026-06-29 | G2c-1 TAMAMLANDI (harness MVP) | Corpus runner example (FeedbackSensitiveMock, NoFeedbackWrapper, deterministik top-offender). 24 cell koştu, 0/24 Completed — mock proposal realism yetersiz (G2c-2/3 fix). Review 5 entegre. |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.
