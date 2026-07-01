@@ -1,9 +1,32 @@
 # OSP Agent Trajectory Roadmap — Mimari Navigasyon Protokolü
 
-> **Durum:** Taslak (v0.1) — review + rafinasyon sonrası implementasyon
-> **Tarih:** 2026-06-30
+> **Durum:** v0.4 — çekirdek + ürünleşme CLI/MCP tamam, G2/H/E + Paper 2 yazımı kaldı
+> **Tarih:** 2026-06-30 (v0.1 tasarım) → 2026-06-29 (v0.4 — A→G1 tamamlandı)
 > **İlişki:** Paper 1 (Statik Uzay) tamamlandı → bu doküman Paper 2 (Dinamik/Agent)'nin omurgası
 > **3D viewer durumu:** DURDURULDU (görsel geliştirme, agent işleri öncelik)
+
+---
+
+## ⭐ Mevcut Durum (2026-06-29 — G1 merge sonrası)
+
+**Tamamlanan implementation (A→G1):**
+- ✅ **osp-core** — ontoloji (A) + predicate gate (B/B2) + planner (C) + navigator (D1) +
+  gerçek measure (D2). INV-T1..T8 type-level enforced.
+- ✅ **osp-llm-runtime** — gerçek LLM adapter (D3) + calibration feedback (D4).
+- ✅ **osp-cli** — truth surface, mock + gerçek LLM dispatch (F1).
+- ✅ **osp-mcp** — AI access surface (G1), INV-T1 canlı doğrulandı.
+
+**Kalan implementation (sıralı):**
+- ⬜ **G2** — MCP operator tools (trajectory_init, task_add) + navigator loop entegrasyonu.
+- ⬜ **H** — osp-sdk (TypeScript/Python/Rust bindings) — erken gereksiz bakım, sona bırakıldı.
+- ⬜ **E** — Trajectory correction + 3D UI (opsiyonel, kanıt sonrası).
+
+**Paper 2 yazımı:** EN SONA bırakıldı. G2 (ve opsiyonel H/E) bittikten sonra data-driven
+yazılacak. Kanıt `docs/paper2-notes/` notlarında toplandı (A→G1). Paper yazımı öncesi
+API churn riski (SDK bekleniyor) gözetildi.
+
+**Sonraki adım önerisi:** G2 — MCP server'a operator tools + gerçek navigator loop
+ekleyip, gerçek LLM ile corpus deneyleri yapmak (Paper 2 RQ6/RQ7 evidence).
 
 ---
 
@@ -506,11 +529,18 @@ Her aşama **kanıt/not toplar** (docs/paper2-notes/) — paper en son yazılır
 
 **Ürünleşme sırası (review — CLI first, MCP second, SDK third, UI later):**
 ```
-osp-core (✅ A/B/C/D1) → D2 (gerçek measure) → osp-cli (execution surface)
-  → osp-mcp (AI access surface) → osp-sdk (integration) → osp-desktop/3D (exploration)
+osp-core (✅ A/B/C/D1/D2) + osp-llm-runtime (✅ D3/D4)
+  → osp-cli (✅ F1 execution surface)
+  → osp-mcp (✅ G1 AI access surface) → osp-mcp G2 (operator tools + navigator loop)
+  → osp-sdk (H, ⬜ integration) → osp-desktop/3D (E, ⬜ exploration)
 ```
 MCP otorite katmanı DEĞİL, osp-core üzerinde erişim katmanıdır (INV-T1..T8 bypass edilemez).
 UI/3D kanıt üretmez — keşif/görselleştirme; Paper 2 evidence CLI/MCP'den gelir.
+
+**Mevcut durum (2026-06-29):** Çekirdek (osp-core + osp-llm-runtime) + ürünleşme
+katmanlarından CLI ve MCP G1 tamamlandı. Sıradaki: G2 (MCP operator tools + navigator
+loop entegrasyonu) veya H (SDK). **Paper 2 yazımı EN SONA bırakıldı** — tüm kanıt
+toplama bittikten sonra data-driven yazılacak.
 
 ### Aşama A — Ontolojik Tipler ✅ TAMAMLANDI (2026-06-30)
 **Hedef:** Trajectory/Milestone/Task/MetricPredicate tiplerini kodla, INV-T1..T8 type-level.
@@ -537,32 +567,54 @@ UI/3D kanıt üretmez — keşif/görselleştirme; Paper 2 evidence CLI/MCP'den 
 **Sonuç:** 8 test, 9 boşluktan 7'si kapatıldı. Token cost accumulate (RQ6 ilk evidence).
 Paper2 notları: stage-D-agent-loop.md.
 
-### Aşama D2 — Gerçek engine measure + commit() Q5.b entegrasyon ⬜ SIRADAKİ
+### Aşama D2 — Gerçek engine measure + commit() Q5.b entegrasyon ✅ TAMAMLANDI (2026-06-30)
 **Hedef:** Navigator gerçek engine measure (compute_raw_from_delta gerçek node/edge),
 commit() içine Q5.b PredicateGate + permission entegrasyon, DecompositionSpace engine'den beslenir.
-**Dosyalar:** `engine.rs` (commit() Q5.b), `navigator.rs` (gerçek measure), trajectory.rs.
-**Test:** svelte corpus'ta gerçek task simülasyonu (maneuver limit, ExceededManeuverLimit).
-**Paper2 notları:** RQ6 (token) + RQ7 (task success) gerçek measure ile.
-**Efor:** M
-**Kritik:** D2 olmadan CLI navigator mock measure verir (gerçekçi değil).
+**Dosyalar:** `engine.rs` (`commit_task_claim` — atomic Q4→Q5→Q5.b→Q6→mutate→Q1-Q3),
+`navigator.rs` (gerçek measure), trajectory.rs.
+**Sonuç:** `commit_task_claim` `commit()` ile paralel ayrı pipeline (Paper 1 caller'ları
+kırılmıyor). Atomik Q5.b PredicateGate. D3'te gerçek LLM ile test edildi.
+**Paper2 notları:** stage-D2-real-measure.md. RQ6/RQ7 gerçek measure ile.
+**Efor:** M (tamamlandı).
+**Kritik:** D2 olmadan CLI navigator mock measure verir (gerçekçi değil) — çözüldü.
 
-### Aşama F — osp-cli (CLI-first, execution surface) ⬜ D2 sonrası
-**Hedef:** `osp` CLI binary — execution surface. osp-core API'sini çağırır.
-**Crate:** `crates/osp-cli/` (yeni). Mevcut `osp-analyze` binary'si osp-cli'ye taşınır/sarılır.
+### Aşama D3 — Gerçek LLM Adapter ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** `RuntimeLlmClient` — gerçek LLM (GPT-4o-mini) `LlmClient` trait'ini gerçekler.
+OspPrompt'tan ayrı trajectory-specific system prompt (INV-T4 warning + JSON format + feedback).
+**Dosyalar:** `crates/osp-llm-runtime/src/adapter.rs` (yeni crate).
+**Sonuç:** `complete_raw` custom `CompletionRequest` ile OspPrompt'u bypass eder
+(OspPrompt ile AgentTaskView'ın ortak alanı yok). `map_runtime_error` hata dönüşümü.
+svelte corpus'ta gerçek task denemesi yapıldı. Paper2 notları: stage-D3-real-llm.md.
+**Efor:** M (tamamlandı).
+
+### Aşama D4 — Calibration Feedback (LLM retry optimization) ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** Navigator reject aldığında LLM'e kalibrasyon feedback'i döndürür → retry optimize.
+`HallucinationType` (Structural/Vision/Rule/Witness/Undersupported) agent'a mesaj üretir.
+**Dosyalar:** `agent.rs` (`HallucinationType::calibration_message`, `from_engine_error`),
+`navigator.rs` (feedback_history accumulation in loop), `osp-llm-runtime/adapter.rs`
+(trajectory_system_prompt'a feedback section).
+**Sonuç:** `AgentTaskView.feedback_history` ile her reject sonrası spesifik mesaj
+(Q4 syntax hatası → "modified_entities format", vs.). Daha önce kullanılmayan
+`HallucinationType` navigator loop'una bağlandı. Paper2 notları: stage-D4-calibration.md.
+**Efor:** S-M (tamamlandı).
+
+### Aşama F1 — osp-cli (CLI-first, execution surface) ✅ TAMAMLANDI (2026-06-30)
+**Hedef:** `osp` CLI binary — execution surface. osp-core API'sini çağırır, truth surface.
+**Crate:** `crates/osp-cli/` (yeni). Mevcut `osp-analyze` binary'si osp-cli'ye sarılır.
 **Komutlar:**
 ```bash
 osp analyze --repo ./repo --out .osp/space.json
 osp trajectory init --vision <toml>
-osp task add --scope node:X --predicate "coupling <= 0.55" --policy strict
-osp task view <task-id>
-osp claim bind --task <id> --proposal delta.json
-osp predicate check --task <id> --proposal delta.json
-osp trajectory attempt --task <id> --proposal delta.json --out .osp/attempts/
+osp trajectory attempt --task <id> --proposal delta.json --llm mock|real
+osp task view <id>
 osp evidence export --trajectory <id> --out evidence.json
 ```
 **Prensip:** CLI = "truth surface". UI/MCP/SDK ne yaparsa yapsın, en altta CLI/osp-core
 aynı sonucu üretmeli. CI/CD'ye koyması kolay, agent çağırabilir, Paper 2 evidence üretir.
-**Efor:** M
+**Dosyalar:** `main.rs` (clap dispatch), `commands/mod.rs`, `mock_llm.rs` (FileMockLlm).
+**Sonuç:** Mock + gerçek LLM dispatch (generic `run_navigator<L: LlmClient>`).
+Paper2 notları: stage-F-osp-cli.md.
+**Efor:** M (tamamlandı).
 
 ### Aşama G1 — osp-mcp (AI access surface, MCP second) ✅ TAMAMLANDI (2026-06-29)
 **Hedef:** MCP server — AI agent'ların OSP çekirdeğini güvenli kullanması. INV-T1..T8 bypass edilemez.
@@ -715,6 +767,19 @@ SCIP + tree-sitter + 5-axis + vision + witness + tri-state. Kanıtlanmış (23 r
 bir paper'a sıkıştırmak → hakemler "çok iddialı, deneysel doğrulama yok" der.
 Paper 1 statik uzayı oturtur, Paper 2 onun üzerine inşa eder.
 
+### Paper yazım disiplini — EN SONA BIRAKILDI (2026-06-29 kararı)
+**Paper 2 yazımı tüm implementation aşamaları bittikten SONRA yapılacak.** Ara yazım yok,
+draft yok. Gerekçe:
+1. Kanıt önce — her iddianın karşılığı `docs/paper2-notes/` notlarında data olmalı
+   (iddia değil, kanıt). Şu an A→G1 kanıtı toplandı, G2/H/E kaldı.
+2. API churn riski — SDK (H) ve G2 bittikten sonra hangi fonksiyonların stabil olduğu
+   netleşir. Erken yazım refactor yükü doğurur.
+3. Hakem psikolojisi — "kanıtlanmamış sistem" reddi riski. Çekirdek + CLI + MCP + SDK
+   tamam + gerçek corpus deneyleri → "calmly shown" paper.
+
+**Paper öncesi kalan implementation:** G2 (MCP operator tools + navigator loop),
+opsiyonel H (SDK), opsiyonel E (3D UI). Sonra Paper 2 yazımına başlanır.
+
 ---
 
 ## 12. Karar Günlüğü
@@ -736,6 +801,12 @@ Paper 1 statik uzayı oturtur, Paper 2 onun üzerine inşa eder.
 | 2026-06-30 | invariant-spec.md önceliği | review 1 — kod yazmadan formal invariant spec. |
 | 2026-06-30 | A/B/B2/C/D1 TAMAMLANDI | Çekirdek (ontology + gate + planner + navigator mock) hazır. 478 test. |
 | 2026-06-30 | CLI-first + MCP ürünleşme sırası | review (beyin fırtınası) — CLI first, MCP second, SDK third, UI later. Çekirdek değişmez; CLI/MCP katmanları eklenir (§8 F/G/H). MCP otorite değil, osp-core erişim katmanı. UI/3D keşif, kanıt CLI/MCP'den. |
+| 2026-06-30 | D2 TAMAMLANDI | `commit_task_claim` atomic Q5.b pipeline (commit()'e paralel, Paper 1 caller'ları kırılmıyor). |
+| 2026-06-30 | D3 TAMAMLANDI | `RuntimeLlmClient` gerçek LLM (GPT-4o-mini), OspPrompt'u bypass eden trajectory prompt. |
+| 2026-06-30 | D4 TAMAMLANDI | Calibration feedback — `feedback_history` + `HallucinationType::calibration_message` navigator loop'a bağlandı. |
+| 2026-06-30 | F1 TAMAMLANDI | osp-cli (truth surface) — mock + gerçek LLM dispatch. |
+| 2026-06-29 | G1 TAMAMLANDI | osp-mcp (rmcp 0.8) — 4 agent-facing tool, INV-T1 canlı doğrulandı (preferred_vector sızıntısı yok). |
+| 2026-06-29 | Paper 2 yazımı EN SONA bırakıldı | Tüm implementation (G2/H/E) bitene kadar paper yazımı yok. Kanıt önce, data-driven yazım. API churn riski (SDK bekleniyor). |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

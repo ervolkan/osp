@@ -30,19 +30,47 @@
 ```bash
 git clone https://github.com/ervolkan/osp.git
 cd osp
-cargo build --workspace
-cargo test --workspace          # 387 tests
+cargo build --workspace --exclude osp-desktop
+cargo test --workspace --exclude osp-desktop   # ~490+ tests across 7 crates
 ```
+
+> `osp-desktop` is excluded from CI/headless builds (Tauri needs webkit2gtk/glib-sys on Linux).
+> Build it locally with `cargo build -p osp-desktop` if the Tauri prerequisites are installed.
 
 ### Analyze a Repository
 
 ```bash
 # Tier 1 only (tree-sitter: coupling, abstractness, instability)
-cargo run --bin osp-analyze -- /path/to/repo
+cargo run -p osp-cli -- analyze --repo /path/to/repo
 
 # Tier 1 + Tier 2 (SCIP semantic: real LCOM4 cohesion)
-cargo run --bin osp-analyze -- --scip /path/to/index.scip /path/to/repo
+cargo run -p osp-cli -- analyze --repo /path/to/repo --scip /path/to/index.scip
 ```
+
+### Run the MCP Server (Claude / Cursor)
+
+```bash
+# Build the MCP server binary
+cargo build -p osp-mcp --release
+
+# Run it over stdio (agent mode — operator tools disabled by default)
+./target/release/osp-mcp --workspace /path/to/repo
+```
+
+Add to your MCP client config (Claude Desktop / Cursor):
+```json
+{
+  "mcpServers": {
+    "osp": {
+      "command": "/absolute/path/to/osp-mcp",
+      "args": ["--workspace", "/path/to/your/repo"]
+    }
+  }
+}
+```
+
+See [`crates/osp-mcp/README.md`](crates/osp-mcp/README.md) for the 4 agent-facing tools
+and the INV-T1 guarantee (target coordinates never leak to agents).
 
 **Output example:**
 ```
@@ -99,21 +127,35 @@ scip-typescript index --output index.scip --infer-tsconfig
 osp/
 ├── crates/
 │   ├── osp-core/          # Formal model: coords, axes, witness, vision, engine, persistence
-│   │   ├── agent.rs       # Faz 5: PermissionMask, DeltaProposal, OutputContract (validate gates)
-│   │   └── rule.rs        # Faz 5: Rule trait, RuleViolation, Q6 rule set
+│   │   │                   + trajectory (Task=predicate, PredicateGate, navigator)
+│   │   ├── agent.rs       # PermissionMask, DeltaProposal, OutputContract, HallucinationType
+│   │   ├── rule.rs        # Rule trait, RuleViolation, Q6 rule set
+│   │   ├── trajectory.rs  # Paper 2: Trajectory/Milestone/Task/MetricPredicate, INV-T1..T8
+│   │   └── navigator.rs   # Paper 2: AgentNavigator.run_task, LlmClient trait
 │   ├── osp-analyzer/      # Two-tier analysis: tree-sitter (5 langs) + SCIP LCOM4
 │   │   ├── adapters/      # Python, TypeScript, JavaScript, Rust, Go
 │   │   ├── scip/          # SCIP loader (impl#[Type] fix), LCOM4 algorithm, SemanticIndex
 │   │   └── examples/      # scip_dump, scip_semantic_dump, timing_bench
 │   ├── osp-llm-runtime/   # Stateless OpenAI-compatible runtime: OspPrompt → DeltaProposal
-│   ├── osp-desktop/       # Tauri + tiny_http MVP: 5-panel UI, Node Inspector, Snapshot
+│   │   │                   + RuntimeLlmClient (D3 trajectory navigator LLM)
+│   ├── osp-cli/           # CLI truth surface: analyze, trajectory init/attempt, task view
+│   ├── osp-mcp/           # MCP server (rmcp 0.8): AI agent access surface, INV-T1..T8 enforced
+│   ├── osp-desktop/       # Tauri + Babylon.js: 5-panel UI, 3D viewer (Aşama 1-3)
 │   └── osp-spike/         # Faz 0 frozen reference (tri-state witness validation)
-├── docs/                  # Paper v2.6 + design docs + corpus results
+├── docs/                  # Paper v2.6 + Paper 2 roadmap + invariant spec + MCP design
 ├── scripts/               # Reproducibility scripts (corpus clone + SCIP + analyze)
 ├── viz/                   # Paper figures (commit pipeline, space topology, graveyard)
-├── Cargo.toml             # Workspace root (5 crates)
+├── Cargo.toml             # Workspace root (7 crates)
 └── SoftwarePhysics.txt    # Vision source (immutable)
 ```
+
+### Two-Paper Strategy
+
+- **Paper 1 (Static Space)** — ✅ done. SCIP + tree-sitter + 5-axis + vision + witness +
+  tri-state. 23-repo corpus, 18,952 LCOM4 classes. [`docs/paper-draft-v2.6.md`](docs/paper-draft-v2.6.md)
+- **Paper 2 (Dynamic / Agent Trajectory)** — in progress. Task = measurement predicate,
+  PredicateGate, navigator loop, calibration feedback. CLI + MCP truth surfaces done.
+  Paper writing **deferred to the end** (data-driven). [`docs/agent-trajectory-roadmap.md`](docs/agent-trajectory-roadmap.md)
 
 ---
 
@@ -166,9 +208,14 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 | **4** | Scale / KùzuDB | ⏸️ Deferred (50k+ nodes) |
 | **5** | Agent/LLM OSP Codec | 🔶 Stub types + validate gates + stateless runtime |
 | **6** | Multi-Agent Coordination | 📄 Proposal |
-| **7** | Academic Paper | ✅ v2.6 (arXiv target) |
+| **7** | Academic Paper 1 (Static Space) | ✅ v2.6 (arXiv target) |
 | **8** | OSP Desktop UI | ✅ v0.3.4 (6 panels + role-aware vision + Node Inspector + Confidence) |
 | **9** | Custom Axis Marketplace | ⏸️ Planned |
+| **P2** | **Paper 2 — Agent Trajectory Navigation** | 🔶 Core + CLI + MCP done; SDK + paper writing pending |
+
+**Paper 2 status (A→G1 done):** ontoloji → predicate gate → planner → navigator → gerçek
+measure → gerçek LLM → calibration → CLI → MCP (INV-T1 canlı doğrulandı).
+See [`docs/STATUS.md`](docs/STATUS.md) for the full stage-by-stage status.
 
 ---
 
@@ -186,6 +233,8 @@ Full formalism: [`docs/OSP-formalism.md`](docs/OSP-formalism.md)
 
 ## Documentation
 
+**Paper 1 (Static Space):**
+
 | Document | Content |
 |---|---|
 | [`docs/paper-draft-v2.6.md`](docs/paper-draft-v2.6.md) | Paper v2.6 (5 RQs, 23-repo/5-lang corpus, real LCOM4 data, token benchmark) |
@@ -195,8 +244,18 @@ Full formalism: [`docs/OSP-formalism.md`](docs/OSP-formalism.md)
 | [`docs/calibration-corpus.md`](docs/calibration-corpus.md) | Corpus selection methodology |
 | [`docs/literature-scan.md`](docs/literature-scan.md) | Related work + originality analysis |
 
-*Internal design specs (agent semantics, invariants, core/engine/analyzer design,
-roadmap, session notes, dogfooding logs) are maintained privately during development.*
+**Paper 2 (Dynamic / Agent Trajectory):**
+
+| Document | Content |
+|---|---|
+| [`docs/STATUS.md`](docs/STATUS.md) | ⭐ Project status summary — stage table, what's done, what's next |
+| [`docs/agent-trajectory-roadmap.md`](docs/agent-trajectory-roadmap.md) | Roadmap (motivation, ontology, INV-T1..T8, §8 stage plan) |
+| [`docs/invariant-spec.md`](docs/invariant-spec.md) | Formal invariant spec (INV-T1..T8 trajectory + INV #1..#15 space) |
+| [`docs/mcp-design.md`](docs/mcp-design.md) | MCP server design (6 "never" principles, tool categories, INV matrix) |
+| [`docs/paper2-notes/`](docs/paper2-notes/) | Evidence notes per stage (A→G1) — data-driven paper writing source |
+
+*Internal design specs (core/engine/analyzer design, session notes, dogfooding logs)
+are maintained privately during development.*
 
 ---
 
