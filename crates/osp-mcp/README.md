@@ -20,15 +20,23 @@ cargo build -p osp-mcp --release
 ## Run
 
 ```bash
-# Agent mode (default — operator tools disabled)
+# Agent mode + mock LLM (default — offline, CI-safe, no OPENAI_API_KEY)
 osp-mcp --workspace /path/to/repo
 
 # Operator mode (operator tools enabled — human/trusted orchestrator)
 osp-mcp --mode operator --workspace /path/to/repo
 
+# Real LLM navigator loop (GPT-4o-mini, requires OPENAI_API_KEY)
+osp-mcp --mode operator --llm real --workspace /path/to/repo
+
 # With SCIP index (real LCOM4 cohesion)
 osp-mcp --workspace /path/to/repo --scip /path/to/index.scip
 ```
+
+The `--llm {mock,real}` flag selects the navigator loop backend (Aşama G2):
+- `mock` (default) — scripted proposals, offline-safe, no API key. For testing/CI.
+- `real` — `RuntimeLlmClient` (GPT-4o-mini via `OPENAI_API_KEY`). For corpus experiments (RQ6-9).
+
 
 The server speaks JSON-RPC over stdio (MCP 2024-11-05 protocol version).
 
@@ -63,14 +71,30 @@ The server speaks JSON-RPC over stdio (MCP 2024-11-05 protocol version).
 > Use `--mode operator` to enable trajectory/task management tools (for human-driven
 > architecture planning). Default `agent` mode is the safe read+execute surface.
 
-## Tools (Aşama G1)
+## Tools
+
+### Agent-facing (Aşama G1)
 
 | Tool | Category | INV | Description |
 |---|---|---|---|
 | `osp_analyze_workspace` | Observation | #4, #8 | Repo → space snapshot (node/edge count, coverage) |
 | `osp_get_agent_task_view` ⭐ | Observation | **T1** | INV-T1 epistemic projection — predicate + current measurement, **NEVER** target coordinates |
 | `osp_check_predicate` | Validation | T3, T4 | Evaluate predicate against current engine-measured position |
-| `osp_submit_delta` | Execution | T6, T7, T8 | DeltaProposal → engine measure → PredicateGate → mutation decision |
+| `osp_submit_delta` | Execution | T6, T7, T8 | Agent DeltaProposal → single-attempt Q5.b gate |
+
+### Navigator loop (Aşama G2 — agent-facing)
+
+| Tool | Category | INV | Description |
+|---|---|---|---|
+| `osp_run_task` ⭐ | Execution | **T1**, T7, T8 | Navigator loop (multi-attempt, LLM produces deltas). Returns NavigatorResult |
+| `osp_get_attempt_history` | Observation | RQ6 | Navigator evidence ledger (attempt outcomes, token costs) |
+
+### Operator-only (Aşama G2 — INV-T2 runtime gate)
+
+| Tool | Category | INV | Description |
+|---|---|---|---|
+| `osp_trajectory_init` | Operator | **T2** | Create Trajectory + VisionVector (agent mode rejected) |
+| `osp_task_add` | Operator | **T2** | Add Task (full JSON) to registry (agent mode rejected) |
 
 ## INV-T1 guarantee (the core thesis)
 

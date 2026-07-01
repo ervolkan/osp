@@ -5,9 +5,12 @@
 //! OspPrompt DEĞİŞMEZ (Paper 1 stub alanları korunur) — complete_raw bypass.
 //!
 //! **INV-T1:** AgentTaskView serialize edilir (hedef koordinat YOK).
-//! **INV-T4:** System prompt agent'a "pozisyon DECLARE ETME" der.
+//! **INV-#4:** System prompt agent'a "pozisyon DECLARE ETME" der.
+//!
+//! **G2:** `last_usage: Mutex<TokenUsage>` (Cell → Mutex) — `LlmClient: Send + Sync`
+//! gereği (MCP server Arc<dyn LlmClient> + spawn_blocking). Mutex Sync'tir.
 
-use std::cell::Cell;
+use std::sync::Mutex;
 
 use osp_core::agent::DeltaProposal;
 use osp_core::navigator::{LlmClient, LlmError as NavLlmError};
@@ -25,7 +28,7 @@ use crate::{CompletionRequest, Runtime};
 /// `system` = osp_system_prompt + trajectory task context, `user` = AgentTaskView JSON.
 pub struct RuntimeLlmClient {
     runtime: Runtime,
-    last_usage: Cell<TokenUsage>,
+    last_usage: Mutex<TokenUsage>,
 }
 
 impl RuntimeLlmClient {
@@ -33,7 +36,7 @@ impl RuntimeLlmClient {
     pub fn new(runtime: Runtime) -> Self {
         Self {
             runtime,
-            last_usage: Cell::new(TokenUsage::default()),
+            last_usage: Mutex::new(TokenUsage::default()),
         }
     }
 
@@ -51,7 +54,7 @@ impl LlmClient for RuntimeLlmClient {
                 .map_err(|e| NavLlmError::ProposalParse(format!("AgentTaskView serialize: {e}")))?,
         };
         let raw = self.runtime.complete_raw(&req).map_err(map_runtime_error)?;
-        self.last_usage.set(raw.usage);
+        *self.last_usage.lock().expect("last_usage poisoned") = raw.usage;
         let (proposal, _) = raw.into_proposal().map_err(|(raw_text, parse_err)| {
             NavLlmError::ProposalParse(format!(
                 "LLM response parse failed: {parse_err}\nRaw: {raw_text}"
@@ -61,7 +64,7 @@ impl LlmClient for RuntimeLlmClient {
     }
 
     fn last_token_cost(&self) -> TokenCost {
-        let u = self.last_usage.get();
+        let u = self.last_usage.lock().expect("last_usage poisoned").clone();
         TokenCost {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,

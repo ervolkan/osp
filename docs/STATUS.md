@@ -18,12 +18,12 @@ AI agent navigation. İki makale stratejisi: **Paper 1** (statik uzay, kanıtlan
 osp-core          ✅ A ontoloji + B predicate gate + C planner + D1 navigator + D2 gerçek measure
 osp-llm-runtime   ✅ D3 gerçek LLM adapter + D4 calibration feedback
 osp-cli           ✅ F1 truth surface (mock + gerçek LLM dispatch)
-osp-mcp           ✅ G1 AI access surface (INV-T1 canlı doğrulandı)
+osp-mcp           ✅ G1 + G2 (operator tools + navigator loop, INV-T2 gate canlı)
 osp-analyzer      ✅ Paper 1 (SCIP + tree-sitter, 5 dil)
 osp-spike         ✅ Paper 1 korpuslar (svelte, 23 repo)
 osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 
-osp-mcp G2        ⬜ SIRADAKİ — operator tools + navigator loop
+G2c corpus runner ⬜ SIRADAKİ — Paper 2 RQ6-9 evidence üretimi
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
 Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
@@ -43,9 +43,33 @@ Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
 | **D4** Calibration feedback | `osp-core/agent.rs` | ✅ | feedback_history + HallucinationType |
 | **F1** osp-cli | `osp-cli/` | ✅ | truth surface, mock + gerçek LLM |
 | **G1** osp-mcp | `osp-mcp/` | ✅ | rmcp 0.8, 4 tool, INV-T1 canlı doğrulandı |
-| **G2** MCP operator tools | `osp-mcp/` | ⬜ | trajectory_init, task_add, navigator loop |
+| **G2** MCP operator tools + navigator loop | `osp-mcp/` | ✅ | trajectory_init, task_add (INV-T2 gate), osp_run_task navigator loop, --llm mock|real |
+| **D5** OspPrompt unification | `osp-llm-runtime` | ⬜ | prompt debt giderme (D3 complete_raw → OspPrompt.task_view) |
 | **H** osp-sdk | — | ⬜ | TS/Py/Rust bindings (sona bırakıldı) |
 | **E** 3D UI + trajectory correction | `osp-desktop/` | ⬜ | donduruldu, opsiyonel |
+
+## Paper 2 Readiness Matrix
+
+Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
+
+| Layer | Status | Paper 2 readiness | Not |
+|---|---|---|---|
+| osp-core (ontology) | ✅ done | **high** | INV-T1..T8 type-level |
+| Predicate gate (Q5.b) | ✅ done | **high** | deterministik, kanıtlandı |
+| Planner / decomposition | ✅ done | **medium-high** | deterministic |
+| Navigator (mock LLM loop) | ✅ done | **medium** | loop çalışıyor |
+| Real LLM adapter (D3) | ✅ done | **medium** | ⚠ prompt debt (D5) |
+| Calibration feedback (D4) | ✅ done | **medium** | RQ8 için ölçülecek |
+| osp-cli (truth surface) | ✅ done | **high** | evidence export |
+| osp-mcp G1 (agent access) | ✅ done | **medium-high** | INV-T1 canlı |
+| osp-mcp G2 (operator + loop) | ✅ done | **high** | INV-T2 gate canlı, navigator loop |
+| **Corpus experiment runner (G2c)** | ⬜ **pending** | **required** | RQ6-9 ham veri |
+| Evidence JSON + failure notes | ⬜ pending | **required** | data-driven yazım |
+| osp-sdk (H) | ⬜ pending | **optional** | ürünleşme, paper'ı geciktirmez |
+| 3D UI / trajectory correction (E) | ⏸ paused | **optional** | sunum katmanı |
+
+**Paper 2 minimum gate:** G2 + gerçek LLM corpus deneyleri + evidence JSON + failure notes.
+H (SDK) ve E (3D) beklenmez — opsiyonel ürünleşme/sunum katmanıdır.
 
 ## Çekirdek Disiplinler
 
@@ -57,10 +81,14 @@ Paper 2           ⬜ EN SON — tüm implementation bitince data-driven yazım
 
 ## Sonraki Adım Önerisi
 
-**G2 — MCP operator tools + navigator loop.** G1'deki single-attempt submit_delta'yı
-gerçek navigator loop'a bağla (RuntimeLlmClient ile multi-attempt). Operator tools
-(trajectory_init, task_add) ekle. Bu, Paper 2 RQ6 (token cost) ve RQ7 (task success)
-için gerçek corpus deneylerinin önkoşulu.
+**G2c — Corpus experiment runner.** G2 tamamlandı (operator tools + navigator loop
+çalışıyor, INV-T2 gate canlı doğrulandı). Sıradaki: N repo × M task × {mock,real} ×
+{strict, accept-improvement} × {feedback, no-feedback} matrisi ile Paper 2 RQ6-9
+evidence üretimi. Çıktı: repo/task_type/policy/llm/attempt_count/completed/token_total/
+duration/loss_before/loss_after/axis_regression tablosu + evidence JSON + failure notes.
+
+G2c sonrası Paper 2 minimum gate doluyor (G2 ✅ + corpus + evidence + failures).
+H (SDK) ve E (3D) opsiyonel — paper'ı geciktirmez.
 
 ## Test Durumu
 

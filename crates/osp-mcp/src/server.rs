@@ -1,24 +1,32 @@
 //! OSP MCP Server — rmcp `ServerHandler` implementation (`docs/mcp-design.md` §6).
 //!
-//! 4 initial tools (Aşama G1):
+//! Aşama G1 (4 agent-facing tool):
 //! - `osp_analyze_workspace` — Observation: repo snapshot (nodes, edges, coverage)
 //! - `osp_get_agent_task_view` ⭐ — Observation: INV-T1 projection (NO coordinates)
 //! - `osp_check_predicate` — Validation: current predicate status
-//! - `osp_submit_delta` — Execution: navigator single attempt (DeltaProposal → gate)
+//! - `osp_submit_delta` — Execution: agent DeltaProposal (single-attempt, Q5.b gate)
+//!
+//! Aşama G2 eklemeleri:
+//! - `osp_trajectory_init` — Operator-only: Trajectory + VisionVector oluştur (INV-T2)
+//! - `osp_task_add` — Operator-only: registry'ye Task ekle (INV-T2)
+//! - `osp_run_task` ⭐ — Agent-facing: navigator loop (multi-attempt, LLM delta üretir)
+//! - `osp_get_attempt_history` — Agent-facing: navigator evidence ledger (RQ6 verisi)
 //!
 //! ## INV-T1 leak protection
 //! Her agent-facing tool çıktısı `McpEnvelope::assert_no_coordinate_leak()`'ten geçer.
 //! `preferred_vector`/`target_region`/`milestone_target_vector` string geçerse envelope
 //! `TargetCoordinateLeakBlocked` ile değiştirilir (panic-level MCP bug).
+//! **Operator-only tool'lar bu kontrolden MUAF** (operator coordinate görür — envelope.rs kuralı).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use osp_core::agent::DeltaProposal;
 use osp_core::coords::MetricSource;
-use osp_core::navigator::{build_claim_from_proposal, provenanced_from_raw};
+use osp_core::navigator::{build_claim_from_proposal, provenanced_from_raw, LlmClient};
 use osp_core::trajectory::{
     InMemoryTaskRegistry, InternalTaskPlan, OperatorCapability, PredicateSetResult,
-    ProvenancedRawPosition, Task, TaskId, TaskResolver,
+    ProvenancedRawPosition, Task, TaskId, TaskResolver, TrajectoryEvidence, TrajectoryId,
 };
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -27,7 +35,6 @@ use rmcp::{schemars, tool, tool_handler, tool_router, ServerHandler};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tokio::sync::Mutex as AsyncMutex;
 
 use crate::envelope::{EnvelopeError, ErrorCode, McpEnvelope};
 use crate::mode::ServerMode;
@@ -62,53 +69,104 @@ pub struct CheckPredicateInput {
 /// `osp_submit_delta` input. DeltaProposal JSON (structural only — NO positions, inv #4).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SubmitDeltaInput {
-    /// Task ID (navigator bu task için çalışır).
+    /// Task ID (single-attempt bu task için çalışır).
     pub task_id: u64,
     /// DeltaProposal JSON (new_nodes, new_edges, modified_entities, reasoning).
     /// Pozisyon YOK — engine ölçer (INV-T4).
     pub delta_json: JsonValue,
 }
 
+// ── G2: Operator-only tool input'ları ──────────────────────────────────────────
+
+/// `osp_trajectory_init` input (operator-only, INV-T2). Vision JSON + label alır.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TrajectoryInitInput {
+    /// Trajectory label (insan-okur).
+    pub label: String,
+    /// VisionVector JSON (RawPosition + source). Operator hedef koordinatı verir.
+    pub vision_json: JsonValue,
+}
+
+/// `osp_task_add` input (operator-only, INV-T2). Task JSON alır, registry'ye ekler.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskAddInput {
+    /// Task JSON (tüm alanlar pub, serde Deserialize — explorer doğruladı, builder gerekmez).
+    pub task_json: JsonValue,
+}
+
+// ── G2: Navigator loop tool input'ları (agent-facing) ──────────────────────────
+
+/// `osp_run_task` input. Navigator loop — sadece task_id (LLM delta üretir).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RunTaskInput {
+    /// Task ID (navigator bu task için maneuver_limit kadar LLM çağrısı yapar).
+    pub task_id: u64,
+    /// Maneuver limit override (opsiyonel). Yoksa task.policy.maneuver_limit kullanılır.
+    #[serde(default)]
+    pub maneuver_limit: Option<u32>,
+}
+
+/// `osp_get_attempt_history` input. Task'ın navigator evidence ledger'ı.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GetAttemptHistoryInput {
+    /// Task ID.
+    pub task_id: u64,
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // OspMcpServer — rmcp ServerHandler + tool router
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// OSP MCP server. `SharedWorkspace` + `TaskRegistry` + `ServerMode` taşır.
+/// Evidence store — task_id → navigator'ın biriktirdiği evidence listesi (RQ6 verisi).
+type EvidenceStore = Arc<std::sync::Mutex<HashMap<TaskId, Vec<TrajectoryEvidence>>>>;
+
+/// OSP MCP server. `SharedWorkspace` + `TaskRegistry` + `ServerMode` + `LlmClient` taşır.
 ///
 /// **INV-T2:** `operator_capability: None` (agent mode) veya `Some` (operator mode).
-/// Agent mode'da operator tool'lar çağrılamaz (`allows_operator_tools()` false).
+/// Agent mode'da operator tool'lar runtime gate ile reddedilir (`allows_operator_tools()` false).
 ///
-/// **State:** Workspace analyze-once, registry startup'ta demo task ile kurulu.
+/// **G2 — Navigator loop:** `llm: Arc<dyn LlmClient>` startup'ta inject edilir
+/// (`--llm mock|real`). `osp_run_task` bu client ile multi-attempt navigator çalıştırır.
+///
+/// **State:** Workspace analyze-once, registry demo task ile kurulu, evidence per-task saklanır.
 pub struct OspMcpServer {
-    /// Analyze edilmiş workspace (Arc<Mutex> — async-safe).
+    /// Analyze edilmiş workspace (Arc<Mutex> — sync, spawn_blocking ile köprü).
     workspace: SharedWorkspace,
-    /// Task registry (InMemory — agent task view / submit delta için).
-    registry: Arc<AsyncMutex<InMemoryTaskRegistry>>,
+    /// Task registry (sync Mutex — workspace ile tutarlı, spawn_blocking içine taşınır).
+    registry: Arc<std::sync::Mutex<InMemoryTaskRegistry>>,
     /// Server mode (agent/operator).
     mode: ServerMode,
     /// OperatorCapability (operator mode'da Some — INV-T2). Request'ten ASLA.
-    #[allow(dead_code)]
     operator_capability: Option<OperatorCapability>,
+    /// LLM client (G2 — navigator loop için). Mock veya RuntimeLlmClient (startup inject).
+    llm: Arc<dyn LlmClient>,
+    /// Trajectory ID (tek trajectory G2'de; multi-trajectory G3+).
+    trajectory_id: TrajectoryId,
+    /// Evidence store — task_id → navigator evidence (osp_get_attempt_history için).
+    evidence_store: EvidenceStore,
     /// Tool router (#[tool_handler] bu field'ı kullanır: `self.tool_router`).
     tool_router: ToolRouter<OspMcpServer>,
 }
 
 impl OspMcpServer {
-    /// Yeni server kur (startup'ta main.rs çağırır).
-    pub fn new(workspace: Workspace, mode: ServerMode) -> Self {
+    /// Yeni server kur (startup'ta main.rs çağırır). LLM client inject edilir.
+    pub fn new(workspace: Workspace, mode: ServerMode, llm: Arc<dyn LlmClient>) -> Self {
         let operator_capability = if mode.allows_operator_tools() {
             Some(OperatorCapability::issue())
         } else {
             None
         };
         let mut registry = InMemoryTaskRegistry::new();
-        // G1: default demo task ekle (coupling <= 0.55). Operator-only task_add Aşama G2'de.
+        // G1: default demo task ekle (coupling <= 0.55). Operator task_add ile override edilebilir.
         registry.insert(default_demo_task());
         Self {
             workspace: Arc::new(std::sync::Mutex::new(workspace)),
-            registry: Arc::new(AsyncMutex::new(registry)),
+            registry: Arc::new(std::sync::Mutex::new(registry)),
             mode,
             operator_capability,
+            llm,
+            trajectory_id: 1,
+            evidence_store: Arc::new(std::sync::Mutex::new(HashMap::new())),
             tool_router: Self::get_tool_router(),
         }
     }
@@ -121,6 +179,26 @@ impl OspMcpServer {
     /// Shared workspace clone (test için).
     pub fn workspace_handle(&self) -> SharedWorkspace {
         Arc::clone(&self.workspace)
+    }
+
+    /// INV-T2 runtime gate — operator tool çağrısında agent mode reddi.
+    /// Agent mode'da `OperatorCapabilityRequired` error envelope döndürür.
+    /// Operator mode'da capability referansı döndürür (Trajectory::new için gerekli).
+    fn gate_operator_tool(&self, tool_name: &str) -> Result<&OperatorCapability, String> {
+        if let Some(cap) = self.operator_capability.as_ref() {
+            Ok(cap)
+        } else {
+            let env = McpEnvelope::error(
+                tool_name,
+                EnvelopeError::new(
+                    ErrorCode::OperatorCapabilityRequired,
+                    format!(
+                        "tool '{tool_name}' requires operator mode — agent mode denied (INV-T2)"
+                    ),
+                ),
+            );
+            Err(serde_json::to_string(&env).map_err(|e| e.to_string())?)
+        }
     }
 }
 
@@ -169,7 +247,7 @@ impl OspMcpServer {
     ) -> Result<String, String> {
         // 1. Task resolve.
         let task = {
-            let reg = self.registry.lock().await;
+            let reg = self.registry.lock().map_err(|e| e.to_string())?;
             match reg.resolve(input.task_id) {
                 Some(t) => t.clone(),
                 None => {
@@ -225,7 +303,7 @@ impl OspMcpServer {
         Parameters(input): Parameters<CheckPredicateInput>,
     ) -> Result<String, String> {
         let task = {
-            let reg = self.registry.lock().await;
+            let reg = self.registry.lock().map_err(|e| e.to_string())?;
             match reg.resolve(input.task_id) {
                 Some(t) => t.clone(),
                 None => {
@@ -291,7 +369,7 @@ impl OspMcpServer {
         };
         // 2. Task resolve.
         let task = {
-            let reg = self.registry.lock().await;
+            let reg = self.registry.lock().map_err(|e| e.to_string())?;
             match reg.resolve(input.task_id) {
                 Some(t) => t.clone(),
                 None => {
@@ -319,6 +397,275 @@ impl OspMcpServer {
         );
         let checked = envelope.assert_no_coordinate_leak("osp_submit_delta");
         serde_json::to_string(&checked).map_err(|e| e.to_string())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // G2a — OPERATOR-ONLY TOOLS (INV-T2 runtime gate)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// `osp_trajectory_init` (operator-only) — Trajectory + VisionVector oluştur.
+    ///
+    /// **INV-T2:** Agent mode reddedilir. Operator hedef koordinat (vision) verir.
+    /// **Leak check YOK** — operator coordinate görür (envelope.rs doc kuralı).
+    #[tool(
+        name = "osp_trajectory_init",
+        description = "OPERATOR-ONLY (INV-T2). Initialize a Trajectory with a vision (target coordinate). Agent mode returns OperatorCapabilityRequired error. Returns trajectory_id + vision summary."
+    )]
+    async fn osp_trajectory_init(
+        &self,
+        Parameters(input): Parameters<TrajectoryInitInput>,
+    ) -> Result<String, String> {
+        // INV-T2 runtime gate.
+        let _cap = self.gate_operator_tool("osp_trajectory_init")?;
+        // Vision parse.
+        let vision: osp_core::vision::VisionVector =
+            match serde_json::from_value(input.vision_json.clone()) {
+                Ok(v) => v,
+                Err(e) => {
+                    let env = McpEnvelope::error(
+                        "osp_trajectory_init",
+                        EnvelopeError::new(
+                            ErrorCode::InvalidToolInput,
+                            format!("vision_json parse failed: {e}"),
+                        ),
+                    );
+                    return serde_json::to_string(&env).map_err(|e| e.to_string());
+                }
+            };
+        // Trajectory kur (INV-T2 — OperatorCapability ile).
+        let trajectory = osp_core::trajectory::Trajectory::new(
+            _cap,
+            self.trajectory_id,
+            input.label.clone(),
+            vision.clone(),
+        );
+        // Sonuç (operator coordinate içerir — leak check YOK).
+        let result = serde_json::json!({
+            "trajectory_id": trajectory.id,
+            "label": trajectory.label,
+            "vision": vision,
+            "milestone_count": trajectory.milestones.len(),
+            "mode": self.mode.as_str(),
+        });
+        let envelope = McpEnvelope::success("osp_trajectory_init", result, vec!["INV-T2".into()]);
+        // Operator tool — leak check INTENTIONALLY skipped (operator görebilir).
+        serde_json::to_string(&envelope).map_err(|e| e.to_string())
+    }
+
+    /// `osp_task_add` (operator-only) — registry'ye Task ekle.
+    ///
+    /// **INV-T2:** Agent mode reddedilir. Task JSON tüm alanlarla (pub) deserialize edilir.
+    #[tool(
+        name = "osp_task_add",
+        description = "OPERATOR-ONLY (INV-T2). Add a Task (full JSON: predicate, policy, allowed_operations) to the registry. Agent mode returns OperatorCapabilityRequired error. Returns task_id + confirmation."
+    )]
+    async fn osp_task_add(
+        &self,
+        Parameters(input): Parameters<TaskAddInput>,
+    ) -> Result<String, String> {
+        // INV-T2 runtime gate.
+        let _cap = self.gate_operator_tool("osp_task_add")?;
+        // Task parse (tüm alanlar pub, serde Deserialize — builder gerekmez).
+        let task: Task = match serde_json::from_value(input.task_json.clone()) {
+            Ok(t) => t,
+            Err(e) => {
+                let env = McpEnvelope::error(
+                    "osp_task_add",
+                    EnvelopeError::new(
+                        ErrorCode::InvalidToolInput,
+                        format!("task_json parse failed: {e}"),
+                    ),
+                );
+                return serde_json::to_string(&env).map_err(|e| e.to_string());
+            }
+        };
+        let task_id = task.id;
+        // Registry'ye ekle (sync Mutex).
+        {
+            let mut reg = self.registry.lock().map_err(|e| e.to_string())?;
+            reg.insert(task.clone());
+        }
+        // Sonuç (preferred_vector operator görür — leak check YOK).
+        let result = serde_json::json!({
+            "task_id": task_id,
+            "label": task.label,
+            "milestone_id": task.milestone_id,
+            "maneuver_limit": task.policy.maneuver_limit,
+            "predicate_count": task.target_predicate_set.predicates.len(),
+            "allowed_operations": task.allowed_operations,
+        });
+        let envelope = McpEnvelope::success("osp_task_add", result, vec!["INV-T2".into()]);
+        serde_json::to_string(&envelope).map_err(|e| e.to_string())
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // G2b — NAVIGATOR LOOP TOOLS (agent-facing, INV-T1/T7/T8 enforced)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// `osp_run_task` ⭐ — navigator loop (multi-attempt, LLM delta üretir).
+    ///
+    /// **INV-T1:** AgentTaskView kullanır (navigator loop INV-T1 güvenli).
+    /// **INV-T7:** maneuver_limit kadar attempt (task.policy veya override).
+    /// **INV-T8:** AcceptAsProgress → TrajectoryCheckpoint lane (Mainline DEĞİL).
+    /// Sync→async bridge: blocking navigator `spawn_blocking` ile çalışır.
+    #[tool(
+        name = "osp_run_task",
+        description = "Run the navigator loop for a task (multi-attempt, LLM produces deltas). Returns NavigatorResult: Completed / ExceededManeuverLimit / RequiresOperatorApproval / LlmError. INV-T1/T7/T8 enforced. Evidence stored for osp_get_attempt_history."
+    )]
+    async fn osp_run_task(
+        &self,
+        Parameters(input): Parameters<RunTaskInput>,
+    ) -> Result<String, String> {
+        // Task'ı clone'la (sync lock scope'tan çıkar — navigator uzun süre çalışır).
+        let task = {
+            let reg = self.registry.lock().map_err(|e| e.to_string())?;
+            match reg.resolve(input.task_id) {
+                Some(t) => t.clone(),
+                None => {
+                    let env = McpEnvelope::error(
+                        "osp_run_task",
+                        EnvelopeError::new(
+                            ErrorCode::TaskNotFound,
+                            format!("task {} not found", input.task_id),
+                        ),
+                    );
+                    return serde_json::to_string(&env).map_err(|e| e.to_string());
+                }
+            }
+        };
+        // Maneuver limit override uygula (varsa task.policy'yi geçici değiştir).
+        if let Some(limit) = input.maneuver_limit {
+            let mut reg = self.registry.lock().map_err(|e| e.to_string())?;
+            if let Some(t) = reg.tasks.get_mut(&input.task_id) {
+                t.policy.maneuver_limit = limit;
+            }
+        }
+        // Mutex handle'ları clone'la (Arc) — spawn_blocking içine taşı.
+        let workspace = Arc::clone(&self.workspace);
+        let registry = Arc::clone(&self.registry);
+        let llm = Arc::clone(&self.llm);
+        let evidence_store = Arc::clone(&self.evidence_store);
+        let trajectory_id = self.trajectory_id;
+        let task_id = input.task_id;
+
+        // Sync navigator'ı spawn_blocking ile çalıştır (LLM HTTP blocking).
+        let nav_result = tokio::task::spawn_blocking(move || -> Result<JsonValue, String> {
+            // Tüm lock'ları bu sync scope içinde al.
+            let mut ws = workspace.lock().map_err(|e| e.to_string())?;
+            let reg = registry.lock().map_err(|e| e.to_string())?;
+            // AgentNavigator: llm (Arc<dyn> → &dyn), resolver (&InMemoryTaskRegistry),
+            // engine (&mut SpaceEngine), evidence (&mut Vec).
+            let mut evidence: Vec<TrajectoryEvidence> = Vec::new();
+            let current_measured = ws.current_measured();
+            let target_vector = task
+                .target_predicate_set
+                .preferred_vector
+                .unwrap_or_default();
+            let mut nav = osp_core::navigator::AgentNavigator {
+                llm: llm.as_ref(),
+                resolver: &*reg,
+                engine: ws.engine_mut(),
+                evidence: &mut evidence,
+                trajectory_id,
+                milestone_id: task.milestone_id,
+                target_vector,
+                current_measured: current_measured.clone(),
+                output_contract: osp_core::agent::OutputContract::strict(),
+            };
+            let result = nav.run_task(task_id, 1);
+            // Evidence'ı store'a kaydet (RQ6 verisi).
+            let attempt_count = match &result {
+                osp_core::navigator::NavigatorResult::Completed { attempts, .. } => *attempts,
+                osp_core::navigator::NavigatorResult::ExceededManeuverLimit {
+                    attempts, ..
+                } => *attempts,
+                osp_core::navigator::NavigatorResult::RequiresOperatorApproval {
+                    attempts, ..
+                } => *attempts,
+                _ => 0,
+            };
+            let _ = attempt_count;
+            if !evidence.is_empty() || attempt_count > 0 {
+                let mut store = evidence_store.lock().map_err(|e| e.to_string())?;
+                store.entry(task_id).or_default().extend(evidence.clone());
+            }
+            Ok(serialize_navigator_result(&result))
+        })
+        .await
+        .map_err(|e| format!("navigator task panicked: {e}"))??;
+
+        let envelope = McpEnvelope::success(
+            "osp_run_task",
+            nav_result,
+            vec!["INV-T1".into(), "INV-T7".into(), "INV-T8".into()],
+        );
+        let checked = envelope.assert_no_coordinate_leak("osp_run_task");
+        serde_json::to_string(&checked).map_err(|e| e.to_string())
+    }
+
+    /// `osp_get_attempt_history` — task'ın navigator evidence ledger'ı (RQ6 verisi).
+    ///
+    /// Her osp_run_task çağrısında biriken TrajectoryEvidence listesini döndürür.
+    /// Agent-facing — token cost, attempt outcome, gate decisions içerir (coordinate YOK).
+    #[tool(
+        name = "osp_get_attempt_history",
+        description = "Get the navigator evidence ledger for a task (attempt outcomes, token costs, gate decisions). Populated by prior osp_run_task calls. RQ6 token-cost data source."
+    )]
+    async fn osp_get_attempt_history(
+        &self,
+        Parameters(input): Parameters<GetAttemptHistoryInput>,
+    ) -> Result<String, String> {
+        let evidence = {
+            let store = self.evidence_store.lock().map_err(|e| e.to_string())?;
+            store.get(&input.task_id).cloned().unwrap_or_default()
+        };
+        let result = serde_json::json!({
+            "task_id": input.task_id,
+            "attempt_count": evidence.len(),
+            "evidence": evidence,
+        });
+        let envelope = McpEnvelope::success("osp_get_attempt_history", result, vec!["RQ6".into()]);
+        let checked = envelope.assert_no_coordinate_leak("osp_get_attempt_history");
+        serde_json::to_string(&checked).map_err(|e| e.to_string())
+    }
+}
+
+/// NavigatorResult → JSON (serialize variant + attempts + tokens + last outcome).
+/// Coordinate İÇERMEZ (INV-T1 — AttemptOutcome predicate/gate info taşır, koordinat değil).
+fn serialize_navigator_result(result: &osp_core::navigator::NavigatorResult) -> JsonValue {
+    use osp_core::navigator::NavigatorResult;
+    match result {
+        NavigatorResult::Completed {
+            attempts,
+            total_tokens,
+        } => serde_json::json!({
+            "outcome": "Completed",
+            "attempts": attempts,
+            "total_tokens": total_tokens.total_tokens,
+        }),
+        NavigatorResult::ExceededManeuverLimit {
+            attempts,
+            last_outcome,
+        } => serde_json::json!({
+            "outcome": "ExceededManeuverLimit",
+            "attempts": attempts,
+            "last_mutation_decision": format!("{:?}", last_outcome.mutation_decision),
+            "last_predicate_completion": format!("{:?}", last_outcome.predicate_completion),
+        }),
+        NavigatorResult::TaskNotFound => serde_json::json!({ "outcome": "TaskNotFound" }),
+        NavigatorResult::RequiresOperatorApproval {
+            attempts,
+            last_outcome,
+        } => serde_json::json!({
+            "outcome": "RequiresOperatorApproval",
+            "attempts": attempts,
+            "last_mutation_decision": format!("{:?}", last_outcome.mutation_decision),
+            "last_apply_target": format!("{:?}", last_outcome.mutation_decision.apply_target()),
+        }),
+        NavigatorResult::LlmError(e) => serde_json::json!({
+            "outcome": "LlmError",
+            "error": e.to_string(),
+        }),
     }
 }
 

@@ -2362,6 +2362,7 @@ dependencies = [
  "clap",
  "osp-analyzer",
  "osp-core",
+ "osp-llm-runtime",
  "rmcp",
  "schemars 0.8.22",
  "serde",

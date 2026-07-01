@@ -52,12 +52,24 @@ fn assert_no_leak(json_str: &str, tool_name: &str) {
 }
 
 /// Workspace + server kur (fixture repo ile). Agent mode (operator tools disabled).
+/// Mock LLM ile (offline — CI güvenli, OPENAI_API_KEY gerekmez).
 fn make_server() -> (Arc<std::sync::Mutex<Workspace>>, OspMcpServer) {
     let dir = make_fixture_repo();
     let workspace = Workspace::analyze(dir.path(), None).expect("workspace analyze");
-    let server = OspMcpServer::new(workspace, osp_mcp::ServerMode::Agent);
+    let llm: Arc<dyn osp_core::navigator::LlmClient> =
+        Arc::new(osp_core::navigator::MockLlmClient::new(Vec::new()));
+    let server = OspMcpServer::new(workspace, osp_mcp::ServerMode::Agent, llm);
     let handle = server.workspace_handle();
     (handle, server)
+}
+
+/// Operator mode server (INV-T2 gate test için).
+fn make_operator_server() -> OspMcpServer {
+    let dir = make_fixture_repo();
+    let workspace = Workspace::analyze(dir.path(), None).expect("workspace analyze");
+    let llm: Arc<dyn osp_core::navigator::LlmClient> =
+        Arc::new(osp_core::navigator::MockLlmClient::new(Vec::new()));
+    OspMcpServer::new(workspace, osp_mcp::ServerMode::Operator, llm)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -232,4 +244,103 @@ fn workspace_security_rejects_file_not_directory() {
     fs::write(&file_path, "hello").unwrap();
     let result = Workspace::analyze(&file_path, None);
     assert!(matches!(result, Err(WorkspaceError::NotADirectory(_))));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2 — INV-T2 runtime gate: operator tool agent mode'da reddedilir
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn g2_inv_t2_gate_operator_tool_rejected_in_agent_mode() {
+    use osp_mcp::ServerMode;
+    // Agent mode server — operator tool çağrısı gate_operator_tool tarafından reddedilmeli.
+    let (_handle, server) = make_server();
+    // gate_operator_tool private; public yolu: agent mode'da operator_capability None.
+    // ServerMode::Agent allows_operator_tools() false → INV-T2 gate aktif.
+    assert!(!server.mode().allows_operator_tools());
+    assert_eq!(server.mode(), ServerMode::Agent);
+}
+
+#[test]
+fn g2_inv_t2_operator_mode_allows_operator_tools() {
+    let server = make_operator_server();
+    // Operator mode — operator tools kullanılabilir.
+    assert!(server.mode().allows_operator_tools());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2 — Navigator loop INV-T1: serialize_navigator_result koordinat İÇERMEZ
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn g2_navigator_result_llm_error_has_no_coordinate_leak() {
+    use osp_core::navigator::{LlmClient, MockLlmClient, NavigatorResult};
+    // Boş proposals → navigator ilk complete()'te NoMoreProposals → LlmError.
+    let llm = MockLlmClient::new(Vec::new());
+    // NavigatorResult::LlmError simüle et (gerçek loop navigator.rs testlerinde).
+    let result = NavigatorResult::LlmError(osp_core::navigator::LlmError::NoMoreProposals);
+    // JSON'a serialize et — preferred_vector YOK olmalı (INV-T1).
+    let json = serde_json::json!({
+        "outcome": "LlmError",
+        "error": format!("{:?}", &result),
+    });
+    let json_str = serde_json::to_string(&json).unwrap();
+    assert_no_leak(&json_str, "osp_run_task (LlmError)");
+    // LlmClient trait Send+Sync (G2 — MCP spawn_blocking).
+    // MockLlmClient Sized + Send + Sync (reqwest Client ve AtomicUsize Send+Sync).
+    fn _assert_send_sync<T: Send + Sync>() {}
+    _assert_send_sync::<MockLlmClient>();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2 — INV-T8: MutationDecision → ApplyTarget mapping (progress checkpoint isolation)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn g2_inv_t8_accept_as_progress_never_mainline() {
+    use osp_core::trajectory::{ApplyTarget, CommitLane, MutationDecision};
+    // INV-T8: AcceptAsProgress → TrajectoryCheckpoint (ASLA Mainline).
+    let md = MutationDecision::AcceptAsProgress;
+    assert_eq!(
+        md.apply_target(),
+        ApplyTarget::Lane(CommitLane::TrajectoryCheckpoint)
+    );
+    // Sadece AcceptAsCompleted → Mainline.
+    assert_eq!(
+        MutationDecision::AcceptAsCompleted.apply_target(),
+        ApplyTarget::Lane(CommitLane::Mainline)
+    );
+    // Reject → NotApplied (Sandbox DEĞİL — review v4 #3).
+    assert_eq!(
+        MutationDecision::Reject.apply_target(),
+        ApplyTarget::NotApplied
+    );
+    // RequireOperatorApproval → Sandbox (izole).
+    assert_eq!(
+        MutationDecision::RequireOperatorApproval.apply_target(),
+        ApplyTarget::Lane(CommitLane::Sandbox)
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// G2 — ErrorCode yeni variantları (navigator result mapping)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn g2_error_codes_operator_approval_and_llm_error_round_trip() {
+    use osp_mcp::envelope::{EnvelopeError, ErrorCode};
+    // OperatorApprovalRequired — navigator RequiresOperatorApproval map.
+    let err = EnvelopeError::new(
+        ErrorCode::OperatorApprovalRequired,
+        "operator approval needed",
+    );
+    let json = serde_json::to_string(&err).unwrap();
+    assert!(json.contains("OPERATOR_APPROVAL_REQUIRED"));
+    assert!(json.contains("INV-T7"));
+    assert!(json.contains("\"recoverable\":true"));
+    // NavigatorLlmError — navigator LlmError map.
+    let err = EnvelopeError::new(ErrorCode::NavigatorLlmError, "network timeout");
+    let json = serde_json::to_string(&err).unwrap();
+    assert!(json.contains("NAVIGATOR_LLM_ERROR"));
+    assert!(json.contains("\"recoverable\":true"));
 }

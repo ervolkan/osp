@@ -13,7 +13,7 @@
 //! decomposition yapamaz (Aşama C), hedef koordinat göremez (INV-T1), pozisyon declare
 //! edemez (INV-T4). Sadece DeltaProposal üretir; engine ölçer; PredicateGate karar verir.
 
-use std::cell::Cell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::agent::{DeltaProposal, NewNodeSpec, OutputContract};
 use crate::coords::{MetricSource, RawPosition};
@@ -36,9 +36,13 @@ use crate::witness::{AgentId, Claim, ClaimId, Intent};
 ///
 /// **INV-T3 (engine ölçer):** Agent pozisyon declare edemez; DeltaProposal structural-only.
 /// LLM'in position_hints advisory'dir, engine tarafından authoritative kabul edilmez.
-pub trait LlmClient {
+///
+/// **G2 (osp-mcp):** `Send + Sync` supertrait — MCP server `Arc<dyn LlmClient>` olarak
+/// tutar ve `spawn_blocking` ile farklı thread'e taşır. MockLlmClient ve RuntimeLlmClient
+/// zaten Send+Sync (reqwest Client Send+Sync).
+pub trait LlmClient: Send + Sync {
     /// AgentTaskView → DeltaProposal. Agent'a view serialize edilir (INV-T1),
-    /// agent structural change önerir (INV-T4 — pozisyon YOK).
+    /// agent structural change önerir (INV-#4 — pozisyon YOK).
     fn complete(&self, view: &AgentTaskView) -> Result<DeltaProposal, LlmError>;
 
     /// Token maliyeti (RQ6 evidence). Mock için 0; production gerçek TokenUsage.
@@ -74,9 +78,12 @@ impl std::error::Error for LlmError {}
 /// Örn: [fail_proposal, progress_proposal, success_proposal] → 3-attempt senaryosu.
 ///
 /// **Deterministic:** call_count sırayla artar; aynı proposals → aynı davranış.
+///
+/// **G2:** `call_count: AtomicUsize` (Cell → AtomicUsize) — `LlmClient: Send + Sync`
+/// gereği (MCP server Arc<dyn LlmClient> + spawn_blocking). AtomicUsize Sync'tir.
 pub struct MockLlmClient {
     proposals: Vec<DeltaProposal>,
-    call_count: Cell<usize>,
+    call_count: AtomicUsize,
     /// Her çağrı için token cost (RQ6 test). Default 0.
     token_costs: Vec<TokenCost>,
 }
@@ -87,7 +94,7 @@ impl MockLlmClient {
         let token_costs = vec![TokenCost::default(); proposals.len()];
         Self {
             proposals,
-            call_count: Cell::new(0),
+            call_count: AtomicUsize::new(0),
             token_costs,
         }
     }
@@ -96,31 +103,33 @@ impl MockLlmClient {
     pub fn with_token_costs(proposals: Vec<DeltaProposal>, token_costs: Vec<TokenCost>) -> Self {
         Self {
             proposals,
-            call_count: Cell::new(0),
+            call_count: AtomicUsize::new(0),
             token_costs,
         }
     }
 
     /// Kaç çağrı yapıldı (test assertion için).
     pub fn call_count(&self) -> usize {
-        self.call_count.get()
+        self.call_count.load(Ordering::SeqCst)
     }
 }
 
 impl LlmClient for MockLlmClient {
     fn complete(&self, _view: &AgentTaskView) -> Result<DeltaProposal, LlmError> {
-        let idx = self.call_count.get();
+        // fetch_add her zaman artar; ama eski Cell davranışını (NoMoreProposals'da
+        // counter artmıyor) korumak için load-then-conditional-store kullanırız.
+        let idx = self.call_count.load(Ordering::SeqCst);
         let proposal = self
             .proposals
             .get(idx)
             .cloned()
             .ok_or(LlmError::NoMoreProposals)?;
-        self.call_count.set(idx + 1);
+        self.call_count.store(idx + 1, Ordering::SeqCst);
         Ok(proposal)
     }
 
     fn last_token_cost(&self) -> TokenCost {
-        let idx = self.call_count.get().saturating_sub(1);
+        let idx = self.call_count().saturating_sub(1);
         self.token_costs.get(idx).copied().unwrap_or_default()
     }
 }
@@ -272,7 +281,7 @@ pub enum NavigatorResult {
 ///
 /// **Hard gates (Q4/Q5/Q6):** D1'de PassedAll varsayılır (commit() entegrasyonu D2'de).
 /// Navigator PredicateGate (Q5.b soft gate) ayrı çağırır.
-pub struct AgentNavigator<'a, L: LlmClient, R: TaskResolver> {
+pub struct AgentNavigator<'a, L: LlmClient + ?Sized, R: TaskResolver> {
     pub llm: &'a L,
     pub resolver: &'a R,
     /// D2 — mutable engine (commit_task_claim &mut self gerektirir).
@@ -290,7 +299,7 @@ pub struct AgentNavigator<'a, L: LlmClient, R: TaskResolver> {
     pub output_contract: OutputContract,
 }
 
-impl<'a, L: LlmClient, R: TaskResolver> AgentNavigator<'a, L, R> {
+impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
     /// Bir Task için navigator loop. Maneuver limit (INV-T7) kadar attempt.
     /// Her attempt: LLM → DeltaProposal → Claim → measure → PredicateGate → evidence.
     pub fn run_task(&mut self, task_id: TaskId, agent: AgentId) -> NavigatorResult {

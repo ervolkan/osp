@@ -1,32 +1,34 @@
 # OSP Agent Trajectory Roadmap — Mimari Navigasyon Protokolü
 
 > **Durum:** v0.4 — çekirdek + ürünleşme CLI/MCP tamam, G2/H/E + Paper 2 yazımı kaldı
-> **Tarih:** 2026-06-30 (v0.1 tasarım) → 2026-06-29 (v0.4 — A→G1 tamamlandı)
+> **Durum tarihi:** 2026-06-30 · **Son implementation milestone:** G1 merge, 2026-06-29
+> **Tarihçe:** v0.1 tasarım (2026-06-30) → v0.4 A→G1 implementation tamamlandı (2026-06-29)
 > **İlişki:** Paper 1 (Statik Uzay) tamamlandı → bu doküman Paper 2 (Dinamik/Agent)'nin omurgası
 > **3D viewer durumu:** DURDURULDU (görsel geliştirme, agent işleri öncelik)
 
 ---
 
-## ⭐ Mevcut Durum (2026-06-29 — G1 merge sonrası)
+## ⭐ Mevccut Durum (2026-06-29 — G2 tamam)
 
-**Tamamlanan implementation (A→G1):**
+**Tamamlanan implementation (A→G2):**
 - ✅ **osp-core** — ontoloji (A) + predicate gate (B/B2) + planner (C) + navigator (D1) +
   gerçek measure (D2). INV-T1..T8 type-level enforced.
 - ✅ **osp-llm-runtime** — gerçek LLM adapter (D3) + calibration feedback (D4).
 - ✅ **osp-cli** — truth surface, mock + gerçek LLM dispatch (F1).
-- ✅ **osp-mcp** — AI access surface (G1), INV-T1 canlı doğrulandı.
+- ✅ **osp-mcp** — AI access surface (G1) + operator tools + navigator loop (G2).
+  INV-T1 + INV-T2 canlı doğrulandı.
 
 **Kalan implementation (sıralı):**
-- ⬜ **G2** — MCP operator tools (trajectory_init, task_add) + navigator loop entegrasyonu.
-- ⬜ **H** — osp-sdk (TypeScript/Python/Rust bindings) — erken gereksiz bakım, sona bırakıldı.
-- ⬜ **E** — Trajectory correction + 3D UI (opsiyonel, kanıt sonrası).
+- ⬜ **G2c** — Corpus experiment runner (N repo × M task, RQ6-9 evidence üretimi). Paper 2 zorunlu.
+- ⬜ **D5** — OspPrompt unification (prompt debt giderme, D3 complete_raw → OspPrompt.task_view).
+- ⬜ **H** — osp-sdk (TypeScript/Python/Rust bindings) — opsiyonel, sona bırakıldı.
+- ⬜ **E** — Trajectory correction + 3D UI (opsiyonel, sunum katmanı).
 
-**Paper 2 yazımı:** EN SONA bırakıldı. G2 (ve opsiyonel H/E) bittikten sonra data-driven
-yazılacak. Kanıt `docs/paper2-notes/` notlarında toplandı (A→G1). Paper yazımı öncesi
-API churn riski (SDK bekleniyor) gözetildi.
+**Paper 2 yazımı:** EN SONA bırakıldı. **Minimum gate:** G2 ✅ + G2c corpus + evidence JSON
++ failure notes. H ve E opsiyonel — paper'ı geciktirmez. Kanıt `docs/paper2-notes/` notlarında
+toplandı (A→G2).
 
-**Sonraki adım önerisi:** G2 — MCP server'a operator tools + gerçek navigator loop
-ekleyip, gerçek LLM ile corpus deneyleri yapmak (Paper 2 RQ6/RQ7 evidence).
+**Sonraki adım önerisi:** G2c — corpus experiment runner ile Paper 2 RQ6-9 evidence üretimi.
 
 ---
 
@@ -488,6 +490,13 @@ Yeni katman OSP'nin 15 mevcut invariant'ına zarar vermemeli. Ek invariant'lar:
   kontrol devreder. Sonsuz context-loop ve token patlaması önlenir. N operator tarafından
   yapılandırılır (default: 5).
 
+- **INV-T8 (Progress checkpoint isolation):** `AcceptAsProgress` bir task'ı **tamamlamaz**
+  ve **Mainline'a promote edilemez**. Progress yalnızca `TrajectoryCheckpoint` veya `Sandbox`
+  lane içinde kalır — Mainline'a ancak predicate tamamlandığında (`AcceptAsCompleted`)
+  promote edilir. Bu, "kısmi iyileştirme" ile "task bitti"nin karıştırılmasını önler (INV-T6
+  ile birlikte — progress güvenli ama merge değil). MCP/G2 için kritik güvenlik ayrımı:
+  agent "iyileştikçe" Mainline'ı kirletemez.
+
 ---
 
 ## 7. Adaptif Mimari Kontrol Döngüsü
@@ -578,14 +587,16 @@ kırılmıyor). Atomik Q5.b PredicateGate. D3'te gerçek LLM ile test edildi.
 **Efor:** M (tamamlandı).
 **Kritik:** D2 olmadan CLI navigator mock measure verir (gerçekçi değil) — çözüldü.
 
-### Aşama D3 — Gerçek LLM Adapter ✅ TAMAMLANDI (2026-06-30)
+### Aşama D3 — Gerçek LLM Adapter ✅ TAMAMLANDI (2026-06-30) ⚠ PROMPT DEBT
 **Hedef:** `RuntimeLlmClient` — gerçek LLM (GPT-4o-mini) `LlmClient` trait'ini gerçekler.
 OspPrompt'tan ayrı trajectory-specific system prompt (INV-T4 warning + JSON format + feedback).
 **Dosyalar:** `crates/osp-llm-runtime/src/adapter.rs` (yeni crate).
 **Sonuç:** `complete_raw` custom `CompletionRequest` ile OspPrompt'u bypass eder
 (OspPrompt ile AgentTaskView'ın ortak alanı yok). `map_runtime_error` hata dönüşümü.
 svelte corpus'ta gerçek task denemesi yapıldı. Paper2 notları: stage-D3-real-llm.md.
-**Efor:** M (tamamlandı).
+**⚠ Prompt debt (review 4):** `complete_raw` shortcut'tır, kalıcı mimari karar DEĞİL.
+Paper 1 `OspPrompt` typed-packet ilkesini ihlal eder → iki ayrı prompt hattı riski
+(kavramsal drift). D5 aşamasında unify edilecek. Efor: M (tamamlandı, debt işaretli).
 
 ### Aşama D4 — Calibration Feedback (LLM retry optimization) ✅ TAMAMLANDI (2026-06-30)
 **Hedef:** Navigator reject aldığında LLM'e kalibrasyon feedback'i döndürür → retry optimize.
@@ -596,7 +607,20 @@ svelte corpus'ta gerçek task denemesi yapıldı. Paper2 notları: stage-D3-real
 **Sonuç:** `AgentTaskView.feedback_history` ile her reject sonrası spesifik mesaj
 (Q4 syntax hatası → "modified_entities format", vs.). Daha önce kullanılmayan
 `HallucinationType` navigator loop'una bağlandı. Paper2 notları: stage-D4-calibration.md.
-**Efor:** S-M (tamamlandı).
+**RQ8 adayı:** "Calibration feedback retry başarısını artırıyor mu?" — D4 implementation'da
+var, G2 sonrası corpus deneylerinde ölçülebilir. Efor: S-M (tamamlandı).
+
+### Aşama D5 — OspPrompt Unification / task_view integration ⬜ PROMPT DEBT GİDERME
+**Hedef:** D3'ün `complete_raw` shortcut'ını kalıcı mimariye taşı. İki prompt hattını
+(Paper 1 `OspPrompt` vs Trajectory `complete_raw`) birleştir.
+**Plan:**
+- `AgentTaskView` → `OspPrompt.task_view: Option<AgentTaskView>`
+- `CalibrationFeedback` → `OspPrompt.feedback: Vec<String>`
+- `RuntimeLlmClient` → `complete(OspPrompt)` (tek prompt hattı)
+- `complete_raw` → sadece benchmark/debug için kalsın
+**Gerekçe:** Paper 1 typed-packet ilkesi korunur, kavramsal drift önlenir. G2 sonrası
+(navigator loop çalışırken) güvenle refactor edilebilir — API yüzeyi stabilize olduktan sonra.
+**Efor:** M (G2 sonrası, opsiyonel ama önerilen).
 
 ### Aşama F1 — osp-cli (CLI-first, execution surface) ✅ TAMAMLANDI (2026-06-30)
 **Hedef:** `osp` CLI binary — execution surface. osp-core API'sini çağırır, truth surface.
@@ -657,6 +681,51 @@ WorkspaceRegistry (multi-workspace), dry_run_delta, get_attempt_history, navigat
 (multi-attempt LLM), gerçek LLM entegrasyon (submit_delta → navigator.run_task).
 
 **Efor:** M (G1 tamam), G2 M-L.
+
+### Aşama G2 — MCP Operator Tools + Navigator Loop ✅ TAMAMLANDI (2026-06-29)
+**Hedef:** MCP server'a operator tools + gerçek navigator loop ekle. AI agent MCP üzerinden
+multi-attempt navigator çalıştırabilsin.
+**Crate:** `crates/osp-mcp/` (G1 üzerine + `osp-llm-runtime` dep).
+**Tools (G2 eklemeleri — 4 yeni):**
+```
+osp_trajectory_init      — Operator-only (INV-T2 gate): Trajectory + VisionVector oluştur
+osp_task_add             — Operator-only (INV-T2 gate): registry'ye Task (full JSON) ekle
+osp_run_task             ⭐ Agent-facing: navigator loop (multi-attempt, LLM delta üretir)
+osp_get_attempt_history  — Agent-facing: navigator evidence ledger (RQ6 token cost verisi)
+```
+**INV koruması (G2):**
+- INV-T2 runtime gate (`gate_operator_tool`): agent mode'da operator tool çağrısı
+  `OperatorCapabilityRequired` ile reddedilir. **Canlı doğrulandı.**
+- INV-T1: `osp_run_task` AgentTaskView kullanır (navigator loop güvenli), leak check uygulanır.
+- INV-T7: maneuver_limit (task.policy veya override).
+- INV-T8: MutationDecision→ApplyTarget mapping (AcceptAsProgress→TrajectoryCheckpoint, ASLA Mainline).
+
+**Core değişikliği (Send+Sync):** `LlmClient` trait'ine `Send + Sync` supertrait eklendi
+(MCP `Arc<dyn LlmClient>` + spawn_blocking). MockLlmClient/RuntimeLlmClient/FileMockLlm
+`Cell → AtomicUsize/Mutex` geçti. Bu, Paper 2'nin "async MCP + sync navigator" bridge'inin
+pratik önkoşulu.
+
+**`--llm {mock,real}` flag:** startup'ta LLM client inject (CLI pattern'ı). Mock offline
+güvenli (CI), real OPENAI_API_KEY ile GPT-4o-mini.
+
+**Sync→async bridge:** blocking navigator `tokio::task::spawn_blocking` ile. Mutex'ler
+(workspace sync + registry sync) spawn_blocking içine taşınır.
+
+**Mevcut `osp_submit_delta` KORUNDU** (kullanıcı kararı: ikisini de tut) — agent delta'sı
+single-attempt (Q5.b gate test).
+
+**Test:** 8 unit + 12 integration (INV-T2 gate, INV-T8 lane, navigator result INV-T1,
+error code round-trip). Tüm workspace yeşil (16 grup).
+**Paper2 notları:** stage-G2-osp-mcp-operator-navigator.md.
+**Efor:** M-L (tamamlandı).
+
+### Aşama G2c — Corpus Experiment Runner ⬜ SIRADAKİ (Paper 2 zorunlu)
+**Hedef:** N repo × M task × {mock,real} × {strict, accept-improvement} × {feedback, no-feedback}
+matrisi ile Paper 2 RQ6-9 evidence üretimi.
+**Çıktı:** repo/task_type/policy/llm/attempt_count/completed/token_total/duration/loss_before/
+loss_after/axis_regression tablosu + evidence JSON + failure notes (stage-X-failures.md).
+**RQ'lar:** RQ6 (token cost), RQ7 (task success), RQ8 (calibration feedback), RQ9 (policy).
+**Efor:** M (G2 altyapısı hazır, runner + corpus + analysis script).
 
 ### Aşama H — osp-sdk (integration, third) ⬜ MCP sonrası
 **Hedef:** TypeScript/Python/Rust bindings. CLI/MCP deneyleri bittikten sonra hangi
@@ -761,7 +830,16 @@ SCIP + tree-sitter + 5-axis + vision + witness + tri-state. Kanıtlanmış (23 r
 - §4 Deterministic predicate gating (Aşama B) — progress ayrımı (INV-T6)
 - §5 Attempt evidence & token cost (Aşama B2+D — RQ6)
 - §6 Task success (Aşama D — RQ7)
-- §7 Multi-axis oscillation (Aşama C, F5 — RQ8 adayı)
+- §7 Multi-axis oscillation (Aşama C, F5)
+
+**RQ adayları (review 4 ile genişletildi):**
+- **RQ6 (token cost):** Trajectory prompt toplam token maliyetini düşürüyor mu?
+- **RQ7 (task success):** Predicate gate'li navigator, gatesiz/tek-shot agent'a göre daha güvenli mi?
+- **RQ8 (calibration feedback — yeni, D4):** Calibration feedback retry başarısını artırıyor mu?
+  (D4 implementation'da var; with-feedback vs no-feedback A/B testi G2c'de ölçülecek.)
+- **RQ9 (policy — yeni, review 4):** AcceptAsProgress policy, strict reject'e göre uzun refactor
+  task'larında token/attempt maliyetini azaltıyor mu? (INV-T6/T8 ile birlikte — progress güvenli
+  ama merge değil, manevra maliyetini düşürür mü?)
 
 **Tek makaleye sığdırma tuzağı:** Trajectory + Navigator + döngü + maliyet hepsini
 bir paper'a sıkıştırmak → hakemler "çok iddialı, deneysel doğrulama yok" der.
@@ -777,8 +855,20 @@ draft yok. Gerekçe:
 3. Hakem psikolojisi — "kanıtlanmamış sistem" reddi riski. Çekirdek + CLI + MCP + SDK
    tamam + gerçek corpus deneyleri → "calmly shown" paper.
 
-**Paper öncesi kalan implementation:** G2 (MCP operator tools + navigator loop),
-opsiyonel H (SDK), opsiyonel E (3D UI). Sonra Paper 2 yazımına başlanır.
+**Paper 2 minimum gate (review 4 netleştirmesi):**
+```
+ZORUNLU (Paper 2 için):
+  ✅ G2 — MCP operator tools + navigator loop
+  ⬜ Gerçek LLM corpus deneyleri (G2c — N repo × M task matrisi)
+  ⬜ Evidence JSON export (RQ6/RQ7/RQ8/RQ9 ham veri)
+  ⬜ Failure notes (stage-X-failures.md — başarısız denemeler)
+
+OPSİYONEL (Paper 2'yi geciktirMEZ):
+  ⬜ H — osp-sdk (ürünleşme/entegrasyon katmanı, paper için gerekmez)
+  ⬜ E — 3D UI / trajectory correction visualization (sunum katmanı)
+```
+**Sonuç:** G2 + corpus deneyleri yeterli evidence üretince Paper 2 yazımı başlayabilir.
+H ve E beklenmez — SDK ve 3D, paper'ı gereksiz geciktirir.
 
 ---
 
@@ -807,6 +897,9 @@ opsiyonel H (SDK), opsiyonel E (3D UI). Sonra Paper 2 yazımına başlanır.
 | 2026-06-30 | F1 TAMAMLANDI | osp-cli (truth surface) — mock + gerçek LLM dispatch. |
 | 2026-06-29 | G1 TAMAMLANDI | osp-mcp (rmcp 0.8) — 4 agent-facing tool, INV-T1 canlı doğrulandı (preferred_vector sızıntısı yok). |
 | 2026-06-29 | Paper 2 yazımı EN SONA bırakıldı | Tüm implementation (G2/H/E) bitene kadar paper yazımı yok. Kanıt önce, data-driven yazım. API churn riski (SDK bekleniyor). |
+| 2026-06-29 | Review 4 entegrasyonu | D3 prompt debt işaretlendi, D5 (OspPrompt unification) eklendi. INV-T8 §6'ya eklendi. Paper 2 minimum gate netleştirildi (G2+corpus zorunlu, H/E opsiyonel). RQ8 (calibration) + RQ9 (AcceptAsProgress policy) adayları eklendi. Tarih satırı kronolojik düzeltildi. |
+| 2026-06-29 | G2 TAMAMLANDI | MCP operator tools (trajectory_init, task_add) + navigator loop (osp_run_task) + evidence history. INV-T2 runtime gate canlı doğrulandı. `LlmClient: Send + Sync` (Cell→AtomicUsize/Miosk). `--llm mock\|real` flag. |
+| 2026-06-29 | G2 kullanıcı kararı: ikisini de tut | `osp_submit_delta` (agent delta single-attempt) KORUNDU + `osp_run_task` (navigator loop) EKLENDİ. İki farklı semantik (delta test vs uçtan uca loop). |
 
 ### Review kaynakları (v0.2 iyileştirmeleri)
 - **Review 1 (teknik):** AgentTaskView/InternalTaskPlan ayrımı, TaskAttempt/Ledger, PredicateGateResult, TargetRegion, INV-T6, failures.md, B2 aşaması, "task=vektör" düzeltme.

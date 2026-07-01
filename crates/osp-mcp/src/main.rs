@@ -4,19 +4,21 @@
 //! stdio ile tool çağırır, server `osp-core` API'sine delegate eder.
 //!
 //! ```bash
-//! # Agent mode (default — operator tools disabled)
+//! # Agent mode + mock LLM (default — offline/CI güvenli, OPENAI_API_KEY yok)
 //! osp-mcp --workspace P:/repos/osp-spike/svelte
 //!
-//! # Operator mode (operator tools enabled)
-//! osp-mcp --mode operator --workspace P:/repos/osp-spike/svelte
+//! # Operator mode + gerçek LLM (GPT-4o-mini, OPENAI_API_KEY gerekir)
+//! osp-mcp --mode operator --llm real --workspace P:/repos/x
 //!
 //! # SCIP index ile (gerçek LCOM4 cohesion)
 //! osp-mcp --workspace P:/repos/x --scip P:/repos/x/index.scip
 //! ```
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, ValueEnum};
+use osp_core::navigator::LlmClient;
 use osp_mcp::mode::ServerMode;
 use osp_mcp::workspace::{Workspace, WorkspaceError};
 use osp_mcp::OspMcpServer;
@@ -34,6 +36,9 @@ struct Cli {
     /// Server mode: agent (default) veya operator.
     #[arg(long, value_enum, default_value_t = ServerModeArg::Agent)]
     mode: ServerModeArg,
+    /// LLM backend: mock (default, offline) veya real (GPT-4o-mini, OPENAI_API_KEY gerekir).
+    #[arg(long, value_enum, default_value_t = LlmBackendArg::Mock)]
+    llm: LlmBackendArg,
     /// Workspace path (repo root). Agent raw path VEREMEZ — startup'ta alınır.
     #[arg(long)]
     workspace: PathBuf,
@@ -58,6 +63,36 @@ impl From<ServerModeArg> for ServerMode {
     }
 }
 
+/// clap value enum — LLM backend seçimi (CLI pattern'ı ile aynı).
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum LlmBackendArg {
+    /// Scripted/static mock — offline, CI güvenli, OPENAI_API_KEY gerekmez.
+    Mock,
+    /// Gerçek OpenAI-compatible LLM (GPT-4o-mini). OPENAI_API_KEY gerekir.
+    Real,
+}
+
+/// Startup'ta LLM client kur (`--llm mock|real`). Mock offline güvenli, real API key ister.
+fn build_llm_client(backend: LlmBackendArg) -> anyhow::Result<Arc<dyn LlmClient>> {
+    match backend {
+        LlmBackendArg::Mock => {
+            // Mock: scripted proposals ile navigator loop test edilebilir.
+            // Boş proposal listesi → navigator ilk complete()'te NoMoreProposals döner.
+            // Operator task_add ile gerçek task + mock proposals JSON yüklenebilir (G2c).
+            tracing::info!("LLM backend: mock (offline, scripted)");
+            Ok(Arc::new(
+                osp_core::navigator::MockLlmClient::new(Vec::new()),
+            ))
+        }
+        LlmBackendArg::Real => {
+            tracing::info!("LLM backend: real (GPT-4o-mini via OPENAI_API_KEY)");
+            let client = osp_llm_runtime::RuntimeLlmClient::from_env()
+                .map_err(|e| anyhow::anyhow!("LLM runtime init failed (OPENAI_API_KEY?): {e}"))?;
+            Ok(Arc::new(client))
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Logging — tracing. MCP stdio için stderr'e log (stdout JSON-RPC için ayrılmış).
@@ -72,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(
         workspace = ?cli.workspace,
         mode = mode.as_str(),
+        llm = ?cli.llm,
         "osp-mcp starting"
     );
 
@@ -96,11 +132,14 @@ async fn main() -> anyhow::Result<()> {
         "workspace analyzed"
     );
 
-    // 2. Server kur.
-    let server = OspMcpServer::new(workspace, mode);
+    // 2. LLM client kur (startup inject — INV-T2 pattern: trusted bootstrap).
+    let llm = build_llm_client(cli.llm)?;
+
+    // 3. Server kur.
+    let server = OspMcpServer::new(workspace, mode, llm);
     tracing::info!(mode = mode.as_str(), "osp-mcp server ready (stdio)");
 
-    // 3. stdio transport ile serve (rmcp ServiceExt).
+    // 4. stdio transport ile serve (rmcp ServiceExt).
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 

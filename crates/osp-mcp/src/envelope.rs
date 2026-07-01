@@ -59,6 +59,14 @@ pub enum ErrorCode {
     /// Recoverable: başka yaklaşım dene veya operator approval iste.
     ManeuverLimitExceeded,
 
+    // ── Navigator loop result (G2) ─────────────────────────────────────────
+    /// Navigator `RequiresOperatorApproval` döndü (mutation decision).
+    /// Recoverable: operator approval iste veya task predicate'ini gözden geçir.
+    OperatorApprovalRequired,
+    /// Navigator `LlmError` döndü (network/parse/no-more-proposals).
+    /// Recoverable: model/endpoint kontrol et, tekrar dene.
+    NavigatorLlmError,
+
     // ── INV-T5 (Task≠Claim binding) ────────────────────────────────────────
     /// claim task_id None (standalone) veya resolver'da task bulunamadı.
     /// Recoverable: task listele, doğru task_id ile retry.
@@ -108,6 +116,8 @@ impl ErrorCode {
             ErrorCode::OperatorCapabilityRequired => (vec!["INV-T2".into()], true),
             ErrorCode::PlaceholderMetricInsufficient => (vec!["INV-T4".into()], true),
             ErrorCode::ManeuverLimitExceeded => (vec!["INV-T7".into()], true),
+            ErrorCode::OperatorApprovalRequired => (vec!["INV-T7".into()], true),
+            ErrorCode::NavigatorLlmError => (vec!["navigator".into()], true),
             ErrorCode::TaskNotFound => (vec!["INV-T5".into()], true),
             ErrorCode::WorkspaceNotRegistered => (vec!["INV-security".into()], true),
             ErrorCode::InvalidDeltaProposal => (vec!["INV-#12".into()], true),
