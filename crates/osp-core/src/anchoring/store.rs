@@ -1,7 +1,11 @@
-//! InMemoryAnchorStore + OperatorAcceptance (Faz 1, §11).
+//! AnchorStore trait + InMemoryAnchorStore + OperatorAcceptance (Faz 1-3, §11, D7).
+//!
+//! # Faz 3 — AnchorStore abstraction
+//! [`AnchorStore`] trait'i `InMemoryAnchorStore` (Faz 0-2) ve `KuzuAnchorStore`
+//! (Faz 3, ayrı `osp-kuzu` crate) için ortak abstraction. `osp-core` Kuzu bilmez (D7).
 //!
 //! INV-C3: `OperatorAcceptance` capability token — `_private: ()` + `pub(crate) issue`.
-//! Downstream crate'ler (osp-cli/mcp) ve integration test'ler (`tests/`) üretemez.
+//! Downstream crate'ler (osp-cli/mcp/osp-kuzu) ve integration test'ler üretemez.
 //! Faz 8'de gerçek operator console bu gate'i açar.
 //!
 //! INV-C5: `apply_plan` her zaman Candidate yazar. `promote_to_accepted` operator ister.
@@ -21,7 +25,7 @@ use crate::anchoring::DecisionStatus;
 /// `_private: ()` field'ı private → dış crate'ler construct edemez.
 /// `issue_for_tests()` `pub(crate)` → sadece osp-core içi (unit testler).
 /// Integration test (`tests/`) ayrı crate derlendiği için erişemez.
-/// Downstream (osp-cli/mcp) de üretemez. Faz 8 operator API'si bu gate'i gerçek açar.
+/// Downstream (osp-cli/mcp/osp-kuzu) de üretemez. Faz 8 operator API'si bu gate'i gerçek açar.
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorAcceptance {
     _private: (),
@@ -36,25 +40,98 @@ impl OperatorAcceptance {
     }
 }
 
-/// Store hatası.
-#[derive(Debug, Clone, PartialEq)]
+// ═══════════════════════════════════════════════════════════════════════════════
+// StoreError — thiserror + serde (Faz 3: Kuzu hataları persist edilebilir)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// InMemory store hatası.
+#[derive(Debug, Clone, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
 pub enum StoreError {
-    NodeNotFound(ConceptNodeId),
-    AlreadyAccepted(ConceptNodeId),
-    NotCandidate(ConceptNodeId),
+    #[error("node bulunamadı: {0}")]
+    NodeNotFound(
+        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
+    ),
+    #[error("node zaten Accepted: {0}")]
+    AlreadyAccepted(
+        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
+    ),
+    #[error("node Candidate değil: {0}")]
+    NotCandidate(
+        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
+    ),
 }
 
-impl std::fmt::Display for StoreError {
+// ConceptNodeId serde helper — thiserror Display için id.0 String'ine réf.
+fn ser_node_id<S: serde::Serializer>(id: &ConceptNodeId, ser: S) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    id.0.serialize(ser)
+}
+
+fn de_node_id<'de, D: serde::Deserializer<'de>>(de: D) -> Result<ConceptNodeId, D::Error> {
+    use serde::Deserialize;
+    let s = <String as Deserialize>::deserialize(de)?;
+    Ok(ConceptNodeId(s))
+}
+
+impl std::fmt::Display for ConceptNodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NodeNotFound(id) => write!(f, "node bulunamadı: {}", id.0),
-            Self::AlreadyAccepted(id) => write!(f, "node zaten Accepted: {}", id.0),
-            Self::NotCandidate(id) => write!(f, "node Candidate değil: {}", id.0),
-        }
+        write!(f, "{}", self.0)
     }
 }
 
-impl std::error::Error for StoreError {}
+// ═══════════════════════════════════════════════════════════════════════════════
+// AnchorStore trait — Faz 3 (D7 abstraction)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Anchor store abstraction (D7). `InMemoryAnchorStore` + `KuzuAnchorStore` aynı trait.
+///
+/// # Fallible
+/// Backend (Kuzu IO, schema, connection) fail olabilir → tüm metodlar `Result`.
+/// Associated `type Error` — InMemory `StoreError`, Kuzu `KuzuStoreError`.
+///
+/// # Owned returns
+/// `Vec<ConceptNode>` (owned) — borrow-tied `impl Iterator` trait method olamaz
+/// (GAT/lifetime). Clone maliyeti persistence boundary'de kabul edilebilir.
+///
+/// # INV-C3/C8 persistence boundary (Faz 3 ana invariant)
+/// - `apply_plan`: Candidate-only write (INV-C5).
+/// - `promote_to_accepted`: `OperatorAcceptance` gerekir (osp-kuzu üretemez; Faz 8
+///   AnchorService osp-core'da token ile çağırır).
+/// - `seed_trusted`: trusted bootstrap/restore (Accepted node yükleyebilir —
+///   trusted boundary, normal mutation değil).
+///
+/// **"Persistence does not weaken epistemic gates."**
+pub trait AnchorStore {
+    /// Backend-specific error.
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Trusted bootstrap/restore. Seed Accepted node yükleyebilir — trusted boundary
+    /// (fixture pre-state, snapshot restore). Normal mutation DEĞİL.
+    fn seed_trusted(&mut self, seed: &GraphSeed) -> Result<(), Self::Error>;
+
+    /// AnchorPlan uygula. Tüm yeni node/edge'ler Candidate (INV-C5).
+    fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, Self::Error>;
+
+    /// INV-C3: Candidate → Accepted. `OperatorAcceptance` gerekir (Faz 8 operator).
+    fn promote_to_accepted(
+        &mut self,
+        node_id: &ConceptNodeId,
+        _cap: &OperatorAcceptance,
+    ) -> Result<(), Self::Error>;
+
+    /// INV-C8: canonical exact match (canon gate için).
+    fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
+
+    /// INV-C3: mainline knowledge — sadece Accepted.
+    fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
+
+    /// Candidate lane — işlem bekleyen.
+    fn candidate_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
+
+    fn node_count(&self) -> Result<usize, Self::Error>;
+    fn edge_count(&self) -> Result<usize, Self::Error>;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // InMemoryAnchorStore
@@ -66,6 +143,7 @@ impl std::error::Error for StoreError {}
 /// - `apply_plan`: tüm yeni node/edge'ler **Candidate** yazılır (INV-C5).
 /// - `mainline_query`: sadece **Accepted** filtre (INV-C3 — Candidate mainline değil).
 /// - `promote_to_accepted`: `OperatorAcceptance` gerekir (INV-C3 kapı).
+/// - `restore_trusted_snapshot`: trusted restore (Faz 3, INV-C3 persistence boundary).
 pub struct InMemoryAnchorStore {
     graph: ConceptGraph,
 }
@@ -86,34 +164,33 @@ impl InMemoryAnchorStore {
     /// Graph seed ile başlat (fixture given'dan dönüştürülmüş).
     pub fn with_seed(seed: GraphSeed) -> Self {
         let mut s = Self::new();
-        s.seed(seed);
+        s.seed_trusted(&seed).expect("in-memory seed infallible");
         s
     }
 
-    /// Seed yükle. Pre-state concept/decision/code_entities.
-    pub fn seed(&mut self, seed: GraphSeed) {
-        for node in seed
-            .concepts
-            .into_iter()
-            .chain(seed.decisions)
-            .chain(seed.code_entities)
-        {
-            self.graph.insert_node(node);
+    /// Trusted restore — `ConceptGraphSnapshot`'tan graph'ı geri yükle (Faz 3).
+    /// INV-C3 persistence boundary: bu trusted restore path (operator-belirlenmiş
+    /// Accepted node'lar dahil). Normal mutation DEĞİL — snapshot deserialize.
+    pub fn restore_trusted_snapshot(
+        snapshot: crate::anchoring::types::ConceptGraphSnapshot,
+    ) -> Self {
+        let mut s = Self::new();
+        for node in snapshot.nodes {
+            s.graph.insert_node(node);
         }
+        for edge in snapshot.edges {
+            s.graph.insert_edge(edge);
+        }
+        s
     }
 
-    /// INV-C8: canonical exact match arama (canon gate için).
-    pub fn find_concepts_by_canonical(&self, name: &str) -> Vec<&ConceptNode> {
-        self.graph.find_concept_by_canonical(name)
-    }
-
-    /// Graph referansı (read-only — gate/extractor için).
+    /// Graph referansı (read-only — gate/extractor için). Trait dışı özel accessor.
     pub fn graph(&self) -> &ConceptGraph {
         &self.graph
     }
 
-    /// AnchorPlan uygula. Tüm yeni node/edge'ler **Candidate** (INV-C5).
-    pub fn apply_plan(&mut self, plan: &AnchorPlan) -> ApplyResult {
+    // Inherent apply_plan (trait'in arkasında kullanılan gerçek implementasyon)
+    fn apply_plan_inner(&mut self, plan: &AnchorPlan) -> ApplyResult {
         let mut new_nodes = 0u32;
         let mut new_edges = 0u32;
 
@@ -151,8 +228,8 @@ impl InMemoryAnchorStore {
         }
     }
 
-    /// INV-C3: Candidate → Accepted geçişi. `OperatorAcceptance` gerekir.
-    pub fn promote_to_accepted(
+    // Inherent promote (trait'in arkasında)
+    fn promote_to_accepted_inner(
         &mut self,
         node_id: &ConceptNodeId,
         _cap: &OperatorAcceptance,
@@ -168,27 +245,68 @@ impl InMemoryAnchorStore {
         node.decision_status = DecisionStatus::Accepted;
         Ok(())
     }
+}
 
-    /// INV-C3: mainline knowledge sorgusu — sadece Accepted.
-    pub fn mainline_query(&self) -> impl Iterator<Item = &ConceptNode> {
-        self.graph
+impl AnchorStore for InMemoryAnchorStore {
+    type Error = StoreError;
+
+    fn seed_trusted(&mut self, seed: &GraphSeed) -> Result<(), Self::Error> {
+        for node in seed
+            .concepts
+            .iter()
+            .chain(&seed.decisions)
+            .chain(&seed.code_entities)
+        {
+            self.graph.insert_node(node.clone());
+        }
+        Ok(())
+    }
+
+    fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, Self::Error> {
+        Ok(self.apply_plan_inner(plan))
+    }
+
+    fn promote_to_accepted(
+        &mut self,
+        node_id: &ConceptNodeId,
+        _cap: &OperatorAcceptance,
+    ) -> Result<(), Self::Error> {
+        self.promote_to_accepted_inner(node_id, _cap)
+    }
+
+    fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error> {
+        Ok(self
+            .graph
+            .find_concept_by_canonical(name)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error> {
+        Ok(self
+            .graph
             .nodes_iter()
             .filter(|n| matches!(n.decision_status, DecisionStatus::Accepted))
+            .cloned()
+            .collect())
     }
 
-    /// Candidate lane sorgusu — işlem bekleyen.
-    pub fn candidate_query(&self) -> impl Iterator<Item = &ConceptNode> {
-        self.graph
+    fn candidate_query(&self) -> Result<Vec<ConceptNode>, Self::Error> {
+        Ok(self
+            .graph
             .nodes_iter()
             .filter(|n| matches!(n.decision_status, DecisionStatus::Candidate))
+            .cloned()
+            .collect())
     }
 
-    pub fn node_count(&self) -> usize {
-        self.graph.node_count()
+    fn node_count(&self) -> Result<usize, Self::Error> {
+        Ok(self.graph.node_count())
     }
 
-    pub fn edge_count(&self) -> usize {
-        self.graph.edge_count()
+    fn edge_count(&self) -> Result<usize, Self::Error> {
+        Ok(self.graph.edge_count())
     }
 }
 
@@ -256,7 +374,7 @@ mod tests {
             candidate("Concept:Payment", ConceptEdgeKind::Mentions),
             candidate("RiskCandidate:X", ConceptEdgeKind::DerivesRisk),
         ]);
-        let res = store.apply_plan(&plan);
+        let res = store.apply_plan(&plan).expect("apply");
         assert_eq!(res.new_nodes, 2);
         assert_eq!(res.new_edges, 2);
         // INV-C5: tüm yeni node'lar Candidate
@@ -268,12 +386,14 @@ mod tests {
     #[test]
     fn mainline_query_empty_when_all_candidate() {
         let mut store = InMemoryAnchorStore::new();
-        store.apply_plan(&make_plan(vec![candidate(
-            "Concept:X",
-            ConceptEdgeKind::Mentions,
-        )]));
+        store
+            .apply_plan(&make_plan(vec![candidate(
+                "Concept:X",
+                ConceptEdgeKind::Mentions,
+            )]))
+            .unwrap();
         assert_eq!(
-            store.mainline_query().count(),
+            store.mainline_query().unwrap().len(),
             0,
             "INV-C3: Candidate mainline değil"
         );
@@ -282,20 +402,24 @@ mod tests {
     #[test]
     fn candidate_query_returns_pending() {
         let mut store = InMemoryAnchorStore::new();
-        store.apply_plan(&make_plan(vec![candidate(
-            "Concept:X",
-            ConceptEdgeKind::Mentions,
-        )]));
-        assert_eq!(store.candidate_query().count(), 1);
+        store
+            .apply_plan(&make_plan(vec![candidate(
+                "Concept:X",
+                ConceptEdgeKind::Mentions,
+            )]))
+            .unwrap();
+        assert_eq!(store.candidate_query().unwrap().len(), 1);
     }
 
     #[test]
     fn store_promotion_requires_operator_acceptance() {
         let mut store = InMemoryAnchorStore::new();
-        store.apply_plan(&make_plan(vec![candidate(
-            "Concept:Payment",
-            ConceptEdgeKind::Mentions,
-        )]));
+        store
+            .apply_plan(&make_plan(vec![candidate(
+                "Concept:Payment",
+                ConceptEdgeKind::Mentions,
+            )]))
+            .unwrap();
 
         // INV-C3: promotion OperatorAcceptance ile
         let cap = OperatorAcceptance::issue_for_tests();
@@ -303,8 +427,8 @@ mod tests {
         store.promote_to_accepted(&node_id, &cap).unwrap();
 
         // Artık mainline'da
-        assert_eq!(store.mainline_query().count(), 1);
-        assert_eq!(store.candidate_query().count(), 0);
+        assert_eq!(store.mainline_query().unwrap().len(), 1);
+        assert_eq!(store.candidate_query().unwrap().len(), 0);
     }
 
     #[test]
@@ -329,18 +453,67 @@ mod tests {
             position_family: crate::anchoring::PositionFamily::ConceptualIntent,
         });
         let store = InMemoryAnchorStore::with_seed(seed);
-        assert_eq!(store.node_count(), 1);
-        assert_eq!(store.mainline_query().count(), 1, "seed Accepted mainline");
+        assert_eq!(store.node_count().unwrap(), 1);
+        assert_eq!(
+            store.mainline_query().unwrap().len(),
+            1,
+            "seed Accepted mainline"
+        );
     }
 
     #[test]
     fn find_concepts_by_canonical() {
         let mut store = InMemoryAnchorStore::new();
-        store.apply_plan(&make_plan(vec![candidate(
-            "Concept:Payment",
-            ConceptEdgeKind::Mentions,
-        )]));
-        let found = store.find_concepts_by_canonical("Payment");
+        store
+            .apply_plan(&make_plan(vec![candidate(
+                "Concept:Payment",
+                ConceptEdgeKind::Mentions,
+            )]))
+            .unwrap();
+        let found = store.find_concepts_by_canonical("Payment").unwrap();
         assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn seed_trusted_via_trait() {
+        // Faz 3: seed_trusted trait metodu
+        let mut store = InMemoryAnchorStore::new();
+        let mut seed = GraphSeed::default();
+        seed.concepts.push(ConceptNode {
+            id: ConceptNodeId("Concept:Auth".into()),
+            canonical: "Auth".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::Concept,
+            decision_status: DecisionStatus::Accepted,
+            position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+        });
+        AnchorStore::seed_trusted(&mut store, &seed).unwrap();
+        assert_eq!(store.mainline_query().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn restore_trusted_snapshot_roundtrip() {
+        // Faz 3: ConceptGraphSnapshot restore (INV-C3 trusted boundary)
+        use crate::anchoring::types::ConceptGraphSnapshot;
+        let node = ConceptNode {
+            id: ConceptNodeId("Concept:Payment".into()),
+            canonical: "Payment".into(),
+            aliases: vec!["ödeme".into()],
+            node_kind: ConceptNodeKind::Concept,
+            decision_status: DecisionStatus::Accepted,
+            position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+        };
+        let snapshot = ConceptGraphSnapshot {
+            nodes: vec![node],
+            edges: vec![],
+            schema_version: 1,
+        };
+        let store = InMemoryAnchorStore::restore_trusted_snapshot(snapshot);
+        assert_eq!(store.node_count().unwrap(), 1);
+        assert_eq!(
+            store.mainline_query().unwrap().len(),
+            1,
+            "restored Accepted"
+        );
     }
 }

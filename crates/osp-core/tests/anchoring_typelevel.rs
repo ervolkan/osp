@@ -19,4 +19,5 @@ fn type_level_invariants_compile_fail() {
     t.compile_fail("tests/compile_fail/c2_family_incompatible.rs");
     t.compile_fail("tests/compile_fail/c3_operator_acceptance_construct.rs");
     t.compile_fail("tests/compile_fail/c4_supersede_authority_construct.rs");
+    t.compile_fail("tests/compile_fail/c8_anchorplan_deserialize.rs");
 }

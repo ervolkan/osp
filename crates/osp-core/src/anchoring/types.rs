@@ -431,7 +431,8 @@ impl AnchorScoreBreakdown {
 ///
 /// # INV-C8 (Faz 2 — type-level)
 /// Field'lar `pub(crate)` — crate içi TCB erişir; external crate literal construct edemez.
-#[derive(Debug, Clone, PartialEq)]
+/// Faz 3: Serialize var (audit), Deserialize YOK (INV-C8).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AnchorCandidate {
     pub(crate) packet_id: ConceptPacketId,
     pub(crate) target_node_id: ConceptNodeId,
@@ -483,7 +484,11 @@ impl AnchorCandidate {
 /// — sadece [`crate::anchoring::gate::AnchorGate::decide`] üretir. **"AnchorPlan almak =
 /// canon gate'ten geçmiş olmak"** (yapısal garanti). INV-C8 by-pass: harici kod
 /// `AnchorPlan { ... }` uydurup `apply_plan` çağıramaz.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// # Faz 3 serde boundary
+/// `Serialize` var (audit write). `Deserialize` **YOK** — serde ile reconstruct
+/// engelli (INV-C8). DB read için [`PersistedAnchorPlanAudit`] (apply edilemez audit).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AnchorPlan {
     pub(crate) packet_id: ConceptPacketId,
     /// Graph'a yazılacak edge'ler (Candidate status, INV-C3).
@@ -1038,6 +1043,68 @@ impl GraphSeed {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 3 — Persistence boundary tipleri (serde boundary, INV-C3/C8 koruması)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// `ConceptGraph` snapshot — trusted restore için (Faz 3, INV-C3 persistence boundary).
+///
+/// # INV-C3 boundary
+/// [`ConceptGraph`] private field'lara sahip ve `Deserialize` yok (serde bypass
+/// edip Accepted node reconstruct etmesin diye). Bu snapshot **trusted restore
+/// path** için — operator-belirlenmiş Accepted node'lar dahil tüm graph durumu.
+/// [`InMemoryAnchorStore::restore_trusted_snapshot`] üzerinden yüklenir.
+///
+/// **Normal mutation DEĞİL** — bu deserialize/restore, yeni promotion değil.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ConceptGraphSnapshot {
+    pub nodes: Vec<ConceptNode>,
+    pub edges: Vec<ConceptEdge>,
+    /// Paper 1/2 `SNAPSHOT_FORMAT_VERSION` pattern mirror — schema migration hazırlığı.
+    pub schema_version: u32,
+}
+
+/// `AnchorPlan` audit record — DB'den okunan, **apply edilemez** kayıt (Faz 3, INV-C8).
+///
+/// # INV-C8 boundary
+/// [`AnchorPlan`] `Serialize` var ama `Deserialize` **YOK** — "AnchorPlan almak =
+/// canon gate'ten geçmiş olmak" garantisi serde ile delinmesin diye. Bu audit tipi
+/// DB read için; apply edilemez (uygulama yapılamaz), sadece inspect/audit.
+///
+/// `AnchorPlan::to_audit_json()` audit write için; bu tip structured DB read için.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PersistedAnchorPlanAudit {
+    pub packet_id: String,
+    pub decision: String,
+    pub candidates: Vec<PersistedAnchorCandidateAudit>,
+    pub redirects: Vec<PersistedRedirectAudit>,
+    pub negative_assertions: Vec<String>,
+    pub requires_operator_review: bool,
+    pub schema_version: u32,
+}
+
+/// Persisted candidate audit (apply edilemez).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PersistedAnchorCandidateAudit {
+    pub edge_kind: String,
+    pub target: String,
+    pub score: f64,
+    pub explanation: Option<String>,
+}
+
+/// Persisted redirect audit.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PersistedRedirectAudit {
+    pub attempted: String,
+    pub existing_node: String,
+    pub reason: String,
+}
+
+impl PersistedAnchorPlanAudit {
+    /// Faz 3 schema version (Paper 1/2 SNAPSHOT_FORMAT_VERSION pattern).
+    pub const SCHEMA_VERSION: u32 = 1;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1234,4 +1301,51 @@ mod tests {
         assert_eq!(parsed["decision"], "TentativeLink");
         assert!(parsed["candidates"].is_array());
     }
+}
+
+#[test]
+fn concept_graph_snapshot_serde_roundtrip() {
+    // Faz 3: ConceptGraphSnapshot (trusted restore) serde
+    let node = ConceptNode {
+        id: ConceptNodeId("Concept:Payment".into()),
+        canonical: "Payment".into(),
+        aliases: vec!["ödeme".into()],
+        node_kind: ConceptNodeKind::Concept,
+        decision_status: DecisionStatus::Accepted,
+        position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+    };
+    let snapshot = ConceptGraphSnapshot {
+        nodes: vec![node],
+        edges: vec![],
+        schema_version: 1,
+    };
+    let json = serde_json::to_string(&snapshot).unwrap();
+    let back: ConceptGraphSnapshot = serde_json::from_str(&json).unwrap();
+    assert_eq!(snapshot, back);
+}
+
+#[test]
+fn persisted_anchor_plan_audit_serde_roundtrip() {
+    // Faz 3: PersistedAnchorPlanAudit (DB read, apply edilemez) serde
+    let audit = PersistedAnchorPlanAudit {
+        packet_id: "pkt:audit".into(),
+        decision: "TentativeLink".into(),
+        candidates: vec![PersistedAnchorCandidateAudit {
+            edge_kind: "DerivesRisk".into(),
+            target: "RiskCandidate:X".into(),
+            score: 0.7,
+            explanation: Some("risk derived".into()),
+        }],
+        redirects: vec![PersistedRedirectAudit {
+            attempted: "ödeme".into(),
+            existing_node: "Concept:Payment".into(),
+            reason: "GlossaryAliasMatch".into(),
+        }],
+        negative_assertions: vec!["SUPERSEDES yasak".into()],
+        requires_operator_review: true,
+        schema_version: PersistedAnchorPlanAudit::SCHEMA_VERSION,
+    };
+    let json = serde_json::to_string(&audit).unwrap();
+    let back: PersistedAnchorPlanAudit = serde_json::from_str(&json).unwrap();
+    assert_eq!(audit, back);
 }

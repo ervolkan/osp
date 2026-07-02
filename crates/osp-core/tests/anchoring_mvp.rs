@@ -13,7 +13,7 @@
 use osp_core::anchoring::classifier::{Classifier, Glossary};
 use osp_core::anchoring::gate::AnchorGateContext;
 use osp_core::anchoring::pipeline::AnchorPipeline;
-use osp_core::anchoring::store::InMemoryAnchorStore;
+use osp_core::anchoring::store::{AnchorStore, InMemoryAnchorStore};
 use osp_core::anchoring::types::{ConceptNode, ConceptNodeKind, GraphSeed, PacketSource};
 use osp_core::anchoring::{ConceptEdgeKind, ConceptPacketType, DecisionStatus, PositionFamily};
 use serde::{Deserialize, Serialize};
@@ -247,7 +247,7 @@ fn anchor_mvp_runs_all_fixtures() {
         // Sonuç olsun: ya plan ya da bilinçli GateError (INV ihlali)
         match result {
             Ok(plan) => {
-                let _ = store.apply_plan(&plan);
+                let _ = store.apply_plan(&plan); // Result, ignore
                 ran += 1;
             }
             Err(osp_core::anchoring::pipeline::AnchorError::Gate(_)) => {
@@ -395,17 +395,19 @@ fn anchor_mvp_candidate_isolation_inv_c3() {
             &AnchorGateContext::no_authority(),
         )
         .expect("plan");
-    store.apply_plan(&plan);
+    store.apply_plan(&plan).expect("apply");
 
     // INV-C3: yeni node'lar Candidate olmalı (apply_plan INV-C5)
     let new_nodes_candidate = store
         .candidate_query()
+        .unwrap()
+        .into_iter()
         .filter(|n| !f.given.concepts.iter().any(|gc| gc.id == n.id.0))
         .count();
     // En azından Candidate lane'da bir şey olmalı (eğer candidate üretildiyse)
     // mainline sadece seed'den gelen Accepted'lar
     assert_eq!(
-        store.mainline_query().count(),
+        store.mainline_query().unwrap().len(),
         pre_mainline,
         "INV-C3: apply_plan mainline'a (Accepted) hiçbir şey eklemez"
     );

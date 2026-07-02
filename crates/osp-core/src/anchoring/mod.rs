@@ -40,10 +40,12 @@ pub mod types;
 // Faz 2: runtime tipleri kökten erişilebilir (API stabilitesi)
 pub use types::{
     AnchorCandidate, AnchorPlan, AnchorScoreBreakdown, CanonicalRedirect, CanonicalRedirectReason,
-    ConceptEdge, ConceptGraph, ConceptNode, ConceptNodeId, ConceptNodeKind, ConceptPacket,
-    ConceptPacketId, ConceptualIntentVector, EmptyExplanation, EvidenceVector,
-    ExtractedAnchorCandidate, GraphSeed, NonEmptyExplanation, PacketSource, PhysicalCodeVector,
-    PositionSnapshot, PositionSnapshotId, PositionVector, ScalarSimilarity, SimilarityOutOfRange,
+    ConceptEdge, ConceptGraph, ConceptGraphSnapshot, ConceptNode, ConceptNodeId, ConceptNodeKind,
+    ConceptPacket, ConceptPacketId, ConceptualIntentVector, EmptyExplanation, EvidenceVector,
+    ExtractedAnchorCandidate, GraphSeed, NonEmptyExplanation, PacketSource,
+    PersistedAnchorCandidateAudit, PersistedAnchorPlanAudit, PersistedRedirectAudit,
+    PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector, ScalarSimilarity,
+    SimilarityOutOfRange,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
