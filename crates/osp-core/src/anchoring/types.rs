@@ -1064,6 +1064,12 @@ pub struct ConceptGraphSnapshot {
     pub schema_version: u32,
 }
 
+impl ConceptGraphSnapshot {
+    /// Faz 3 schema version. `restore_trusted_snapshot` bu değeri kontrol eder —
+    /// mismatch → `StoreError::InvalidSnapshotVersion` (trusted restore boundary).
+    pub const SCHEMA_VERSION: u32 = 1;
+}
+
 /// `AnchorPlan` audit record — DB'den okunan, **apply edilemez** kayıt (Faz 3, INV-C8).
 ///
 /// # INV-C8 boundary
@@ -1076,6 +1082,8 @@ pub struct ConceptGraphSnapshot {
 pub struct PersistedAnchorPlanAudit {
     pub packet_id: String,
     pub decision: String,
+    /// §8.2 threshold band (Strong/Tentative/Weak/Unanchored) — kararın skor bandı.
+    pub threshold_band: String,
     pub candidates: Vec<PersistedAnchorCandidateAudit>,
     pub redirects: Vec<PersistedRedirectAudit>,
     pub negative_assertions: Vec<String>,
@@ -1330,6 +1338,7 @@ fn persisted_anchor_plan_audit_serde_roundtrip() {
     let audit = PersistedAnchorPlanAudit {
         packet_id: "pkt:audit".into(),
         decision: "TentativeLink".into(),
+        threshold_band: "Tentative".into(),
         candidates: vec![PersistedAnchorCandidateAudit {
             edge_kind: "DerivesRisk".into(),
             target: "RiskCandidate:X".into(),

@@ -46,32 +46,16 @@ impl OperatorAcceptance {
 
 /// InMemory store hatası.
 #[derive(Debug, Clone, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", content = "payload")]
 pub enum StoreError {
     #[error("node bulunamadı: {0}")]
-    NodeNotFound(
-        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
-    ),
+    NodeNotFound(ConceptNodeId),
     #[error("node zaten Accepted: {0}")]
-    AlreadyAccepted(
-        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
-    ),
+    AlreadyAccepted(ConceptNodeId),
     #[error("node Candidate değil: {0}")]
-    NotCandidate(
-        #[serde(serialize_with = "ser_node_id", deserialize_with = "de_node_id")] ConceptNodeId,
-    ),
-}
-
-// ConceptNodeId serde helper — thiserror Display için id.0 String'ine réf.
-fn ser_node_id<S: serde::Serializer>(id: &ConceptNodeId, ser: S) -> Result<S::Ok, S::Error> {
-    use serde::Serialize;
-    id.0.serialize(ser)
-}
-
-fn de_node_id<'de, D: serde::Deserializer<'de>>(de: D) -> Result<ConceptNodeId, D::Error> {
-    use serde::Deserialize;
-    let s = <String as Deserialize>::deserialize(de)?;
-    Ok(ConceptNodeId(s))
+    NotCandidate(ConceptNodeId),
+    #[error("snapshot version uyumsuz: expected={expected}, found={found}")]
+    InvalidSnapshotVersion { expected: u32, found: u32 },
 }
 
 impl std::fmt::Display for ConceptNodeId {
@@ -148,6 +132,15 @@ pub struct InMemoryAnchorStore {
     graph: ConceptGraph,
 }
 
+impl std::fmt::Debug for InMemoryAnchorStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryAnchorStore")
+            .field("node_count", &self.graph.node_count())
+            .field("edge_count", &self.graph.edge_count())
+            .finish()
+    }
+}
+
 impl Default for InMemoryAnchorStore {
     fn default() -> Self {
         Self::new()
@@ -171,9 +164,21 @@ impl InMemoryAnchorStore {
     /// Trusted restore — `ConceptGraphSnapshot`'tan graph'ı geri yükle (Faz 3).
     /// INV-C3 persistence boundary: bu trusted restore path (operator-belirlenmiş
     /// Accepted node'lar dahil). Normal mutation DEĞİL — snapshot deserialize.
+    ///
+    /// # schema_version kontrolü
+    /// Snapshot `schema_version` mevcut `SCHEMA_VERSION` ile eşleşmeli; değilse
+    /// `StoreError::InvalidSnapshotVersion`. Trusted restore boundary'nin en hassas
+    /// kapısı — Accepted node içerebilir, o yüzden version mismatch reject.
     pub fn restore_trusted_snapshot(
         snapshot: crate::anchoring::types::ConceptGraphSnapshot,
-    ) -> Self {
+    ) -> Result<Self, StoreError> {
+        use crate::anchoring::types::ConceptGraphSnapshot;
+        if snapshot.schema_version != ConceptGraphSnapshot::SCHEMA_VERSION {
+            return Err(StoreError::InvalidSnapshotVersion {
+                expected: ConceptGraphSnapshot::SCHEMA_VERSION,
+                found: snapshot.schema_version,
+            });
+        }
         let mut s = Self::new();
         for node in snapshot.nodes {
             s.graph.insert_node(node);
@@ -181,12 +186,44 @@ impl InMemoryAnchorStore {
         for edge in snapshot.edges {
             s.graph.insert_edge(edge);
         }
-        s
+        Ok(s)
     }
 
     /// Graph referansı (read-only — gate/extractor için). Trait dışı özel accessor.
     pub fn graph(&self) -> &ConceptGraph {
         &self.graph
+    }
+
+    // Faz 3 backward-compat inherent wrapper'lar — downstream crate'ler `use AnchorStore`
+    // import etmeden eski API'yi kullanabilsin diye. Trait abstraction korunur,
+    // kaynak uyumluluğu kırılmaz.
+    pub fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, StoreError> {
+        <Self as AnchorStore>::apply_plan(self, plan)
+    }
+    pub fn promote_to_accepted(
+        &mut self,
+        node_id: &ConceptNodeId,
+        cap: &OperatorAcceptance,
+    ) -> Result<(), StoreError> {
+        <Self as AnchorStore>::promote_to_accepted(self, node_id, cap)
+    }
+    pub fn seed_trusted(&mut self, seed: &GraphSeed) -> Result<(), StoreError> {
+        <Self as AnchorStore>::seed_trusted(self, seed)
+    }
+    pub fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, StoreError> {
+        <Self as AnchorStore>::find_concepts_by_canonical(self, name)
+    }
+    pub fn mainline_query(&self) -> Result<Vec<ConceptNode>, StoreError> {
+        <Self as AnchorStore>::mainline_query(self)
+    }
+    pub fn candidate_query(&self) -> Result<Vec<ConceptNode>, StoreError> {
+        <Self as AnchorStore>::candidate_query(self)
+    }
+    pub fn node_count(&self) -> Result<usize, StoreError> {
+        <Self as AnchorStore>::node_count(self)
+    }
+    pub fn edge_count(&self) -> Result<usize, StoreError> {
+        <Self as AnchorStore>::edge_count(self)
     }
 
     // Inherent apply_plan (trait'in arkasında kullanılan gerçek implementasyon)
@@ -508,12 +545,51 @@ mod tests {
             edges: vec![],
             schema_version: 1,
         };
-        let store = InMemoryAnchorStore::restore_trusted_snapshot(snapshot);
+        let store = InMemoryAnchorStore::restore_trusted_snapshot(snapshot).unwrap();
         assert_eq!(store.node_count().unwrap(), 1);
         assert_eq!(
             store.mainline_query().unwrap().len(),
             1,
             "restored Accepted"
         );
+    }
+
+    #[test]
+    fn restore_trusted_snapshot_rejects_version_mismatch() {
+        // Faz 3 #2: schema_version mismatch → InvalidSnapshotVersion
+        use crate::anchoring::types::ConceptGraphSnapshot;
+        let snapshot = ConceptGraphSnapshot {
+            nodes: vec![],
+            edges: vec![],
+            schema_version: 999, // mismatch
+        };
+        let err = InMemoryAnchorStore::restore_trusted_snapshot(snapshot).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                StoreError::InvalidSnapshotVersion {
+                    expected: 1,
+                    found: 999
+                }
+            ),
+            "version mismatch reject"
+        );
+    }
+
+    #[test]
+    fn store_error_serde_roundtrip() {
+        // Faz 3 #3: StoreError thiserror+serde — #[serde(tag="kind")] + newtype kombinasyonu
+        let err = StoreError::NodeNotFound(ConceptNodeId("Concept:X".into()));
+        let json = serde_json::to_string(&err).unwrap();
+        let back: StoreError = serde_json::from_str(&json).unwrap();
+        assert_eq!(err, back);
+
+        let err2 = StoreError::InvalidSnapshotVersion {
+            expected: 1,
+            found: 2,
+        };
+        let json2 = serde_json::to_string(&err2).unwrap();
+        let back2: StoreError = serde_json::from_str(&json2).unwrap();
+        assert_eq!(err2, back2);
     }
 }

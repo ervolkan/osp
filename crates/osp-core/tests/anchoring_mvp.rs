@@ -13,7 +13,7 @@
 use osp_core::anchoring::classifier::{Classifier, Glossary};
 use osp_core::anchoring::gate::AnchorGateContext;
 use osp_core::anchoring::pipeline::AnchorPipeline;
-use osp_core::anchoring::store::{AnchorStore, InMemoryAnchorStore};
+use osp_core::anchoring::store::InMemoryAnchorStore;
 use osp_core::anchoring::types::{ConceptNode, ConceptNodeKind, GraphSeed, PacketSource};
 use osp_core::anchoring::{ConceptEdgeKind, ConceptPacketType, DecisionStatus, PositionFamily};
 use serde::{Deserialize, Serialize};
@@ -247,7 +247,7 @@ fn anchor_mvp_runs_all_fixtures() {
         // Sonuç olsun: ya plan ya da bilinçli GateError (INV ihlali)
         match result {
             Ok(plan) => {
-                let _ = store.apply_plan(&plan); // Result, ignore
+                let _ = store.apply_plan(&plan).expect("apply plan");
                 ran += 1;
             }
             Err(osp_core::anchoring::pipeline::AnchorError::Gate(_)) => {
