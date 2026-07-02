@@ -1,0 +1,20 @@
+{
+  "schema_version": "anchoring.glossary.v1",
+  "entries": [
+    {
+      "canonical": "Payment",
+      "aliases": ["ödeme", "payments", "checkout", "ödeme akışı"],
+      "language": "tr/en"
+    },
+    {
+      "canonical": "Trust",
+      "aliases": ["güven", "SecurityPerception", "güvenlik algısı"],
+      "language": "tr/en"
+    },
+    {
+      "canonical": "User",
+      "aliases": ["kullanıcı", "müşteri", "client"],
+      "language": "tr/en"
+    }
+  ]
+}

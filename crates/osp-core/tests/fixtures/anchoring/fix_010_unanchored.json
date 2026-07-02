@@ -1,0 +1,36 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_010_unanchored",
+  "invariants": ["INV-C5"],
+  "given": {
+    "concepts": [],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Belki hafta sonu bazı şeyleri gözden geçirmek lazım.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "Assumption",
+    "concepts": [],
+    "edges": [],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": false,
+    "anchor_decision": "MarkUnanchored",
+    "threshold_band": "Unanchored",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; score < 0.40 (§8.2 Unanchored)",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 0.3,
+    "graph_context_score": null,
+    "domain_term_match": 0.1,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "§8.2 threshold < 0.40 → MarkUnanchored. Cümle herhangi bir domain concept/rule/task'a bağlanamıyor. edges boş. INV-C5: yine de Candidate status (türetilen başlangıç durumu). review gerekmez (high-stake edge yok)."
+}

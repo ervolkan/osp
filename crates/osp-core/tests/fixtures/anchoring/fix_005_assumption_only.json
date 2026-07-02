@@ -1,0 +1,38 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_005_assumption_only",
+  "invariants": ["INV-C5"],
+  "given": {
+    "concepts": [],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Mevcut kullanıcının teknik bilgi seviyesi orta düzeyde olduğu varsayılıyor.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "Assumption",
+    "concepts": ["UserTechnicalLevel"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:UserTechnicalLevel", "requires_explanation": false }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": false,
+    "anchor_decision": "TentativeLink",
+    "threshold_band": "Weak",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; tek concept, düşük-stake Mentions only",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 0.8,
+    "graph_context_score": null,
+    "domain_term_match": 0.6,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "INV-C5: türetilen bilgi Candidate başlar. Tek Mentions edge (düşük-stake) → review gerekmez. Operator onayıyla Accepted olabilir."
+}

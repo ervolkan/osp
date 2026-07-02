@@ -1,0 +1,47 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_008_dedup_alias",
+  "invariants": ["INV-C8"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:Payment",
+        "canonical": "Payment",
+        "aliases": ["ödeme", "payments", "checkout"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Sisteme yeni bir ödeme (payment) entegrasyonu eklenmeli.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["Payment"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:Payment", "requires_explanation": false }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": false,
+    "anchor_decision": "TentativeLink",
+    "threshold_band": "Weak",
+    "negative_assertions": [
+      "Yeni Concept:Payment (veya alias 'ödeme'/'payments') node OLUŞTURULMAMALI — mevcut canonical'a bağlanır (INV-C8)"
+    ]
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; alias match dolayısıyla yeni node oluşmaz",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "INV-C8/D13 canonicalization: 'ödeme' ve 'payment' aynı canonical'a (Payment) maplenir → yeni node oluşmaz, mevcut node'a TentativeLink. pre-state: mevcut Concept:Payment (Accepted) + alias listesi zorunlu. _glossary.json seed alias'larını kullanır."
+}

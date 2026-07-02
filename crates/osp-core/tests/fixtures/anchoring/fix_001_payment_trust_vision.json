@@ -1,0 +1,54 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_001_payment_trust_vision",
+  "invariants": ["INV-C1", "INV-C3", "INV-C7"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:Payment",
+        "canonical": "Payment",
+        "aliases": ["ödeme", "payments", "checkout"],
+        "decision_status": "Accepted"
+      },
+      {
+        "id": "Concept:Trust",
+        "canonical": "Trust",
+        "aliases": ["güven", "SecurityPerception"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Kullanıcı ödeme yaparken kendini güvende hissetmeli.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["Payment", "Trust", "UserFeeling"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:Payment", "requires_explanation": false },
+      { "kind": "Mentions", "target": "Concept:Trust", "requires_explanation": false },
+      { "kind": "DerivesRisk", "target": "RiskCandidate:PaymentTrustLoss", "requires_explanation": true },
+      { "kind": "ExpectedImplementation", "target": "CodeEntityCandidate:PaymentModule", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; 0.0 = hesaplandı, sıfır (lexical classifier, embedding yok); 1.0 = hesaplandı, tam eşleşme (glossary match)",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "§3.1 ana örnek. High-stake edge'ler (DerivesRisk, ExpectedImplementation) INV-C7 gereği explanation ister. CodeEntityCandidate: ExpectedImplementation ≠ ImplementedBy (Faz 4 code evidence)."
+}
