@@ -26,7 +26,7 @@ osp-desktop       ⬜ E (3D viewer donduruldu — Aşama 1-3 hover edge tamam)
 G2c corpus runner ✅ G2c-1→5 TAMAM (RQ9 kanıt + gerçek LLM + external corpus 26/26 Completed)
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings (opsiyonel)
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
-Paper 2           ⬜ YAZIMA HAZIR — tüm implementation + evidence + threats toplandı
+Paper 2           ✍️ DRAFT v1 yazıldı (docs/paper2-draft-v1.md) — review ile v1.1'e ilerler
 ```
 
 ## Aşama Tablosu
@@ -86,11 +86,9 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 2 yazımı.** G2c-5 tamam: gerçek LLM (GPT-4o-mini) external corpus (chalk/click/cobra)
-üzerinde 26/26 Completed, RQ6 (~1100 tok/cell), RQ7 (100%), RQ8/RQ9 sinyalleri toplandı.
-Paper 2 minimum gate doldu (G2c ✅ + external corpus + evidence + threats).
-
-Paper 2 data-driven yazılabilir — tüm kanıt `docs/paper2-notes/` altında.
+**Paper 2 draft v1 review.** `docs/paper2-draft-v1.md` yazıldı (576 satır, Paper 1 v2.6 mirror).
+Ana tez: *task = measurement predicate* (INV-T1 epistemik güvenlik). Evaluation RQ5-9 data-driven
+(G2c-5 external corpus: 26/26 Completed, ~1104 tok/cell, 0 axis regression). Review'larla v1.1'e ilerler.
 
 H (SDK) ve E (3D) opsiyonel — paper'ı geciktirmez.
 
