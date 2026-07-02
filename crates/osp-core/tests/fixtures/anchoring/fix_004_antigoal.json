@@ -1,0 +1,46 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_004_antigoal",
+  "invariants": ["INV-C7"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:BusinessLogicInController",
+        "canonical": "BusinessLogicInController",
+        "aliases": ["controller'da iş mantığı"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Controller'larda business logic olmaması gerekiyor — bu kaçınılması gereken bir anti-pattern.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "AntiGoal",
+    "concepts": ["BusinessLogicInController"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:BusinessLogicInController", "requires_explanation": false },
+      { "kind": "AntiGoalOf", "target": "Concept:BusinessLogicInController", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "AntiGoalOf high-stake edge (§8.3) → INV-C7 explanation zorunlu. ConceptPacketType::AntiGoal Faz 0 enum coverage; classification logic Faz 1+. §12 Q1 'AntiGoal Faz 1+ eklenebilir' notuna rağmen high-stake edge'i test etmek için enum'da."
+}

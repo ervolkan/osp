@@ -1,0 +1,45 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_003_arch_decision",
+  "invariants": ["INV-C5"],
+  "given": {
+    "concepts": [],
+    "decisions": [
+      {
+        "id": "Decision:AdoptEventSourcing",
+        "status": "Accepted",
+        "authority": "WitnessedArchitectDecision"
+      }
+    ],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Event Sourcing kararını referans alarak sipariş akışını tasarla.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "Decision",
+    "concepts": ["EventSourcing", "OrderFlow"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:EventSourcing", "requires_explanation": false },
+      { "kind": "DependsOnDecision", "target": "Decision:AdoptEventSourcing", "requires_explanation": false }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": false,
+    "anchor_decision": "TentativeLink",
+    "threshold_band": "Weak",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; DependsOnDecision düşük-stake olduğu için review gerekmez",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 0.8,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "DependsOnDecision düşük-stake edge (§8.4) → explanation opsiyonel, review gerekmez. INV-C5: türetilen Candidate başlar. pre-state: accepted Decision:AdoptEventSourcing zorunlu."
+}

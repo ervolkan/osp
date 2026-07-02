@@ -1,0 +1,62 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_007_contradiction",
+  "invariants": ["INV-C4"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:PaymentProvider",
+        "canonical": "PaymentProvider",
+        "aliases": ["ödeme sağlayıcısı"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [
+      {
+        "id": "Decision:NoDirectPaymentProviderDependency",
+        "status": "Accepted",
+        "authority": "Operator"
+      }
+    ],
+    "code_entities": [
+      {
+        "id": "CodeEntity:PaymentModule",
+        "status": "Observed"
+      }
+    ]
+  },
+  "input": {
+    "text": "PaymentModule doğrudan PaymentProvider SDK'sını çağırıyor — bu kabul edilmiş bağımsızlık kararıyla çelişiyor.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["PaymentModule", "PaymentProvider"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:PaymentModule", "requires_explanation": false },
+      { "kind": "Mentions", "target": "Concept:PaymentProvider", "requires_explanation": false },
+      { "kind": "Contradicts", "target": "Decision:NoDirectPaymentProviderDependency", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "MarkContradiction",
+    "threshold_band": "Weak",
+    "negative_assertions": [
+      "CodeEntity:PaymentModule --SUPERSEDES--> Decision yasak (INV-C4, §6.4.1: observed code reality güçlüdür ama karar değildir)",
+      "CodeEntity:PaymentModule sadece --DRIFTS_FROM--> / --CONTRADICTS?--> üretebilir",
+      "Agent kaynağı --SUPERSEDES--> AcceptedDecision yapamaz; sadece CONTRADICTS? önerir (INV-C4 capability gate)"
+    ]
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; contradiction penalty uygulanır (§8.1)",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "Çift teorik doğrulama: (1) Contradicts high-stake → INV-C7 explanation + MarkContradiction kararı. (2) negative_assertions: §6.4.1 mapping — kod gerçekli poterlidir ama SUPERSEDES yetkisi yoktur; sadece çelişki sinyali üretir. pre-state: accepted Decision (Operator authority) + CodeEntity (Observed status) zorunlu."
+}

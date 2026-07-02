@@ -1,0 +1,47 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_002_requirement_rule",
+  "invariants": ["INV-C3", "INV-C7"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:DomainLayer",
+        "canonical": "DomainLayer",
+        "aliases": ["domain katmanı"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Domain katmanı Infrastructure'a bağımlı olmamalı.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "Requirement",
+    "concepts": ["DomainLayer", "InfrastructureLayer"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:DomainLayer", "requires_explanation": false },
+      { "kind": "Mentions", "target": "Concept:InfrastructureLayer", "requires_explanation": false },
+      { "kind": "DerivesRule", "target": "RuleCandidate:NoDomainToInfrastructureDependency", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": []
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; 0.0/1.0 = Faz 0-1 deterministic",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "DerivesRule high-stake → INV-C7 explanation zorunlu + D6 operator review. RuleCandidate (türetilen) Candidate başlar (INV-C3: candidate isolation)."
+}

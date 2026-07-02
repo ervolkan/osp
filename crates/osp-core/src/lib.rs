@@ -14,6 +14,7 @@
 //! - `bigbang` — `apply_delta()` + gravity (§6, mutation-only — infallible)
 
 pub mod agent;
+pub mod anchoring;
 pub mod axes;
 pub mod bigbang;
 pub mod coords;

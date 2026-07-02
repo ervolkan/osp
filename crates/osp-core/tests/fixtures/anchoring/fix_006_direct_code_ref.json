@@ -1,0 +1,48 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_006_direct_code_ref",
+  "invariants": ["INV-C7"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:Authentication",
+        "canonical": "Authentication",
+        "aliases": ["kimlik doğrulama", "auth"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Kimlik doğrulama akışı AuthService module'ünde implement edilmeli.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["Authentication"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:Authentication", "requires_explanation": false },
+      { "kind": "ExpectedImplementation", "target": "CodeEntityCandidate:AuthService", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": [
+      "Yüksek abstraction cümlesinin doğrudan CodeEntity'ye bağlanması yasak — arada Concept/Rule/Task node'ları olmalı (§8.6, D6)"
+    ]
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "§8.6/D6: yüksek abstraction → doğrudan kod bağlantısı yasak; ontolojik zincir tam olmalı (ConceptPacket → Concept → Rule → Task → CodeEntity). Bu fixture beklenen *doğru* zinciri gösterir (Concept:Authentication aracı). CodeEntityCandidate: gerçek code entity değil, Faz 4 code evidence ile ImplementedBy'ye dönüşür."
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_009_weak_anchor_canon",
+  "invariants": ["INV-C8"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:Notification",
+        "canonical": "Notification",
+        "aliases": ["bildirim", "notifications"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": []
+  },
+  "input": {
+    "text": "Kullanıcıya bazı durum değişiklikleri hakkında bildirimler göndermek faydalı olabilir.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["Notification"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:Notification", "requires_explanation": false }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": false,
+    "anchor_decision": "CreateNode",
+    "threshold_band": "Weak",
+    "negative_assertions": [
+      "CreateNode öncesi canonicalize gate zorunlu (INV-C8) — 'bildirim' alias match → yeni node yerine mevcut Concept:Notification'a bağlanır"
+    ]
+  },
+  "score": {
+    "_comment": "null = Faz 7 calibration öncesi; score 0.40-0.60 bandında (§8.2 Weak/CreateNode)",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 0.7,
+    "graph_context_score": null,
+    "domain_term_match": 0.5,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "§8.2 threshold [0.40,0.60) → CreateNode kararı. Ama INV-C8 canon gate önce çalışır: 'bildirim' alias'ı mevcut Concept:Notification'a match → CreateNode reddedilir, TentativeLink'e düşer. pre-state: mevcut Concept:Notification + alias zorunlu. Bu fixture canon gate'in CreateNode'yu intercept ettiğini doğrular."
+}
