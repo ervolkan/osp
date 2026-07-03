@@ -23,6 +23,7 @@ pub mod navigator;
 pub mod persistence;
 pub mod rule;
 pub mod space;
+pub mod task_bridge;
 pub mod time;
 pub mod trajectory;
 pub mod vision;
