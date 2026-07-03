@@ -1226,24 +1226,47 @@ impl ConceptGraph {
 
 /// Store seed'i. FixtureGiven (test-only) buraya dönüştürülür — store.rs
 /// FixtureGiven bilmez (runtime/test boundary).
+///
+/// # Faz 5a — candidate bucket'ları (Patch 6)
+/// PR33a önce yalnızca 3 bucket vardı (concepts/decisions/code_entities); candidate
+/// node'ları (RuleCandidate/TaskCandidate/RiskCandidate) seed edilemiyordu. 3 yeni
+/// bucket eklendi. Backward-compat: GraphSeed `Default` derive'a sahip; yeni field'lar
+/// `Vec::default()` (boş) ile başlar — eski kod `GraphSeed { concepts, decisions,
+/// code_entities }` ile çalışmaya devam eder (PartialEq hariç, ama seed literal
+/// construct zaten pub(crate)/test-only). `all_nodes()` deterministik sıra: concepts
+/// → decisions → code_entities → rule_candidates → task_candidates → risk_candidates.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GraphSeed {
     pub concepts: Vec<ConceptNode>,
     pub decisions: Vec<ConceptNode>,
     pub code_entities: Vec<ConceptNode>,
+    /// Faz 5a — RuleCandidate seed'leri.
+    pub rule_candidates: Vec<ConceptNode>,
+    /// Faz 5a — TaskCandidate seed'leri.
+    pub task_candidates: Vec<ConceptNode>,
+    /// Faz 5a — RiskCandidate seed'leri.
+    pub risk_candidates: Vec<ConceptNode>,
 }
 
 impl GraphSeed {
     pub fn is_empty(&self) -> bool {
-        self.concepts.is_empty() && self.decisions.is_empty() && self.code_entities.is_empty()
+        self.concepts.is_empty()
+            && self.decisions.is_empty()
+            && self.code_entities.is_empty()
+            && self.rule_candidates.is_empty()
+            && self.task_candidates.is_empty()
+            && self.risk_candidates.is_empty()
     }
 
-    /// Tüm seed node'larını tek iteratörde.
+    /// Tüm seed node'larını tek iteratörde (deterministik sıra — Patch 6).
     pub fn all_nodes(&self) -> impl Iterator<Item = &ConceptNode> {
         self.concepts
             .iter()
             .chain(self.decisions.iter())
             .chain(self.code_entities.iter())
+            .chain(self.rule_candidates.iter())
+            .chain(self.task_candidates.iter())
+            .chain(self.risk_candidates.iter())
     }
 }
 

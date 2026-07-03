@@ -1,6 +1,6 @@
-//! Faz 2/4 type-level invariant compile-fail testleri.
+//! Faz 2/4/5a type-level invariant compile-fail testleri.
 //!
-//! [`trybuild`] ile 10 INV compile-time garantiyi doğrular. Bu testler IHMAL
+//! [`trybuild`] ile 12 INV compile-time garantiyi doğrular. Bu testler IHMAL
 //! edilemez: "invariant korunuyor" iddiasının en güçlü kanıtı — runtime testler
 //! invariant'ın çalıştığını gösterir, compile-fail testler ihlalin İMKANSIZ olduğunu kanıtlar.
 //!
@@ -15,6 +15,8 @@
 //! - `c6_observed_evidence_literal.rs` — INV-C6: ObservedCodeEvidence literal construct (Faz 4)
 //! - `c6_intent_carries_physical_vector.rs` — INV-C6+C2: intent vector observed evidence'a (Faz 4)
 //! - `c6_observed_evidence_deserialize.rs` — INV-C6: ObservedCodeEvidence Deserialize (Faz 4)
+//! - `cP1_predicate_stub_literal.rs` — INV-P1: PredicateStub literal construct (Faz 5a)
+//! - `cP1_predicate_stub_deserialize.rs` — INV-P1: PredicateStub Deserialize (Faz 5a serde boundary)
 
 #[test]
 fn type_level_invariants_compile_fail() {
@@ -30,4 +32,7 @@ fn type_level_invariants_compile_fail() {
     t.compile_fail("tests/compile_fail/c6_observed_evidence_literal.rs");
     t.compile_fail("tests/compile_fail/c6_intent_carries_physical_vector.rs");
     t.compile_fail("tests/compile_fail/c6_observed_evidence_deserialize.rs");
+    // Faz 5a — INV-P1 (predicate stub type-level)
+    t.compile_fail("tests/compile_fail/cP1_predicate_stub_literal.rs");
+    t.compile_fail("tests/compile_fail/cP1_predicate_stub_deserialize.rs");
 }

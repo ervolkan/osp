@@ -776,6 +776,20 @@ Her karar: **karar + gerekçe + OSP ile tutarlılık + itiraz varsa çözüm.**
 
 **Erteleme notu:** Gerçek osp-analyzer bridge ertelendi (osp-analyzer symbol-granular değil). Deterministik stub (`InMemoryCodeEvidenceProvider`) ile mechanism proof. `CodeEvidenceProvider` trait (D7-abstraction, AnchorStore pattern) osp-core'u analyzer-agnostic tutar.
 
+### D16 — PredicateStub modelleme: structured uncertainty (Faz 5a)
+
+**Karar:** RuleCandidate → PredicateSet lowering'i **tek adımda yapılmaz**. Araya `PredicateStub` epistemik tampon konur — Rule'ın predicate olmak için ne eksik olduğu (unresolved slots, reason, suggested templates). PR33a'da lowering her zaman Stub üretir; ExecutablePredicateSet PR33b'de slot binding ile.
+
+**Ana tez:** *A rule is not a predicate. A predicate is a rule whose measurable slots have been bound.* RuleCandidate insan niyeti seviyesinde (ConceptualIntent), PredicateSet çalıştırılabilir ölçüm seviyesinde (PhysicalCode). Aradaki cross-family translation (§4.1 eksen kümeleri farklı) tek adımda çözülemez — Stub belirsizliği korur.
+
+**Structured uncertainty:** Stub boş bir "bilmiyorum" DEĞİL — `unresolved_slots` (Metric/Threshold/Scope/Comparator), `reason` (neden executable değil), `suggested_templates` (hangi kalıplara uyabileceği) taşır. *"A PredicateStub is not absence of knowledge; it is structured uncertainty."* Smart constructor non-empty consistency: unresolved boş + NoTemplateMatch değil → hata; NoTemplateMatch + templates dolu → çelişki hatası.
+
+**INV-P1 (yeni):** Ölçülebilir slotları bağlanmamış RuleCandidate, ExecutablePredicateSet üretemez. INV-P1a (PR33a): lowering Stub üretir, ExecutablePredicateSet DEĞİL. INV-P1b (PR33b): Stub → ExecutablePredicateSet sadece slot binding ile.
+
+**Type-level garantiler (Faz 5a):** `PredicateStub` private fields + public smart constructor (Faz 4 paterni), Serialize-only (Deserialize YOK — stub yeniden apply edilememeli), `lower_rule_to_predicate_stub` Result döner (NotRuleCandidate reject), `completeness()` [0,1] sabit formül. 2 trybuild compile-fail test.
+
+**Epistemik sınır (INV-T2):** Accepted TaskCandidate ≠ trajectory::Task. PR33a anchoring içinde kalır — trajectory genesis'e (OperatorCapability, INV-T2) dokunmaz. "Accepted TaskCandidate = accepted project intention; trajectory::Task = executable navigator task." Task genesis PR33b'ye.
+
 ---
 
 ## 11. Fazlama
@@ -831,6 +845,18 @@ Faz 5 — Task/Predicate integration → Paper 2 navigator bridge
   ConceptPacket → TaskCandidate üretimi
   Candidate → Accepted (operator approval)
   Agent Navigator'a bridge (INV-T2 doldu)
+
+  ✅ DURUM (2026-07): İki PR'a bölündü (PR33a + PR33b).
+  PR33a ( tamamlandı): PredicateStub bridge — TaskCandidate lane canlı (DerivesTask),
+    RuleCandidate → PredicateStub lowering (INV-P1), Candidate→Accepted promotion.
+    Navigator'a bağlanmaz (INV-T2 ihlal yok). "A rule is not a predicate. A predicate
+    is a rule whose measurable slots have been bound." — RuleCandidate lowering PR33a'da
+    her zaman PredicateStub üretir (ExecutablePredicateSet DEĞİL, INV-P1a). Stub boş değil;
+    structured uncertainty (unresolved slots + suggested templates). Cross-family translation
+    (ConceptualIntent→PhysicalCode) PR33b'ye.
+  PR33b (planlandı): Navigator bridge + executable predicate template'leri (MetricThreshold/
+    MetricDelta/EvidenceRequired/RelationExists) + Stub→ExecutablePredicateSet slot binding +
+    TaskCandidate→trajectory::Task converter + OperatorCapability bridge (INV-T2 Task genesis).
 
 Faz 6 — Concept Synthesis (D12 sırası)
   Code repo analizi → concept/vizyon/rule hipotezleri

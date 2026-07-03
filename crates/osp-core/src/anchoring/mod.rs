@@ -26,13 +26,14 @@
 //! test'leri (`tests/`) bu constructor'ları çağıramaz → invariant by-pass
 //! compile-time engellenir. Faz 8 operator console gerçek API ile bu gate'leri açar.
 
-// Faz 1/2/4 modülleri
+// Faz 1/2/4/5a modülleri
 pub mod classifier;
 pub mod code_evidence;
 pub mod edit_distance;
 pub mod extractor;
 pub mod gate;
 pub mod pipeline;
+pub mod predicate_lowering;
 pub mod scorer;
 pub mod store;
 pub mod typed_ref;
@@ -48,6 +49,11 @@ pub use types::{
     PersistedAnchorCandidateAudit, PersistedAnchorPlanAudit, PersistedRedirectAudit,
     PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector, ScalarSimilarity,
     SimilarityOutOfRange,
+};
+// Faz 5a — predicate lowering tipleri
+pub use predicate_lowering::{
+    lower_rule_to_predicate_stub, PredicateLoweringError, PredicateLoweringOutcome, PredicateSlot,
+    PredicateStub, PredicateStubError, PredicateStubReason, PredicateTemplateId, ALL_SLOTS,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

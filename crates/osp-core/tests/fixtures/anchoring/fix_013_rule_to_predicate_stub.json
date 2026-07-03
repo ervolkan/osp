@@ -1,0 +1,50 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_013_rule_to_predicate_stub",
+  "invariants": ["INV-P1"],
+  "given": {
+    "concepts": [],
+    "decisions": [],
+    "code_entities": [],
+    "rule_candidates": [
+      {
+        "id": "RuleCandidate:NoHighCouplingDependency",
+        "status": "Candidate"
+      }
+    ],
+    "task_candidates": [],
+    "risk_candidates": []
+  },
+  "input": {
+    "text": "NoHighCouplingDependency kuralı coupling azaltmalı.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": [],
+    "edges": [
+      { "kind": "DerivesRule", "target": "RuleCandidate:NoHighCouplingDependency", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": [
+      "INV-P1a: RuleCandidate lowering PredicateStub üretir, ExecutablePredicateSet DEĞİL (PR33a)",
+      "PredicateStub boş değil — unresolved slots (Metric/Threshold/Scope/Comparator) + suggested templates taşır (structured uncertainty)",
+      "Cross-family translation (ConceptualIntent→PhysicalCode) PR33b'ye — sadece suggested_templates önerilir"
+    ]
+  },
+  "score": {
+    "_comment": "Faz 5a: RuleCandidate → PredicateStub lowering (INV-P1)",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "Faz 5a RuleCandidate → PredicateStub lowering fixture'ı. Rule 'coupling' keyword içerir → suggested_templates = [MetricThreshold, MetricDelta] ('coupling' + 'azalt'). completeness() = 1.0 - 4/4 = 0.0 (tüm slot'lar unresolved). Reason = MetricUnresolved. INV-P1a: ExecutablePredicateSet üretilmez; operator slot'ları PR33b'de bağlayacak. 'A rule is not a predicate. A predicate is a rule whose measurable slots have been bound.'"
+}

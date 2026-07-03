@@ -288,11 +288,16 @@ impl AnchorStore for InMemoryAnchorStore {
     type Error = StoreError;
 
     fn seed_trusted(&mut self, seed: &GraphSeed) -> Result<(), Self::Error> {
+        // Faz 5a: 3 yeni candidate bucket (rule/task/risk candidates) — Patch 6.
+        // Deterministik sıra all_nodes() ile uyumlu.
         for node in seed
             .concepts
             .iter()
             .chain(&seed.decisions)
             .chain(&seed.code_entities)
+            .chain(&seed.rule_candidates)
+            .chain(&seed.task_candidates)
+            .chain(&seed.risk_candidates)
         {
             self.graph.insert_node(node.clone());
         }
@@ -591,5 +596,102 @@ mod tests {
         let json2 = serde_json::to_string(&err2).unwrap();
         let back2: StoreError = serde_json::from_str(&json2).unwrap();
         assert_eq!(err2, back2);
+    }
+
+    // ── Faz 5a (T6, Patch 4/5): TaskCandidate promote — INV-T2 boundary ───────
+
+    #[test]
+    fn promote_task_candidate_does_not_create_trajectory_task() {
+        // Patch 4/5: Accepted TaskCandidate ≠ trajectory::Task.
+        // PR33a anchoring içinde kalır — trajectory genesis'e (OperatorCapability,
+        // INV-T2) dokunmaz. Bu test promote sonrası node'un hala TaskCandidate
+        // olduğunu + status Accepted olduğunu doğrular. trajectory::Task yaratımı
+        // PR33b'ye (operator console / bridge).
+        //
+        // "Accepted TaskCandidate = accepted project intention"
+        // "trajectory::Task = executable navigator task"
+        // Bunlar farklı ontolojik seviyeler — PR33a ikisini karıştırmaz.
+        let task_node = ConceptNode {
+            id: ConceptNodeId("TaskCandidate:AuthServiceRefactor".into()),
+            canonical: "AuthServiceRefactor".into(),
+            aliases: Vec::new(),
+            node_kind: ConceptNodeKind::TaskCandidate,
+            decision_status: DecisionStatus::Candidate,
+            position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+        };
+        let mut store = InMemoryAnchorStore::with_seed(GraphSeed {
+            task_candidates: vec![task_node],
+            ..Default::default()
+        });
+
+        // Mevcut promote_to_accepted kullanılır (Patch 5 — yeni method yok).
+        store
+            .promote_to_accepted(
+                &ConceptNodeId("TaskCandidate:AuthServiceRefactor".into()),
+                &OperatorAcceptance::issue_for_tests(),
+            )
+            .expect("TaskCandidate promote");
+
+        // Node hala TaskCandidate (kind değişmez), status Accepted.
+        let node = store
+            .graph()
+            .node(&ConceptNodeId("TaskCandidate:AuthServiceRefactor".into()))
+            .expect("node mevcut");
+        assert_eq!(
+            node.node_kind,
+            ConceptNodeKind::TaskCandidate,
+            "kind değişmez"
+        );
+        assert_eq!(node.decision_status, DecisionStatus::Accepted);
+
+        // PR33a: trajectory::Task yaratılmaz (compile-level — bu test `trajectory`
+        // modülüne reference içermiyor; navigator'a bağlanma PR33b).
+        // INV-T2 ihlal yok: Task genesis OperatorCapability gerektirir, PR33a'da yok.
+    }
+
+    #[test]
+    fn graph_seed_candidate_buckets_backward_compatible() {
+        // Patch 6: GraphSeed yeni bucket'lar Default ile backward-compat.
+        // Eski yapı (3 bucket) hala çalışır; yeni bucket'lar boş başlar.
+        let seed = GraphSeed {
+            concepts: vec![ConceptNode {
+                id: ConceptNodeId("Concept:Payment".into()),
+                canonical: "Payment".into(),
+                aliases: Vec::new(),
+                node_kind: ConceptNodeKind::Concept,
+                decision_status: DecisionStatus::Accepted,
+                position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+            }],
+            ..Default::default()
+        };
+        let store = InMemoryAnchorStore::with_seed(seed);
+        assert_eq!(store.node_count().unwrap(), 1, "concepts seed'lendi");
+
+        // Yeni bucket'lar boş → all_nodes yine 1 node.
+        let seed2 = GraphSeed {
+            rule_candidates: vec![ConceptNode {
+                id: ConceptNodeId("RuleCandidate:NoCoupling".into()),
+                canonical: "NoCoupling".into(),
+                aliases: Vec::new(),
+                node_kind: ConceptNodeKind::RuleCandidate,
+                decision_status: DecisionStatus::Candidate,
+                position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+            }],
+            task_candidates: vec![ConceptNode {
+                id: ConceptNodeId("TaskCandidate:Refactor".into()),
+                canonical: "Refactor".into(),
+                aliases: Vec::new(),
+                node_kind: ConceptNodeKind::TaskCandidate,
+                decision_status: DecisionStatus::Candidate,
+                position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+            }],
+            ..Default::default()
+        };
+        let store2 = InMemoryAnchorStore::with_seed(seed2);
+        assert_eq!(
+            store2.node_count().unwrap(),
+            2,
+            "candidate bucket'lar seed'lendi"
+        );
     }
 }

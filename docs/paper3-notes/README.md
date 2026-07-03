@@ -17,7 +17,9 @@ Paper 2'nin `paper2-notes/` pattern'ini izler (README + stage dosyaları + evide
 | Faz 3b-c | ⏸️ Ertelendi | KuzuDB arşivlendi (Ekim 2025, Apple satın alma) — successor projeler olgunlaşınca |
 | **Faz 4** | ✅ Tamamlandı | Code evidence integration — CodeEvidenceProvider trait + evidence-gated ImplementedBy + INV-C6 type-level |
 | Faz 4.1 | Planlandı | PositionSnapshot/HasPosition graph wiring (Faz 4'ten ayrıldı) |
-| Faz 5 | Planlandı | Task/Predicate integration → Paper 2 navigator bridge |
+| **Faz 5a** | ✅ PR33a | PredicateStub bridge — TaskCandidate lane + RuleCandidate→PredicateStub + INV-P1 type-level |
+| Faz 5b | Planlandı | Navigator bridge + executable predicate template'leri + Task genesis (OperatorCapability) |
+| Faz 5.1 | Planlandı | Cross-family translation (ConceptualIntent→PhysicalCode) olgunlaştırma |
 | Faz 6 | Planlandı | Concept Synthesis (code repo → concept hipotezleri) |
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
@@ -38,6 +40,7 @@ Mekanizma önce deterministic olarak kanıtlanır, stochastic katmanlar sonra ek
 - [`faz2-invariant-hardening.md`](faz2-invariant-hardening.md) — Faz 2 type-level enforcement evidence
 - [`faz3a-anchorstore-trait.md`](faz3a-anchorstore-trait.md) — Faz 3a AnchorStore trait + serde boundary
 - [`faz4-code-evidence.md`](faz4-code-evidence.md) — Faz 4 CodeEvidenceProvider + evidence-gated ImplementedBy + INV-C6
+- [`faz5a-predicate-stub-bridge.md`](faz5a-predicate-stub-bridge.md) — Faz 5a PredicateStub bridge + TaskCandidate lane + INV-P1
 
 ## Evidence
 

@@ -45,6 +45,13 @@ struct FixtureGiven {
     decisions: Vec<GivenDecision>,
     #[serde(default)]
     code_entities: Vec<GivenCodeEntity>,
+    /// Faz 5a — candidate node bucket'ları (Patch 6, backward-compat).
+    #[serde(default)]
+    rule_candidates: Vec<GivenCodeEntity>,
+    #[serde(default)]
+    task_candidates: Vec<GivenCodeEntity>,
+    #[serde(default)]
+    risk_candidates: Vec<GivenCodeEntity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

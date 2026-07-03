@@ -134,6 +134,26 @@ impl<'a> Extractor<'a> {
             ));
         }
 
+        // 5. Faz 5a — TaskCandidate türetme (Patch 7: task signal + typed ref).
+        // Deterministic trigger: `has_task_signal` ("görev"/"task"/"yapılmalı" vb.)
+        // VE cümlede typed `TaskCandidate:<Name>` ref varsa → DerivesTask.
+        // Doğal dilden task adı türetme (derive_task_name) PR33a dışı — NLP'ye kayar.
+        // typed ref yoksa task üretme (lane canlı ama NLP-free).
+        if self.classifier.has_task_signal(&packet.text) {
+            if let Some(task_name) = self.find_typed_task_ref(&packet.text) {
+                let target = ConceptNodeId(format!("TaskCandidate:{task_name}"));
+                candidates.push(ExtractedAnchorCandidate::new(
+                    packet.id.clone(),
+                    target,
+                    ConceptEdgeKind::DerivesTask,
+                    Some(NonEmptyExplanation::from_validated(format!(
+                        "Task derived from: {}",
+                        packet.text
+                    ))),
+                ));
+            }
+        }
+
         // 5. AntiGoalOf — packet type AntiGoal ise mevcut Concept'e
         if matches!(
             packet.packet_type,
@@ -176,6 +196,23 @@ impl<'a> Extractor<'a> {
             || text_lower.contains("implemente edilir")
             || text_lower.contains("tarafından implemente")
             || text_lower.contains("implement eder.")
+    }
+
+    /// Faz 5a — cümlede typed `TaskCandidate:<Name>` ref ara (Patch 7).
+    ///
+    /// PR33a disiplini: task signal + typed ref birlikte. Doğal dilden task adı
+    /// türetme yok — sadece explicit `TaskCandidate:AuthServiceRefactor` gibi ref.
+    /// İlk eşleşen task adını döner; yoksa None (→ task üretme).
+    fn find_typed_task_ref(&self, text: &str) -> Option<String> {
+        for word in text.split_whitespace() {
+            let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '_');
+            if let Some(r) = TypedNodeRef::parse(cleaned) {
+                if matches!(r.kind, ConceptNodeKind::TaskCandidate) {
+                    return Some(r.name);
+                }
+            }
+        }
+        None
     }
 
     fn derive_rule_name(&self, text: &str) -> String {
@@ -335,5 +372,73 @@ mod tests {
         );
         let cands = ex.extract(&pkt, &ConceptGraph::new());
         assert!(cands.is_empty(), "glossary/rule/risk match yok → boş");
+    }
+
+    // ── Faz 5a (T9): DerivesTask extraction ───────────────────────────────────
+
+    #[test]
+    fn extract_derives_task_with_signal_and_typed_ref() {
+        // Patch 7: task signal ("görev") + typed TaskCandidate:Refactor ref → DerivesTask.
+        let g = Glossary::seed_default();
+        let c = Classifier::new();
+        let ex = Extractor::new(&g, &c);
+        let pkt = make_packet(
+            "TaskCandidate:AuthServiceRefactor görev olarak planlanmalı.",
+            ConceptPacketType::UserVision,
+        );
+        let cands = ex.extract(&pkt, &ConceptGraph::new());
+        let task_cand = cands
+            .iter()
+            .find(|c| c.edge_kind == ConceptEdgeKind::DerivesTask);
+        assert!(
+            task_cand.is_some(),
+            "task signal + typed ref → DerivesTask üretilmeli"
+        );
+        let tc = task_cand.unwrap();
+        assert_eq!(tc.target_node_id.0, "TaskCandidate:AuthServiceRefactor");
+        // INV-C7: high-stake → explanation zorunlu
+        assert!(tc.explanation.is_some());
+    }
+
+    #[test]
+    fn extract_no_derives_task_without_typed_ref() {
+        // Patch 7: task signal var ama typed TaskCandidate: ref yok → task üretme.
+        // Doğal dilden task adı türetme yok (NLP PR33a dışı).
+        let g = Glossary::seed_default();
+        let c = Classifier::new();
+        let ex = Extractor::new(&g, &c);
+        let pkt = make_packet(
+            "Ödeme modülü refactor edilmeli bir görev olarak.",
+            ConceptPacketType::UserVision,
+        );
+        let cands = ex.extract(&pkt, &ConceptGraph::new());
+        let has_task = cands
+            .iter()
+            .any(|c| c.edge_kind == ConceptEdgeKind::DerivesTask);
+        assert!(
+            !has_task,
+            "typed TaskCandidate: ref yok → DerivesTask üretilmez (Patch 7)"
+        );
+    }
+
+    #[test]
+    fn extract_no_derives_task_with_typed_ref_but_no_task_signal() {
+        // D2 review patch: typed TaskCandidate: ref VAR ama task signal YOK → DerivesTask
+        // üretilmez. D2 bug'ı: "task" substring `TaskCandidate:Foo` içinde geçer →
+        // yanlış task signal. Fix: "task" token-based eşleşme. Bu test fix'i doğrular.
+        let g = Glossary::seed_default();
+        let c = Classifier::new();
+        let ex = Extractor::new(&g, &c);
+        let pkt = make_packet(
+            "TaskCandidate:AuthServiceRefactor sadece referans olarak geçti.",
+            ConceptPacketType::UserVision,
+        );
+        let cands = ex.extract(&pkt, &ConceptGraph::new());
+        assert!(
+            !cands
+                .iter()
+                .any(|c| c.edge_kind == ConceptEdgeKind::DerivesTask),
+            "typed TaskCandidate ref tek başına DerivesTask üretmemeli (D2 fix)"
+        );
     }
 }

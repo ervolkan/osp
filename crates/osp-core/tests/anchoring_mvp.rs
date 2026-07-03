@@ -45,6 +45,13 @@ struct FixtureGiven {
     decisions: Vec<GivenDecision>,
     #[serde(default)]
     code_entities: Vec<GivenCodeEntity>,
+    /// Faz 5a — candidate bucket'ları (Patch 6, backward-compat).
+    #[serde(default)]
+    rule_candidates: Vec<GivenCodeEntity>,
+    #[serde(default)]
+    task_candidates: Vec<GivenCodeEntity>,
+    #[serde(default)]
+    risk_candidates: Vec<GivenCodeEntity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -149,6 +156,14 @@ const FIXTURE_FILES: &[(&str, &str)] = &[
         "fix_011_implemented_by_with_evidence",
         include_str!("fixtures/anchoring/fix_011_implemented_by_with_evidence.json"),
     ),
+    (
+        "fix_012_task_candidate_derivation",
+        include_str!("fixtures/anchoring/fix_012_task_candidate_derivation.json"),
+    ),
+    (
+        "fix_013_rule_to_predicate_stub",
+        include_str!("fixtures/anchoring/fix_013_rule_to_predicate_stub.json"),
+    ),
 ];
 
 fn load_fixture(name: &str) -> AnchoringFixture {
@@ -217,6 +232,40 @@ fn graph_seed_from_given(given: &FixtureGiven) -> GraphSeed {
             position_family: PositionFamily::ConceptualIntent,
         });
     }
+    // Faz 5a — candidate bucket'ları (Patch 6).
+    for rc in &given.rule_candidates {
+        let (kind, _) = parse_node_kind(&rc.id);
+        seed.rule_candidates.push(ConceptNode {
+            id: ConceptNodeId(rc.id.clone()),
+            canonical: rc.id.split(':').nth(1).unwrap_or(&rc.id).to_string(),
+            aliases: Vec::new(),
+            node_kind: kind,
+            decision_status: status_from_str(&rc.status),
+            position_family: PositionFamily::ConceptualIntent,
+        });
+    }
+    for tc in &given.task_candidates {
+        let (kind, _) = parse_node_kind(&tc.id);
+        seed.task_candidates.push(ConceptNode {
+            id: ConceptNodeId(tc.id.clone()),
+            canonical: tc.id.split(':').nth(1).unwrap_or(&tc.id).to_string(),
+            aliases: Vec::new(),
+            node_kind: kind,
+            decision_status: status_from_str(&tc.status),
+            position_family: PositionFamily::ConceptualIntent,
+        });
+    }
+    for rsc in &given.risk_candidates {
+        let (kind, _) = parse_node_kind(&rsc.id);
+        seed.risk_candidates.push(ConceptNode {
+            id: ConceptNodeId(rsc.id.clone()),
+            canonical: rsc.id.split(':').nth(1).unwrap_or(&rsc.id).to_string(),
+            aliases: Vec::new(),
+            node_kind: kind,
+            decision_status: status_from_str(&rsc.status),
+            position_family: PositionFamily::ConceptualIntent,
+        });
+    }
     seed
 }
 
@@ -260,7 +309,7 @@ fn anchor_mvp_runs_all_fixtures() {
             Err(e) => panic!("fixture {}: beklenmeyen hata: {:?}", f.id, e),
         }
     }
-    assert_eq!(ran, 11, "tüm 11 fixture işlenmeli");
+    assert_eq!(ran, 13, "tüm 13 fixture işlenmeli");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

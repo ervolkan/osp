@@ -1,0 +1,52 @@
+{
+  "schema_version": "anchoring.fixture.v1",
+  "id": "fix_012_task_candidate_derivation",
+  "invariants": ["INV-C3"],
+  "given": {
+    "concepts": [
+      {
+        "id": "Concept:PaymentRefactor",
+        "canonical": "PaymentRefactor",
+        "aliases": ["ödeme refactor", "payment refactor"],
+        "decision_status": "Accepted"
+      }
+    ],
+    "decisions": [],
+    "code_entities": [],
+    "rule_candidates": [],
+    "task_candidates": [],
+    "risk_candidates": []
+  },
+  "input": {
+    "text": "TaskCandidate:AuthServiceRefactor görev olarak planlanmalı ve yapılmalı.",
+    "language": "tr"
+  },
+  "expected": {
+    "packet_type": "UserVision",
+    "concepts": ["PaymentRefactor"],
+    "edges": [
+      { "kind": "Mentions", "target": "Concept:PaymentRefactor", "requires_explanation": false },
+      { "kind": "DerivesTask", "target": "TaskCandidate:AuthServiceRefactor", "requires_explanation": true }
+    ],
+    "decision_status": "Candidate",
+    "position_family": "ConceptualIntent",
+    "requires_operator_review": true,
+    "anchor_decision": "RequireOperatorReview",
+    "threshold_band": "Tentative",
+    "negative_assertions": [
+      "Accepted TaskCandidate ≠ trajectory::Task — PR33a anchoring içinde kalır, navigator'a bağlanmaz (INV-T2)",
+      "DerivesTask sadece task signal + typed TaskCandidate: ref ile üretilir — doğal dilden task adı türetme yok (Patch 7)"
+    ]
+  },
+  "score": {
+    "_comment": "Faz 5a: DerivesTask lane canlı — task signal + typed ref",
+    "semantic_similarity": 0.0,
+    "ontology_type_compatibility": 1.0,
+    "graph_context_score": null,
+    "domain_term_match": 1.0,
+    "code_evidence_score": null,
+    "temporal_trust_score": null,
+    "decision_status_score": null
+  },
+  "notes": "Faz 5a pozitif TaskCandidate derivation fixture'ı. Deterministic trigger (Patch 7): has_task_signal ('görev'/'yapılmalı') + typed TaskCandidate:AuthServiceRefactor ref (find_typed_task_ref). Extractor DerivesTask candidate üretir; apply_plan TaskCandidate node yaratır (Candidate, INV-C5). NOT: Accepted TaskCandidate trajectory::Task yaratmaz (Patch 4/5 — INV-T2 boundary); Task genesis PR33b'ye (OperatorCapability)."
+}

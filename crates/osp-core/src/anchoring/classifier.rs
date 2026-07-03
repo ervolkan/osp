@@ -190,6 +190,32 @@ impl Classifier {
         let lower = text.to_lowercase();
         matches_any(&lower, RULE_MARKERS)
     }
+
+    /// Task sinyali var mı (Faz 5a — DerivesTask için). Packet type'dan bağımsız.
+    /// PR33a'da task signal + typed `TaskCandidate:<Name>` ref birlikte gerekir
+    /// (extractor). Doğal dilden task adı türetme PR33a dışı.
+    ///
+    /// # Review patch (D2): `"task"` token-based eşleşme
+    /// `"task"` substring aramak `TaskCandidate:Foo` typed ref'i yanlışlıkla task
+    /// signal sayar (lowercase `taskcandidate` içinde `"task"` substring var). Bu
+    /// yüzden `"task"` token olarak aranır (word boundary); TR marker'lar substring
+    /// kalır (ekler için: "görevler", "yapılmalılar" vb.). Böylece typed ref tek
+    /// başına DerivesTask üretmez — Patch 7 ikili koşul korunur.
+    pub fn has_task_signal(&self, text: &str) -> bool {
+        let lower = text.to_lowercase();
+        // TR marker'lar substring (ek toleransı).
+        if lower.contains("görev")
+            || lower.contains("yapılmalı")
+            || lower.contains("implement edilmeli")
+            || lower.contains("geliştirilmeli")
+        {
+            return true;
+        }
+        // "task" token-based — `taskcandidate` içinde geçen "task" eşleşmemeli.
+        lower
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|tok| tok == "task")
+    }
 }
 
 fn matches_any(text: &str, markers: &[&str]) -> bool {
@@ -269,6 +295,14 @@ const RULE_MARKERS: &[&str] = &[
 // Risk *türetme* sinyalleri (güven bağlamı — "güvende hissetmeli" → DerivesRisk).
 // Not: bunlar packet type Risk YAPMAZ, UserVision kalır + DerivesRisk edge.
 const RISK_SIGNAL_MARKERS: &[&str] = &["güven", "hissetmeli", "risk", "tehlike", "güvenlik"];
+
+// Task *türetme* sinyalleri (Faz 5a — DerivesTask için). Packet type'dan bağımsız.
+// Not: PR33a'da task signal + typed TaskCandidate:<Name> ref birlikte ister (extractor).
+// Doğal dilden task adı türetme (NLP) PR33a dışı — typed ref zorunlu.
+//
+// D2 review patch: marker listesi `has_task_signal` içine inline edildi. `"task"`
+// token-based eşleşir (substring değil) — `TaskCandidate:Foo` typed ref'i yanlışlıkla
+// task signal saymasın diye. TR marker'lar substring (ek toleransı: "görevler" vb.).
 
 #[cfg(test)]
 mod tests {
@@ -372,5 +406,45 @@ mod tests {
         let aliases = g.aliases_of("Payment");
         assert!(aliases.contains(&"ödeme".to_string()));
         assert!(aliases.contains(&"checkout".to_string()));
+    }
+
+    // ── Faz 5a (T9): has_task_signal ──────────────────────────────────────────
+
+    #[test]
+    fn task_signal_detects_markers() {
+        let c = cls();
+        assert!(c.has_task_signal("Bu bir görev olarak planlanmalı."));
+        assert!(c.has_task_signal("AuthServiceRefactor task olarak işaretlendi."));
+        assert!(c.has_task_signal("Bu özellik yapılmalı."));
+        assert!(c.has_task_signal("Modül implement edilmeli."));
+    }
+
+    #[test]
+    fn task_signal_absent_without_markers() {
+        let c = cls();
+        assert!(!c.has_task_signal("Ödeme modülü yüksek coupling'e sahip."));
+        assert!(!c.has_task_signal("Bu bir görüştür."));
+        assert!(!c.has_task_signal("Belki hafta sonu bakarız."));
+    }
+
+    #[test]
+    fn task_signal_typed_ref_alone_is_not_signal() {
+        // D2 review patch: "task" token-based — TaskCandidate:Foo typed ref tek başına
+        // task signal sayılmaz. lowercase "taskcandidate:foo" → "task" substring var
+        // AMA token split sonrası "taskcandidate" token'i "task" != eşit.
+        let c = cls();
+        assert!(
+            !c.has_task_signal("TaskCandidate:AuthServiceRefactor sadece referans."),
+            "typed ref tek başına task signal değil (D2 fix)"
+        );
+        assert!(
+            !c.has_task_signal("TaskCandidate:SomeTask"),
+            "TaskCandidate:X → 'task' substring ama token değil"
+        );
+        // Ama gerçek "task" token'i signal sayılır.
+        assert!(
+            c.has_task_signal("Bu bir task olarak planlandı."),
+            " gerçek 'task' token → signal"
+        );
     }
 }
