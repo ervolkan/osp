@@ -35,4 +35,7 @@ fn type_level_invariants_compile_fail() {
     // Faz 5a — INV-P1 (predicate stub type-level)
     t.compile_fail("tests/compile_fail/cP1_predicate_stub_literal.rs");
     t.compile_fail("tests/compile_fail/cP1_predicate_stub_deserialize.rs");
+    // Faz 5b — INV-P2 (executable predicate set type-level)
+    t.compile_fail("tests/compile_fail/cP2_executable_predicate_set_literal.rs");
+    t.compile_fail("tests/compile_fail/cP2_executable_predicate_set_deserialize.rs");
 }

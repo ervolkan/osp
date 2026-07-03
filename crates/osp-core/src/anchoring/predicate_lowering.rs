@@ -95,6 +95,166 @@ pub enum PredicateStubReason {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5b — PhysicalCodeMetricAxis (Patch 5: aileyi açık eden isim)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// PhysicalCode metric ekseni — Paper 1'in ölçülebilir fiziksel eksenleri (Patch 5).
+///
+/// `trajectory::PredicateAxis` yerine Faz 5b'de kullanılır çünkü:
+/// - **Cross-family riskini type-level vurgular** (ConceptualIntent → PhysicalCode).
+/// - PhysicalCode subset'i (Coupling/Cohesion/Instability/Entropy/WitnessDepth) sınırlar;
+///   `RiskScore`/`MainSequenceDistance`/`Custom` derived eksenler Faz 5.1'e.
+/// - `bind_metric_threshold` axis mismatch kontrolü (Kontrol 5) bu tip ile yapılır.
+///
+/// INV-P2: keyword hint bu ekseni önerebilir, ama executable predicate için operator
+/// binding zorunlu. *"A conceptual rule may suggest a physical metric, but only bound
+/// slots can create an executable predicate."*
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum PhysicalCodeMetricAxis {
+    Coupling,
+    Cohesion,
+    Instability,
+    Entropy,
+    WitnessDepth,
+}
+
+impl PhysicalCodeMetricAxis {
+    /// `trajectory::PredicateAxis`'e map (Faz 5b PhysicalCode subset).
+    pub fn to_predicate_axis(self) -> crate::trajectory::PredicateAxis {
+        match self {
+            Self::Coupling => crate::trajectory::PredicateAxis::Coupling,
+            Self::Cohesion => crate::trajectory::PredicateAxis::Cohesion,
+            Self::Instability => crate::trajectory::PredicateAxis::Instability,
+            Self::Entropy => crate::trajectory::PredicateAxis::Entropy,
+            Self::WitnessDepth => crate::trajectory::PredicateAxis::WitnessDepth,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5b — NormalizedMetricThreshold (Patch 3: [0,1] range-checked newtype)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Normalize edilmiş physical coordinate threshold `[0,1]` (Patch 3 + D1 öneri 3 isim).
+///
+/// Paper 1 eksenleri (coupling/cohesion/instability/entropy) normalize edilmiştir;
+/// WitnessDepth gibi raw değer eksenleri için gelecekte ayrı tip (Faz 5.1). Şimdilik
+/// `[0,1]` yeterli — `EvidenceStrength`/`ScalarSimilarity` paterni (is_finite + range).
+///
+/// # INV-P2 serde hijyeni
+/// Custom `Deserialize` — `serde_json::from_str("2.0")` reject. Constructor bypass
+/// edilemez (EvidenceStrength/ScalarSimilarity ile aynı standard).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalizedMetricThreshold(f64);
+
+impl NormalizedMetricThreshold {
+    /// `[0,1]` range-check + finiteness. NaN, ±∞, negatif, >1 → error.
+    pub fn new(value: f64) -> Result<Self, NormalizedMetricThresholdError> {
+        if value.is_finite() && (0.0..=1.0).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(NormalizedMetricThresholdError { value })
+        }
+    }
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+}
+
+impl serde::Serialize for NormalizedMetricThreshold {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for NormalizedMetricThreshold {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        NormalizedMetricThreshold::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `NormalizedMetricThreshold` değer aralığı dışı hatası.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NormalizedMetricThresholdError {
+    pub value: f64,
+}
+
+impl std::fmt::Display for NormalizedMetricThresholdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "NormalizedMetricThreshold [0,1] dışı veya non-finite: {} (INV-P2)",
+            self.value
+        )
+    }
+}
+
+impl std::error::Error for NormalizedMetricThresholdError {}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5b — MetricThresholdBinding (Patch 4: private + smart ctor)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Operator-bound MetricThreshold slot binding (Patch 4 — private fields + smart ctor).
+///
+/// PredicateStub'un Metric/Threshold/Scope/Comparator slot'larını bağlar → ExecutablePredicateSet.
+/// Faz 4/5a paterni: private fields + `new()` smart constructor. Literal construct engelli.
+///
+/// # INV-P2
+/// Sadece `bind_metric_threshold(stub, binding, cap)` ile executable predicate üretir.
+/// Axis, stub'ın `suggested_axis` ile uyuşmalı (Kontrol 5 — mismatch reject).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricThresholdBinding {
+    axis: PhysicalCodeMetricAxis,
+    scope: crate::trajectory::PredicateScope,
+    comparator: crate::trajectory::ComparisonOp,
+    threshold: NormalizedMetricThreshold,
+}
+
+impl MetricThresholdBinding {
+    /// Public smart constructor (Patch 4). Tüm slot'lar operator tarafından bağlanır.
+    pub fn new(
+        axis: PhysicalCodeMetricAxis,
+        scope: crate::trajectory::PredicateScope,
+        comparator: crate::trajectory::ComparisonOp,
+        threshold: NormalizedMetricThreshold,
+    ) -> Self {
+        Self {
+            axis,
+            scope,
+            comparator,
+            threshold,
+        }
+    }
+    pub fn axis(&self) -> PhysicalCodeMetricAxis {
+        self.axis
+    }
+    pub fn scope(&self) -> &crate::trajectory::PredicateScope {
+        &self.scope
+    }
+    pub fn comparator(&self) -> crate::trajectory::ComparisonOp {
+        self.comparator
+    }
+    pub fn threshold(&self) -> NormalizedMetricThreshold {
+        self.threshold
+    }
+}
+
+/// `bind_metric_threshold` hatası (INV-P2 — executable predicate boundary).
+#[derive(Debug, Clone, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "payload")]
+pub enum BindingError {
+    #[error("stub MetricThreshold template önermiyor — bind edilemez")]
+    TemplateNotSuggested,
+    #[error("axis mismatch: stub {stub_axis:?}, binding {binding_axis:?}")]
+    AxisMismatch {
+        stub_axis: Option<PhysicalCodeMetricAxis>,
+        binding_axis: PhysicalCodeMetricAxis,
+    },
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // PredicateStub — structured uncertainty (Patch 1/2, Faz 4 ObservedCodeEvidence paterni)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -122,6 +282,10 @@ pub struct PredicateStub {
     reason: PredicateStubReason,
     unresolved_slots: Vec<PredicateSlot>,
     suggested_templates: Vec<PredicateTemplateId>,
+    /// Faz 5b — PhysicalCode axis hint (cross-family translation, INV-P2).
+    /// `None` = hint yok. `bind_metric_threshold` axis mismatch kontrolü (Kontrol 5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggested_axis: Option<PhysicalCodeMetricAxis>,
 }
 
 /// `PredicateStub::new` consistency hatası (Patch 2).
@@ -135,18 +299,29 @@ pub enum PredicateStubError {
 }
 
 impl PredicateStub {
-    /// Public smart constructor — Patch 2 consistency kontrolü.
+    /// Public smart constructor — Patch 2 consistency kontrolü (PR33a API, backward-compat).
     ///
-    /// # Non-empty invariant
-    /// - `unresolved_slots` boş VE `reason != NoTemplateMatch` → hata (stub boş).
-    /// - `reason == NoTemplateMatch` VE `suggested_templates` dolu → hata (çelişki).
-    /// - `reason == NoTemplateMatch` VE `suggested_templates` boş → tek geçerli yol
-    ///   (rule'un hiçbir template'e uymadığı durum).
+    /// Faz 5b (Kontrol 6): axis hint olmadan — `new_with_axis_hint(..., None)`'e delegate.
+    /// PR33a callers bu imzayı kullanmaya devam eder.
     pub fn new(
         rule_id: ConceptNodeId,
         reason: PredicateStubReason,
         unresolved_slots: Vec<PredicateSlot>,
         suggested_templates: Vec<PredicateTemplateId>,
+    ) -> Result<Self, PredicateStubError> {
+        Self::new_with_axis_hint(rule_id, reason, unresolved_slots, suggested_templates, None)
+    }
+
+    /// Faz 5b — axis hint ile constructor (Kontrol 6, cross-family translation INV-P2).
+    ///
+    /// `lower_rule_to_predicate_stub` PR33b'de "coupling" gibi keyword'lere PhysicalCode
+    /// axis hint ekler. `bind_metric_threshold` axis mismatch kontrolü (Kontrol 5) için.
+    pub fn new_with_axis_hint(
+        rule_id: ConceptNodeId,
+        reason: PredicateStubReason,
+        unresolved_slots: Vec<PredicateSlot>,
+        suggested_templates: Vec<PredicateTemplateId>,
+        suggested_axis: Option<PhysicalCodeMetricAxis>,
     ) -> Result<Self, PredicateStubError> {
         if unresolved_slots.is_empty() && !matches!(reason, PredicateStubReason::NoTemplateMatch) {
             return Err(PredicateStubError::EmptyUnresolvedSlots);
@@ -160,6 +335,7 @@ impl PredicateStub {
             reason,
             unresolved_slots,
             suggested_templates,
+            suggested_axis,
         })
     }
 
@@ -174,6 +350,10 @@ impl PredicateStub {
     }
     pub fn suggested_templates(&self) -> &[PredicateTemplateId] {
         &self.suggested_templates
+    }
+    /// Faz 5b — PhysicalCode axis hint (None = hint yok).
+    pub fn suggested_axis(&self) -> Option<PhysicalCodeMetricAxis> {
+        self.suggested_axis
     }
 
     /// Çözülmüş slot oranı `[0,1]` (D2 öneri 1, Patch 4 sabit formül).
@@ -253,12 +433,27 @@ pub fn lower_rule_to_predicate_stub(
 
     // Deterministic keyword → suggested_templates (öneri, executable değil).
     let mut suggested: Vec<PredicateTemplateId> = Vec::new();
-    if canonical_lower.contains("coupling")
-        || canonical_lower.contains("cohesion")
-        || canonical_lower.contains("instability")
-        || canonical_lower.contains("bağıml")
-    {
+    // Eksen keyword'lerini ayrı topla — çoklu eksen tespiti için (INV-P2: belirsiz → None).
+    let mut detected_axes: Vec<PhysicalCodeMetricAxis> = Vec::new();
+    if canonical_lower.contains("coupling") || canonical_lower.contains("bağıml") {
         suggested.push(PredicateTemplateId::MetricThreshold);
+        detected_axes.push(PhysicalCodeMetricAxis::Coupling);
+    }
+    if canonical_lower.contains("cohesion") {
+        suggested.push(PredicateTemplateId::MetricThreshold);
+        detected_axes.push(PhysicalCodeMetricAxis::Cohesion);
+    }
+    if canonical_lower.contains("instability") {
+        suggested.push(PredicateTemplateId::MetricThreshold);
+        detected_axes.push(PhysicalCodeMetricAxis::Instability);
+    }
+    if canonical_lower.contains("entropy") {
+        suggested.push(PredicateTemplateId::MetricThreshold);
+        detected_axes.push(PhysicalCodeMetricAxis::Entropy);
+    }
+    if canonical_lower.contains("witness") {
+        suggested.push(PredicateTemplateId::MetricThreshold);
+        detected_axes.push(PhysicalCodeMetricAxis::WitnessDepth);
     }
     if canonical_lower.contains("decrease")
         || canonical_lower.contains("reduce")
@@ -267,18 +462,25 @@ pub fn lower_rule_to_predicate_stub(
     {
         suggested.push(PredicateTemplateId::MetricDelta);
     }
-    if canonical_lower.contains("evidence")
-        || canonical_lower.contains("kanıt")
-        || canonical_lower.contains("witness")
-    {
+    if canonical_lower.contains("evidence") || canonical_lower.contains("kanıt") {
         suggested.push(PredicateTemplateId::EvidenceRequired);
     }
-    if canonical_lower.contains("implement")
-        || canonical_lower.contains("implemente")
-        || canonical_lower.contains("relation")
-    {
+    if canonical_lower.contains("implement") || canonical_lower.contains("implemente") {
         suggested.push(PredicateTemplateId::RelationExists);
     }
+    // Dedup (coupling + cohesion aynı cümlede → MetricThreshold iki kez eklenmesin).
+    suggested.dedup();
+    detected_axes.dedup();
+
+    // Faz 5b (INV-P2): MetricThreshold axis hint sadece tek bir eksen tespit edildiyse
+    // ve MetricThreshold tek başına önerildiyse anlamlı. Çoklu/belirsiz axis → None
+    // (operator kendi bağlar, mismatch reject). Diğer template'lerle karışık → None.
+    let suggested_axis =
+        if suggested == vec![PredicateTemplateId::MetricThreshold] && detected_axes.len() == 1 {
+            detected_axes.first().copied()
+        } else {
+            None
+        };
 
     // Tüm slot'lar unresolved (operator bağlayacak — PR33b). Metric/Threshold/Scope/
     // Comparator hepsi net değil; sadece template önerildi. NoTemplateMatch durumunda
@@ -287,8 +489,6 @@ pub fn lower_rule_to_predicate_stub(
     let reason = if suggested.is_empty() {
         PredicateStubReason::NoTemplateMatch
     } else {
-        // Template önerildi ama slot'lar unresolved — MetricUnresolved en genel.
-        // (Diğer reason'lar PR33b'de slot-specific lowering ile ayrışır.)
         PredicateStubReason::MetricUnresolved
     };
 
@@ -303,15 +503,109 @@ pub fn lower_rule_to_predicate_stub(
         ]
     };
 
-    let stub = PredicateStub::new(
+    let stub = PredicateStub::new_with_axis_hint(
         rule_candidate.id.clone(),
         reason,
         unresolved_slots,
         suggested,
+        suggested_axis,
     )
     .map_err(PredicateLoweringError::InvalidStub)?;
 
     Ok(PredicateLoweringOutcome::Stub(stub))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5b — ExecutablePredicateSet + bind_metric_threshold (INV-P1b, INV-P2)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Slot'ları bağlanmış, engine-measured koordinat üzerinde doğrulanabilir predicate set
+/// (INV-P1b — PredicateStub'dan slot binding ile üretilir).
+///
+/// # Boundary (Patch 1, Kontrol 2)
+/// - **Private inner** `trajectory::PredicateSet` + accessor. Literal construct engelli.
+/// - **Tek üretim yolu** `bind_metric_threshold()` — public `new_empty()` YOK.
+/// - **Non-empty by construction** — `bind_metric_threshold` her zaman ≥1 predicate üretir.
+/// - **Serialize-only** (audit). Deserialize YOK — yeniden apply edilememeli (PR30/Faz4/5a
+///   serde boundary paterni).
+///
+/// # INV-P2
+/// *"A conceptual rule may suggest a physical metric, but only bound slots can create an
+/// executable predicate."* — ExecutablePredicateSet, keyword hint değil, operator-bound
+/// slot'ların sonucudur.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ExecutablePredicateSet {
+    predicate_set: crate::trajectory::PredicateSet,
+}
+
+impl ExecutablePredicateSet {
+    /// trajectory::PredicateSet'e dönüştür (create_task_from_accepted_candidate içeren).
+    /// Consumes self — ExecutablePredicateSet bir kez kullanılır.
+    pub fn into_trajectory_predicate_set(self) -> crate::trajectory::PredicateSet {
+        self.predicate_set
+    }
+}
+
+/// PredicateStub + operator-bound MetricThresholdBinding → ExecutablePredicateSet (INV-P1b).
+///
+/// # Üç kapılı API'nin 2. kapısı (D1/D2)
+/// - **OperatorCapability-gated** (Patch 2) — `cap` body'de kullanılmaz (compile-time
+///   token) ama imza zorunlu kılar. *"ExecutablePredicateSet operator capability olmadan doğmaz."*
+///
+/// # INV-P2 kontrolleri
+/// - **Template kontrolü (Kontrol 4)**: stub MetricThreshold template önermiyorsa →
+///   `TemplateNotSuggested`. Her PredicateStub MetricThreshold'a bind edilemez.
+/// - **Axis mismatch kontrolü (Kontrol 5)**: stub'ın `suggested_axis` binding.axis ile
+///   uyuşmuyorsa → `AxisMismatch`. Operator override Faz 5.1/Faz 8.
+/// - **Non-empty (Kontrol 2)**: her zaman ≥1 WeightedPredicate üretir.
+///
+/// # keyword ≠ executable
+/// "coupling azaltılmalı" → stub axis hint Coupling önerir, ama threshold/scope/comparator
+/// hâlâ operator-bound. Bu fonksiyon çağrılınca executable olur.
+pub fn bind_metric_threshold(
+    stub: &PredicateStub,
+    binding: MetricThresholdBinding,
+    _cap: &crate::trajectory::OperatorCapability,
+) -> Result<ExecutablePredicateSet, BindingError> {
+    // Kontrol 4: MetricThreshold template önerilmeli.
+    if !stub
+        .suggested_templates()
+        .contains(&PredicateTemplateId::MetricThreshold)
+    {
+        return Err(BindingError::TemplateNotSuggested);
+    }
+    // Kontrol 5: axis hint mismatch. Stub axis varsa binding ile uyuşmalı.
+    // Stub axis None (çoklu/belirsiz) → operator herhangi bir axis bağlayabilir.
+    if let Some(stub_axis) = stub.suggested_axis() {
+        if stub_axis != binding.axis() {
+            return Err(BindingError::AxisMismatch {
+                stub_axis: Some(stub_axis),
+                binding_axis: binding.axis(),
+            });
+        }
+    }
+
+    // MetricThreshold → trajectory::MetricPredicate (tüm slot'lar bağlanmış).
+    let metric_predicate = crate::trajectory::MetricPredicate {
+        metric: binding.axis().to_predicate_axis(),
+        operator: binding.comparator(),
+        threshold: binding.threshold().get(),
+        scope: binding.scope().clone(),
+        // INV-T4: Scip zorunlu — placeholder/heuristic ile task kapatma engellenir.
+        required_source: Some(crate::coords::MetricSource::Scip),
+        tolerance: 0.0,
+    };
+    let weighted = crate::trajectory::WeightedPredicate {
+        predicate: metric_predicate,
+        weight: None,
+    };
+    let predicate_set = crate::trajectory::PredicateSet {
+        mode: crate::trajectory::PredicateMode::All,
+        predicates: vec![weighted],
+        preferred_vector: None,
+    };
+
+    Ok(ExecutablePredicateSet { predicate_set })
 }
 
 #[cfg(test)]
@@ -511,5 +805,189 @@ mod tests {
                 "PR33a her zaman Stub: {canonical}"
             );
         }
+    }
+
+    // ── Faz 5b (T8): axis hint lowering + bind_metric_threshold ────────────────
+
+    #[test]
+    fn lowering_coupling_rule_suggests_coupling_axis() {
+        // T5: "coupling" keyword → MetricThreshold + axis hint Coupling.
+        let rule = rule_candidate("NoHighCouplingDependency");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                assert!(stub
+                    .suggested_templates()
+                    .contains(&PredicateTemplateId::MetricThreshold));
+                assert_eq!(
+                    stub.suggested_axis(),
+                    Some(PhysicalCodeMetricAxis::Coupling),
+                    "coupling keyword → Coupling axis hint"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_cohesion_rule_suggests_cohesion_axis() {
+        let rule = rule_candidate("HighCohesionRequired");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                assert_eq!(
+                    stub.suggested_axis(),
+                    Some(PhysicalCodeMetricAxis::Cohesion)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_multi_axis_rule_has_no_axis_hint() {
+        // "coupling" + "cohesion" aynı cümlede → belirsiz, axis hint None.
+        let rule = rule_candidate("CouplingAndCohesionBalance");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                assert_eq!(
+                    stub.suggested_axis(),
+                    None,
+                    "çoklu axis → None (operator kendi bağlar)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bind_metric_threshold_produces_non_empty_executable_set() {
+        // Kontrol 2: bind her zaman ≥1 predicate üretir (non-empty by construction).
+        let stub = PredicateStub::new_with_axis_hint(
+            ConceptNodeId("RuleCandidate:NoHighCoupling".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![
+                PredicateSlot::Metric,
+                PredicateSlot::Threshold,
+                PredicateSlot::Scope,
+                PredicateSlot::Comparator,
+            ],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(PhysicalCodeMetricAxis::Coupling),
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Coupling,
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.55).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let eps = bind_metric_threshold(&stub, binding, &cap).unwrap();
+        // non-empty
+        let ps = eps.into_trajectory_predicate_set();
+        assert!(!ps.predicates.is_empty(), "non-empty by construction");
+        // Coupling ≤ 0.55
+        let pred = &ps.predicates[0].predicate;
+        assert_eq!(pred.metric, crate::trajectory::PredicateAxis::Coupling);
+        assert_eq!(pred.operator, crate::trajectory::ComparisonOp::Le);
+        assert!((pred.threshold - 0.55).abs() < 1e-9);
+        // INV-T4: Scip required_source
+        assert_eq!(
+            pred.required_source,
+            Some(crate::coords::MetricSource::Scip)
+        );
+    }
+
+    #[test]
+    fn bind_metric_threshold_rejects_non_metric_threshold_stub() {
+        // Kontrol 4: stub MetricThreshold önermiyorsa → TemplateNotSuggested.
+        let stub = PredicateStub::new(
+            ConceptNodeId("RuleCandidate:EvidenceOnly".into()),
+            PredicateStubReason::NoTemplateMatch,
+            vec![],
+            vec![], // NoTemplateMatch — MetricThreshold yok
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Coupling,
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.55).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let err = bind_metric_threshold(&stub, binding, &cap).unwrap_err();
+        assert_eq!(err, BindingError::TemplateNotSuggested);
+    }
+
+    #[test]
+    fn bind_metric_threshold_rejects_axis_mismatch() {
+        // Kontrol 5: stub axis Coupling, binding axis Cohesion → AxisMismatch.
+        let stub = PredicateStub::new_with_axis_hint(
+            ConceptNodeId("RuleCandidate:NoHighCoupling".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(PhysicalCodeMetricAxis::Coupling),
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Cohesion, // mismatch!
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.70).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let err = bind_metric_threshold(&stub, binding, &cap).unwrap_err();
+        assert!(matches!(err, BindingError::AxisMismatch { .. }));
+    }
+
+    #[test]
+    fn bind_metric_threshold_allows_any_axis_when_stub_has_no_hint() {
+        // Stub axis None (çoklu/belirsiz) → operator herhangi bir axis bağlayabilir.
+        let stub = PredicateStub::new_with_axis_hint(
+            ConceptNodeId("RuleCandidate:AbstractBalance".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            None, // no hint
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Instability, // operator seçti
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.40).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let eps = bind_metric_threshold(&stub, binding, &cap)
+            .expect("no hint → operator any axis allowed");
+        let ps = eps.into_trajectory_predicate_set();
+        assert_eq!(
+            ps.predicates[0].predicate.metric,
+            crate::trajectory::PredicateAxis::Instability
+        );
+    }
+
+    #[test]
+    fn normalized_metric_threshold_rejects_out_of_range() {
+        // Patch 3: [0,1] + is_finite — EvidenceStrength/ScalarSimilarity paterni.
+        assert!(NormalizedMetricThreshold::new(f64::NAN).is_err());
+        assert!(NormalizedMetricThreshold::new(f64::INFINITY).is_err());
+        assert!(NormalizedMetricThreshold::new(-0.01).is_err());
+        assert!(NormalizedMetricThreshold::new(1.01).is_err());
+        assert!(NormalizedMetricThreshold::new(0.0).is_ok());
+        assert!(NormalizedMetricThreshold::new(1.0).is_ok());
+        assert!(NormalizedMetricThreshold::new(0.55).is_ok());
+    }
+
+    #[test]
+    fn normalized_metric_threshold_serde_rejects_out_of_range() {
+        // Custom Deserialize — constructor bypass edilemez.
+        assert!(serde_json::from_str::<NormalizedMetricThreshold>("2.0").is_err());
+        assert!(serde_json::from_str::<NormalizedMetricThreshold>("-1.0").is_err());
+        // round-trip
+        let original = NormalizedMetricThreshold::new(0.55).unwrap();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: NormalizedMetricThreshold = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
     }
 }

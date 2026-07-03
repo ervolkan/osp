@@ -1,13 +1,15 @@
-error[E0451]: fields `rule_id`, `reason`, `unresolved_slots` and `suggested_templates` of struct `PredicateStub` are private
-  --> tests/compile_fail/cP1_predicate_stub_literal.rs:11:9
+error: cannot construct `PredicateStub` with struct literal syntax due to private fields
+  --> tests/compile_fail/cP1_predicate_stub_literal.rs:10:17
    |
 10 |     let _stub = PredicateStub {
-   |                 ------------- in this type
+   |                 ^^^^^^^^^^^^^
 11 |         rule_id: ConceptNodeId("RuleCandidate:X".into()),
-   |         ^^^^^^^ private field
+   |         ------------------------------------------------ private field
 12 |         reason: PredicateStubReason::MetricUnresolved,
-   |         ^^^^^^ private field
+   |         --------------------------------------------- private field
 13 |         unresolved_slots: vec![PredicateSlot::Metric],
-   |         ^^^^^^^^^^^^^^^^ private field
+   |         --------------------------------------------- private field
 14 |         suggested_templates: vec![PredicateTemplateId::MetricThreshold],
-   |         ^^^^^^^^^^^^^^^^^^^ private field
+   |         --------------------------------------------------------------- private field
+   |
+   = note: ...and other private field `suggested_axis` that was not provided

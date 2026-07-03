@@ -790,6 +790,20 @@ Her karar: **karar + gerekçe + OSP ile tutarlılık + itiraz varsa çözüm.**
 
 **Epistemik sınır (INV-T2):** Accepted TaskCandidate ≠ trajectory::Task. PR33a anchoring içinde kalır — trajectory genesis'e (OperatorCapability, INV-T2) dokunmaz. "Accepted TaskCandidate = accepted project intention; trajectory::Task = executable navigator task." Task genesis PR33b'ye.
 
+### D17 — task_bridge protocol boundary + INV-P2 (Faz 5b)
+
+**Karar:** Anchoring ↔ trajectory köprüsü `task_bridge.rs` modülünde yaşar — `anchoring/` ve `trajectory/` **arasında** protocol boundary. İkisini de görür ama birine aidiyet etmez. İki farklı epistemik alanı (graph acceptance + Task genesis) karıştırmadan bağlar.
+
+**Üç kapılı API:** (1) `verify_accepted_task_candidate` — Accepted intent doğrula (OperatorAcceptance ile promote edilmiş). (2) `bind_metric_threshold` — OperatorCapability ile executable predicate üret (INV-P2). (3) `create_task_from_accepted_candidate` — OperatorCapability ile trajectory::Task doğur (INV-T2). Hiçbir kapı atlanamaz/bypass edilemez.
+
+**İki token ayrışır:** `OperatorAcceptance` (Candidate→Accepted, anchoring) ve `OperatorCapability` (Accepted→Task genesis, trajectory) **aynı fonksiyona konmaz**. create_task OperatorCapability ister, OperatorAcceptance istemez (accepted state verify ile kanıtlanmış).
+
+**INV-P2 (yeni):** Cross-family mapping metric slot önerebilir, ama operator binding olmadan executable predicate üretemez. "coupling azaltılmalı" → axis hint Coupling önerir, ama threshold/scope/comparator hâlâ operator-bound. `bind_metric_threshold` template+axis kontrolü (TemplateNotSuggested/AxisMismatch).
+
+**Type-level garantiler (Faz 5b):** `ExecutablePredicateSet` private inner + Serialize-only + non-empty by construction (tek üretim: bind_metric_threshold, OperatorCapability-gated). `NormalizedMetricThreshold` [0,1] + is_finite newtype (custom serde). `MetricThresholdBinding` private + smart ctor. `AcceptedTaskCandidateRef` non-forgeable (verify-only). Deterministic TaskId (FNV hash, atomic counter değil). 2 trybuild compile-fail.
+
+**Scope (MetricThreshold only):** Sadece MetricThreshold template executable (Faz 5b). MetricDelta/EvidenceRequired/RelationExists + tam cross-family translation maturation Faz 5.1'e. "A conceptual rule may suggest a physical metric, but only bound slots can create an executable predicate."
+
 ---
 
 ## 11. Fazlama
@@ -847,16 +861,21 @@ Faz 5 — Task/Predicate integration → Paper 2 navigator bridge
   Agent Navigator'a bridge (INV-T2 doldu)
 
   ✅ DURUM (2026-07): İki PR'a bölündü (PR33a + PR33b).
-  PR33a ( tamamlandı): PredicateStub bridge — TaskCandidate lane canlı (DerivesTask),
+  PR33a (tamamlandı): PredicateStub bridge — TaskCandidate lane canlı (DerivesTask),
     RuleCandidate → PredicateStub lowering (INV-P1), Candidate→Accepted promotion.
     Navigator'a bağlanmaz (INV-T2 ihlal yok). "A rule is not a predicate. A predicate
     is a rule whose measurable slots have been bound." — RuleCandidate lowering PR33a'da
     her zaman PredicateStub üretir (ExecutablePredicateSet DEĞİL, INV-P1a). Stub boş değil;
     structured uncertainty (unresolved slots + suggested templates). Cross-family translation
     (ConceptualIntent→PhysicalCode) PR33b'ye.
-  PR33b (planlandı): Navigator bridge + executable predicate template'leri (MetricThreshold/
-    MetricDelta/EvidenceRequired/RelationExists) + Stub→ExecutablePredicateSet slot binding +
-    TaskCandidate→trajectory::Task converter + OperatorCapability bridge (INV-T2 Task genesis).
+  PR33b (tamamlandı): Navigator bridge — MetricThreshold slot binding (ExecutablePredicateSet,
+    INV-P2) + Accepted TaskCandidate → trajectory::Task genesis (OperatorCapability, INV-T2).
+    Üç kapılı API: verify accepted intent → bind executable predicate → create executable task.
+    "Accepted intent is not executable work. Task genesis requires operator capability."
+    Sadece MetricThreshold executable (diğer 3 template Faz 5.1'e). task_bridge.rs protocol
+    boundary (D17). 2 yeni trybuild (INV-P2). E2E smoke: RuleCandidate → registry-resolvable Task.
+  Faz 5.1 (planlandı): Diğer 3 template (MetricDelta/EvidenceRequired/RelationExists) +
+    tam cross-family translation maturation + OperatorCapability hardening (issue→pub(crate)).
 
 Faz 6 — Concept Synthesis (D12 sırası)
   Code repo analizi → concept/vizyon/rule hipotezleri
