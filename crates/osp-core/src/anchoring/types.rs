@@ -118,8 +118,13 @@ impl std::error::Error for EmptyExplanation {}
 ///
 /// Faz 7'de gerçek embedding geldiğinde `Embedding` type doldurulur (sealed mod),
 /// `cosine` private kalır, scorer hala `ScalarSimilarity` görür.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+///
+/// # Serde boundary (hardening PR — EvidenceStrength R1 ile aynı açık)
+/// `Serialize`/`Deserialize` derive **kullanılmaz** — derive, `new()` constructor'ını
+/// bypass edip range-check'i deler (`serde_json::from_str("2.0")` geçerli üretir).
+/// Custom `Deserialize` impl `new()` üzerinden geçer; range-dışı değer reject.
+/// Bu, EvidenceStrength (INV-C6) ile aynı serde hijyeni standardını INV-C1'e taşır.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScalarSimilarity(f64);
 
 impl ScalarSimilarity {
@@ -146,6 +151,23 @@ impl ScalarSimilarity {
     }
     pub fn get(&self) -> f64 {
         self.0
+    }
+}
+
+/// Custom Serialize — inner f64'yi transparent serialize (round-trip uyumlu).
+impl serde::Serialize for ScalarSimilarity {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+/// Custom Deserialize — `new()` üzerinden range-check (serde hijyeni, EvidenceStrength R1 ile aynı).
+/// `serde_json::from_str("2.0")` / `"-1.0"` / `"NaN"` reject edilir; constructor bypass
+/// edilemez.
+impl<'de> serde::Deserialize<'de> for ScalarSimilarity {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        ScalarSimilarity::new(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -1377,6 +1399,16 @@ mod tests {
         assert_eq!(json, "0.42");
         let back: ScalarSimilarity = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn scalar_similarity_serde_rejects_out_of_range() {
+        // Hardening PR: Deserialize new() üzerinden range-check yapar.
+        // serde_json::from_str("2.0") / "-1.0" / "NaN" reject — constructor bypass
+        // edilemez (EvidenceStrength R1 ile aynı serde hijyeni).
+        assert!(serde_json::from_str::<ScalarSimilarity>("2.0").is_err());
+        assert!(serde_json::from_str::<ScalarSimilarity>("-1.0").is_err());
+        assert!(serde_json::from_str::<ScalarSimilarity>("\"NaN\"").is_err());
     }
 
     #[test]
