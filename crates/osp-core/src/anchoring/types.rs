@@ -202,8 +202,13 @@ pub enum ObservedCodeMetricSource {
 /// `ScalarSimilarity` (INV-C1) paterninin "kanıt gücü" için uygulanması. Çıplak `f64`
 /// tekrar riskini (`-1.0`, `2.0`, `NaN`) type-level engeller. [`crate::anchoring`] (scorer
 /// `code_evidence_score`, gate `evidence_strength`) bu newtype'ı görür.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+///
+/// # Serde boundary (review patch R1)
+/// `Serialize`/`Deserialize` derive **kullanılmaz** — derive, `new()` constructor'ını
+/// bypass edip range-check'i deler (`serde_json::from_str("2.0")` geçerli üretir).
+/// Bunun yerine **custom impl** ile Deserialize `new()` üzerinden geçer; range-dışı
+/// değer reject edilir. Bu, "evidence strength serde ile forged edilemez" garantisi.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EvidenceStrength(f64);
 
 impl EvidenceStrength {
@@ -225,6 +230,23 @@ impl EvidenceStrength {
     }
     pub fn get(&self) -> f64 {
         self.0
+    }
+}
+
+/// Custom Serialize — inner f64'yi transparent serialize (round-trip uyumlu).
+impl serde::Serialize for EvidenceStrength {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+/// Custom Deserialize — `new()` üzerinden range-check (R1 review patch).
+/// `serde_json::from_str("2.0")` / `"-1.0"` / `"NaN"` reject edilir; constructor bypass
+/// edilemez.
+impl<'de> serde::Deserialize<'de> for EvidenceStrength {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        EvidenceStrength::new(value).map_err(serde::de::Error::custom)
     }
 }
 

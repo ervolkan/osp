@@ -255,4 +255,24 @@ mod tests {
         assert_eq!(ev.measured_at(), 1_700_000_000);
         assert_eq!(ev.physical_vector().coupling, 0.42);
     }
+
+    #[test]
+    fn evidence_strength_serde_rejects_out_of_range() {
+        // R1 review patch: Deserialize new() üzerinden range-check yapar.
+        // serde_json::from_str("2.0") / "-1.0" reject — constructor bypass edilemez.
+        assert!(serde_json::from_str::<EvidenceStrength>("2.0").is_err());
+        assert!(serde_json::from_str::<EvidenceStrength>("-1.0").is_err());
+        // NaN/inf JSON'da standart temsil edilmez ama emin olalım.
+        assert!(serde_json::from_str::<EvidenceStrength>("\"NaN\"").is_err());
+    }
+
+    #[test]
+    fn evidence_strength_serde_roundtrip_valid() {
+        // Geçerli değer round-trip: serialize → deserialize aynı kalır.
+        let original = EvidenceStrength::new(0.85).unwrap();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: EvidenceStrength = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
+        assert_eq!(restored.get(), 0.85);
+    }
 }

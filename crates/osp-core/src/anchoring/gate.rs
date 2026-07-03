@@ -140,9 +140,11 @@ impl SupersedeAuthority {
 /// `find_evidence()` ile **evidence object varlığını** kontrol eder (strength değil).
 /// `None` → Faz 1-2 backward-compat (ImplementedBy reject).
 ///
-/// # Not: Clone/Default yok
-/// `&dyn CodeEvidenceProvider` Clone olmadığından bu struct `Clone`/`Default` derive
-/// edemez. `no_authority()` manuel constructor; context call-site'ta stack'te yaşar.
+/// # Clone/Copy/Default (review patch R3/R4)
+/// `&dyn Trait` ve `SupersedeAuthority` ikisi de `Copy` → context `Clone + Copy`.
+/// `Debug` custom kalır (dyn provider Debug olmayabilir). `Default = no_authority()`
+/// (downstream compat — Faz 1-2'de `Default` vardı).
+#[derive(Clone, Copy)]
 pub struct AnchorGateContext<'a> {
     pub supersede_authority: Option<SupersedeAuthority>,
     pub code_evidence: Option<&'a dyn crate::anchoring::code_evidence::CodeEvidenceProvider>,
@@ -157,6 +159,13 @@ impl<'a> std::fmt::Debug for AnchorGateContext<'a> {
                 &self.code_evidence.map(|_| "<dyn CodeEvidenceProvider>"),
             )
             .finish()
+    }
+}
+
+impl<'a> Default for AnchorGateContext<'a> {
+    /// Faz 1-2 backward-compat: `no_authority()` ile eşdeğer (provider None).
+    fn default() -> Self {
+        Self::no_authority()
     }
 }
 
