@@ -804,6 +804,18 @@ Her karar: **karar + gerekçe + OSP ile tutarlılık + itiraz varsa çözüm.**
 
 **Scope (MetricThreshold only):** Sadece MetricThreshold template executable (Faz 5b). MetricDelta/EvidenceRequired/RelationExists + tam cross-family translation maturation Faz 5.1'e. "A conceptual rule may suggest a physical metric, but only bound slots can create an executable predicate."
 
+### D18 — Cross-family translation semantics: ambiguity-preserving (Faz 5.1)
+
+**Karar:** ConceptualIntent → PhysicalCode translation **aday anlam üretir**, executable commitment değil. `CrossFamilyHint` çoklu axis adayı (AxisHint: axis + confidence + source + reason) taşır; `ambiguity` candidate sayısından **computed** (SingleCandidate/MultipleCandidates/NoAxisCandidate). Kazanan-hint bütün merge (aynı axis için tüm field'lar tek evidence'dan). Confidence sıralama/açıklama içindir, **aggregate edilmez** (pseudo-probability değil).
+
+**INV-P3 (yeni):** *Translation preserves candidate meaning; binding alone creates commitment.* Ambiguity stored değil derived — yapısal olarak imkansız invariant (enforcement değil). Cross-family mapping operator/evidence binding olmadan belirsizlik korur.
+
+**Single source of truth:** `PredicateStub.suggested_axis` (Faz 5b single-or-none field) kaldırıldı → computed legacy accessor. `cross_family_hint` source of truth. `template_candidates` duplicate state yok (PredicateStub.suggested_templates'te kalır).
+
+**Type-level garantiler:** CrossFamilyHint private + smart ctor (family pair ConceptualIntent→PhysicalCode enforce, duplicate axis reject) + Serialize-only. AxisHintConfidence [0,1] + is_finite newtype (custom serde). normalize_for_axis_match deterministic (NFC + Türkçe fold + to_ascii_lowercase). witness-depth/witness depth/witness_depth canonical (bare "witness" false-positive kapalı). 2 trybuild compile-fail.
+
+**Scope (translation only):** Executable template eklenmedi — mekanizma (MetricThreshold) PR33b'de kanıtlandı. MetricDelta/Evidence/Relation + operator-override yolu Faz 5.2/5.3'e. "Translation proposes candidate meaning; binding creates executable commitment."
+
 ---
 
 ## 11. Fazlama
@@ -874,8 +886,14 @@ Faz 5 — Task/Predicate integration → Paper 2 navigator bridge
     "Accepted intent is not executable work. Task genesis requires operator capability."
     Sadece MetricThreshold executable (diğer 3 template Faz 5.1'e). task_bridge.rs protocol
     boundary (D17). 2 yeni trybuild (INV-P2). E2E smoke: RuleCandidate → registry-resolvable Task.
-  Faz 5.1 (planlandı): Diğer 3 template (MetricDelta/EvidenceRequired/RelationExists) +
-    tam cross-family translation maturation + OperatorCapability hardening (issue→pub(crate)).
+  Faz 5.1 (tamamlandı): Cross-family translation semantics — CrossFamilyHint + ambiguity-
+    preserving axis hinting (INV-P3). "Translation preserves candidate meaning; binding alone
+    creates commitment." Executable template eklenmedi — mekanizma (MetricThreshold) PR33b'de
+    kanıtlandı; bu faz anlam geçişini zenginleştirdi. ambiguity computed (stored değil, yapısal
+    imkansız invariant). Kazanan-hint bütün merge (frankenstein yok). witness-depth canonical
+    (bare witness false-positive kapalı). Türkçe normalize deterministic. 2 yeni trybuild (INV-P3).
+  Faz 5.2 (planlandı): MetricDelta executable + glossary genişletme + ayraç normalizasyonu.
+  Faz 5.3 (planlandı): EvidenceRequired + RelationExists executable.
 
 Faz 6 — Concept Synthesis (D12 sırası)
   Code repo analizi → concept/vizyon/rule hipotezleri

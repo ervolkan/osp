@@ -50,12 +50,14 @@ pub use types::{
     PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector, ScalarSimilarity,
     SimilarityOutOfRange,
 };
-// Faz 5a/5b — predicate lowering tipleri
+// Faz 5a/5b/5.1 — predicate lowering tipleri
 pub use predicate_lowering::{
-    bind_metric_threshold, lower_rule_to_predicate_stub, BindingError, ExecutablePredicateSet,
-    MetricThresholdBinding, NormalizedMetricThreshold, NormalizedMetricThresholdError,
-    PhysicalCodeMetricAxis, PredicateLoweringError, PredicateLoweringOutcome, PredicateSlot,
-    PredicateStub, PredicateStubError, PredicateStubReason, PredicateTemplateId, ALL_SLOTS,
+    bind_metric_threshold, lower_rule_to_predicate_stub, merge_axis_hints, AxisHint,
+    AxisHintConfidence, AxisHintConfidenceError, AxisHintSource, BindingError, CrossFamilyHint,
+    CrossFamilyHintError, ExecutablePredicateSet, MetricThresholdBinding,
+    NormalizedMetricThreshold, NormalizedMetricThresholdError, PhysicalCodeMetricAxis,
+    PredicateLoweringError, PredicateLoweringOutcome, PredicateSlot, PredicateStub,
+    PredicateStubError, PredicateStubReason, PredicateTemplateId, TranslationAmbiguity, ALL_SLOTS,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

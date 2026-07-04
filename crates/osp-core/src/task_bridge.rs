@@ -307,11 +307,24 @@ mod tests {
 
     fn executable_set() -> ExecutablePredicateSet {
         use crate::anchoring::{
-            bind_metric_threshold, MetricThresholdBinding, NormalizedMetricThreshold,
-            PhysicalCodeMetricAxis, PredicateStub, PredicateStubReason, PredicateTemplateId,
+            bind_metric_threshold, AxisHint, AxisHintConfidence, AxisHintSource, CrossFamilyHint,
+            MetricThresholdBinding, NormalizedMetricThreshold, PhysicalCodeMetricAxis,
+            PositionFamily, PredicateStub, PredicateStubReason, PredicateTemplateId,
         };
         use crate::trajectory::{ComparisonOp, PredicateScope};
-        let stub = PredicateStub::new_with_axis_hint(
+        // Faz 5.1: CrossFamilyHint ile (new_with_cross_family_hint, INV-P3 source of truth).
+        let hint = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![AxisHint::new(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),
+                AxisHintSource::KeywordMatch,
+                crate::anchoring::NonEmptyExplanation::from_validated("test coupling".into()),
+            )],
+        )
+        .unwrap();
+        let stub = PredicateStub::new_with_cross_family_hint(
             ConceptNodeId("RuleCandidate:NoHighCoupling".into()),
             PredicateStubReason::MetricUnresolved,
             vec![
@@ -321,7 +334,7 @@ mod tests {
                 crate::anchoring::PredicateSlot::Comparator,
             ],
             vec![PredicateTemplateId::MetricThreshold],
-            Some(PhysicalCodeMetricAxis::Coupling),
+            Some(hint),
         )
         .unwrap();
         let binding = MetricThresholdBinding::new(

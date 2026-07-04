@@ -41,4 +41,7 @@ fn type_level_invariants_compile_fail() {
     // PR35 — INV-T2 (OperatorCapability hardening, type-level)
     t.compile_fail("tests/compile_fail/t2_operator_capability_issue_external.rs");
     t.compile_fail("tests/compile_fail/t2_operator_capability_literal.rs");
+    // Faz 5.1 — INV-P3 (cross-family hint type-level)
+    t.compile_fail("tests/compile_fail/cP3_cross_family_hint_literal.rs");
+    t.compile_fail("tests/compile_fail/cP3_cross_family_hint_deserialize.rs");
 }

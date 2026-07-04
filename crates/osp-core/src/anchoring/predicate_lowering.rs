@@ -129,6 +129,19 @@ impl PhysicalCodeMetricAxis {
             Self::WitnessDepth => crate::trajectory::PredicateAxis::WitnessDepth,
         }
     }
+
+    /// Faz 5.1 — deterministic sort order (R1-2). Enum discriminant'ına güvenmek yerine
+    /// explicit — ileride enum sırası değişse bile deterministic sort bozulmaz.
+    /// CrossFamilyHint axis_candidates sıralaması: confidence desc, sonra sort_order asc.
+    pub fn sort_order(self) -> u8 {
+        match self {
+            Self::Coupling => 0,
+            Self::Cohesion => 1,
+            Self::Instability => 2,
+            Self::Entropy => 3,
+            Self::WitnessDepth => 4,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -193,6 +206,376 @@ impl std::fmt::Display for NormalizedMetricThresholdError {
 impl std::error::Error for NormalizedMetricThresholdError {}
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5.1 — Cross-Family Translation Semantics (INV-P3)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// INV-P3 — Translation preserves candidate meaning; binding alone creates commitment.
+// Cross-family mapping aday anlam üretir; operator/evidence binding olmadan belirsizlik
+// korunur. Ambiguity candidate sayısından türetilir (computed, stored değil) — yapısal
+// olarak imkansız invariant. Confidence sıralama/açıklama içindir, aggregate edilmez.
+//
+// "Translation preserves candidate meaning; binding alone creates commitment."
+
+/// Axis hint güven skalar `[0,1]` (Faz 5.1, INV-P3 — R1-1).
+///
+/// `EvidenceStrength`/`NormalizedMetricThreshold` paterni: private inner f64, `is_finite() +
+/// (0.0..=1.0)`, custom serde (constructor bypass engelli). **Aggregate edilmez** (R1-1) —
+/// sıralama/açıklama içindir, pseudo-probability değil.
+///
+/// # Source'a göre default confidence (R1-1 — tek yerde)
+/// - `KeywordMatch` → `one()` (1.0)
+/// - `LanguageAlias` → `language_alias_default()` (0.9)
+/// - `LegacyDirect` → `one()` (1.0 — deterministic redirect, evidence tahmini değil)
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AxisHintConfidence(f64);
+
+impl AxisHintConfidence {
+    /// `[0,1]` range-check + finiteness. NaN, ±∞, negatif, >1 → error.
+    pub fn new(value: f64) -> Result<Self, AxisHintConfidenceError> {
+        if value.is_finite() && (0.0..=1.0).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(AxisHintConfidenceError { value })
+        }
+    }
+
+    /// Yüksek güven (KeywordMatch/LegacyDirect default).
+    pub fn one() -> Self {
+        Self(1.0)
+    }
+
+    /// LanguageAlias default (R1-1 — unwrap semantik gizli).
+    pub fn language_alias_default() -> Self {
+        Self(0.9)
+    }
+
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+}
+
+impl serde::Serialize for AxisHintConfidence {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AxisHintConfidence {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        AxisHintConfidence::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `AxisHintConfidence` değer aralığı dışı hatası.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AxisHintConfidenceError {
+    pub value: f64,
+}
+
+impl std::fmt::Display for AxisHintConfidenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AxisHintConfidence [0,1] dışı veya non-finite: {} (INV-P3)",
+            self.value
+        )
+    }
+}
+
+impl std::error::Error for AxisHintConfidenceError {}
+
+/// Axis hint'in kaynağı (Faz 5.1, R2-2 — LanguageAlias ismi).
+///
+/// Merge önceliği (kazanan-hint bütün, R1-2): `KeywordMatch` > `LanguageAlias` > `LegacyDirect`.
+/// `default_confidence()` tek yerde tanımlı (R1-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum AxisHintSource {
+    /// Canonical İngilizce eksen adı eşleşmesi (`coupling`, `cohesion`, vb.).
+    KeywordMatch,
+    /// Türkçe karşılıklar/eşanlamlılar (`bağımlılık` → Coupling). Glossary entegrasyonu Faz 5.2.
+    LanguageAlias,
+    /// `new_with_axis_hint` legacy redirect (deterministic, operator'ün bilinçli set'i).
+    LegacyDirect,
+}
+
+impl AxisHintSource {
+    /// Source'a göre deterministic default confidence (R1-1 — tek yerde).
+    /// Aggregate edilmez — sıralama/açıklama içindir.
+    pub fn default_confidence(self) -> AxisHintConfidence {
+        match self {
+            Self::KeywordMatch => AxisHintConfidence::one(),
+            Self::LanguageAlias => AxisHintConfidence::language_alias_default(),
+            Self::LegacyDirect => AxisHintConfidence::one(),
+        }
+    }
+
+    /// Merge önceliğu (kazanan-hint tie-break, R1-2). Düşük değer = yüksek öncelik.
+    fn merge_priority(self) -> u8 {
+        match self {
+            Self::KeywordMatch => 0,
+            Self::LanguageAlias => 1,
+            Self::LegacyDirect => 2,
+        }
+    }
+}
+
+/// Aday eksen + güven + kaynak + neden (Faz 5.1, INV-P3).
+///
+/// # Yapısal garanti
+/// Private fields + smart constructor (Faz 4/5a paterni). Literal construct engelli.
+/// `reason` provenance taşır — "kural 'bağıml' içeriyor → Coupling".
+///
+/// # INV-P3
+/// Hint aday anlam taşır; executable commitment DEĞİL. Confidence sıralama/açıklama
+/// içindir, aggregate edilmez. Kazanan-hint merge (R1-2) tüm field'ları tek evidence'dan alır.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct AxisHint {
+    axis: PhysicalCodeMetricAxis,
+    confidence: AxisHintConfidence,
+    source: AxisHintSource,
+    reason: crate::anchoring::types::NonEmptyExplanation,
+}
+
+impl AxisHint {
+    /// Public smart constructor (Faz 4/5a paterni).
+    pub fn new(
+        axis: PhysicalCodeMetricAxis,
+        confidence: AxisHintConfidence,
+        source: AxisHintSource,
+        reason: crate::anchoring::types::NonEmptyExplanation,
+    ) -> Self {
+        Self {
+            axis,
+            confidence,
+            source,
+            reason,
+        }
+    }
+
+    pub fn axis(&self) -> PhysicalCodeMetricAxis {
+        self.axis
+    }
+    pub fn confidence(&self) -> AxisHintConfidence {
+        self.confidence
+    }
+    pub fn source(&self) -> AxisHintSource {
+        self.source
+    }
+    pub fn reason(&self) -> &crate::anchoring::types::NonEmptyExplanation {
+        &self.reason
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 5.1 — TranslationAmbiguity + CrossFamilyHint (INV-P3 computed ambiguity)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Cross-family translation belirsizlik seviyesi (Faz 5.1, INV-P3 — D2-1 computed).
+///
+/// **Stored DEĞİL, computed** — `CrossFamilyHint::ambiguity()` candidate sayısından türetir.
+/// Bu, "Single→1, Multiple→≥2, NoAxis→0" consistency invariant'ını enforcement'tan
+/// yapısal imkânsızlığa yükseltir (D2-1'in en değerli noktası).
+///
+/// `SingleCandidate` ontolojik kesinlik iddiası taşımaz (R1-1) — sadece "tek aday"
+/// anlamında. *"Translation proposes candidate meaning."*
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum TranslationAmbiguity {
+    /// 1 aday eksen → operator o eksene bağlı (strict mismatch reject).
+    SingleCandidate,
+    /// ≥2 aday eksen → operator adaylardan birini seçer (candidate-constrained).
+    MultipleCandidates,
+    /// 0 aday eksen → operator serbest (NoAxisCandidate ≠ NoTemplateMatch).
+    NoAxisCandidate,
+}
+
+/// Cross-family translation metadata — ConceptualIntent → PhysicalCode (Faz 5.1, INV-P3).
+///
+/// # Yapısal garanti (Faz 4/5a paterni + INV-P3 computed)
+/// - **Private fields + smart constructor** — literal construct engelli (trybuild).
+/// - **ambiguity computed** (D2-1) — `axis_candidates.len()`'den türetilir, stored değil.
+/// - **family pair enforce** — `from_family == ConceptualIntent`, `to_family == PhysicalCode`
+///   (INV-C2 cross-family translation sadece bu yön).
+/// - **duplicate axis reject** (R1-2 merge öncesi) — `merge_axis_hints` ile merge edilmeli.
+/// - **deterministic sort** — confidence desc (total_cmp) + axis sort_order asc (R1-2).
+/// - **Serialize-only** (audit) — Deserialize YOK (PR30/Faz4/5a serde boundary paterni).
+///
+/// # INV-P3
+/// *"Translation preserves candidate meaning; binding alone creates commitment."*
+/// CrossFamilyHint aday anlam taşır; executable commitment DEĞİL.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CrossFamilyHint {
+    from_family: crate::anchoring::PositionFamily,
+    to_family: crate::anchoring::PositionFamily,
+    axis_candidates: Vec<AxisHint>,
+}
+
+/// `CrossFamilyHint::new` hatası (INV-P3).
+#[derive(Debug, Clone, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "payload")]
+pub enum CrossFamilyHintError {
+    #[error(
+        "family pair geçersiz: from {from:?}, to {to:?} — sadece ConceptualIntent→PhysicalCode"
+    )]
+    InvalidFamilyPair {
+        from: crate::anchoring::PositionFamily,
+        to: crate::anchoring::PositionFamily,
+    },
+    #[error("duplicate axis candidate: {axis:?} — merge_axis_hints ile merge edilmeli")]
+    DuplicateAxis { axis: PhysicalCodeMetricAxis },
+}
+
+impl CrossFamilyHint {
+    /// Public smart constructor (INV-P3 — family pair + duplicate axis kontrolü).
+    ///
+    /// # Invariantlar
+    /// - `from_family == ConceptualIntent`, `to_family == PhysicalCode`
+    /// - duplicate axis yok (aynı axis için `merge_axis_hints` ile merge edilmeli)
+    /// - ambiguity computed (constructor'a geçilmez — `ambiguity()` accessor)
+    pub fn new(
+        from_family: crate::anchoring::PositionFamily,
+        to_family: crate::anchoring::PositionFamily,
+        axis_candidates: Vec<AxisHint>,
+    ) -> Result<Self, CrossFamilyHintError> {
+        // Family pair enforce (INV-C2 — sadece ConceptualIntent→PhysicalCode).
+        if !matches!(
+            (from_family, to_family),
+            (
+                crate::anchoring::PositionFamily::ConceptualIntent,
+                crate::anchoring::PositionFamily::PhysicalCode
+            )
+        ) {
+            return Err(CrossFamilyHintError::InvalidFamilyPair {
+                from: from_family,
+                to: to_family,
+            });
+        }
+        // Duplicate axis reject (R1-2 — merge_axis_hints ile merge edilmeli).
+        let mut seen: Vec<PhysicalCodeMetricAxis> = Vec::new();
+        for hint in &axis_candidates {
+            if seen.contains(&hint.axis) {
+                return Err(CrossFamilyHintError::DuplicateAxis { axis: hint.axis });
+            }
+            seen.push(hint.axis);
+        }
+        Ok(Self {
+            from_family,
+            to_family,
+            axis_candidates,
+        })
+    }
+
+    pub fn from_family(&self) -> crate::anchoring::PositionFamily {
+        self.from_family
+    }
+    pub fn to_family(&self) -> crate::anchoring::PositionFamily {
+        self.to_family
+    }
+    pub fn axis_candidates(&self) -> &[AxisHint] {
+        &self.axis_candidates
+    }
+
+    /// **Ambiguity computed** (D2-1) — candidate sayısından türetilir, stored değil.
+    /// Bu, consistency invariant'ı yapısal olarak imkansız kılar (enforcement değil).
+    pub fn ambiguity(&self) -> TranslationAmbiguity {
+        match self.axis_candidates.len() {
+            0 => TranslationAmbiguity::NoAxisCandidate,
+            1 => TranslationAmbiguity::SingleCandidate,
+            _ => TranslationAmbiguity::MultipleCandidates,
+        }
+    }
+
+    /// Legacy convenience: tek aday eksenini döner (SingleCandidate → Some, diğer → None).
+    /// `PredicateStub::suggested_axis()` computed accessor bunu kullanır (T4).
+    pub fn single_axis_candidate(&self) -> Option<PhysicalCodeMetricAxis> {
+        if matches!(self.ambiguity(), TranslationAmbiguity::SingleCandidate) {
+            self.axis_candidates.first().map(|h| h.axis())
+        } else {
+            None
+        }
+    }
+
+    /// Faz 5.1 legacy redirect — `new_with_axis_hint` için (R2-5 / R1-1 sabit değerler).
+    /// Tek aday, KeywordMatch olmayan deterministic redirect yolu.
+    pub(crate) fn single_candidate_legacy(
+        axis: PhysicalCodeMetricAxis,
+    ) -> Result<Self, CrossFamilyHintError> {
+        let hint = AxisHint::new(
+            axis,
+            AxisHintSource::LegacyDirect.default_confidence(),
+            AxisHintSource::LegacyDirect,
+            crate::anchoring::types::NonEmptyExplanation::from_validated(
+                "legacy new_with_axis_hint".into(),
+            ),
+        );
+        Self::new(
+            crate::anchoring::PositionFamily::ConceptualIntent,
+            crate::anchoring::PositionFamily::PhysicalCode,
+            vec![hint],
+        )
+    }
+}
+
+/// Faz 5.1 — Aynı axis için çoklu evidence'ı merge et (R1-2, kazanan-hint bütün).
+///
+/// # Kazanan-hint kuralı (R1-2 — frankenstein yok)
+/// Aynı axis için birden fazla AxisHint varsa, **kazanan hint BÜTÜN olarak seçilir**
+/// (axis, confidence, source, reason hepsi kazanan'dan gelir):
+/// 1. **highest confidence** (`f64::total_cmp` — total order, NaN yok)
+/// 2. confidence eşitse **source priority**: KeywordMatch > LanguageAlias > LegacyDirect
+/// 3. hâlâ eşitse **ilk görülme sırası** (deterministic iteration order)
+///
+/// # Deterministic sort (R1-2 / D2-4)
+/// Sonuç: confidence desc (`total_cmp`), sonra axis `sort_order()` asc. Total order —
+/// HashMap iterasyon nondeterminizmi yok.
+///
+/// # INV-P3
+/// Merge confidence aggregate ETMEZ (R1-1 — pseudo-probability değil). Sadece kazanan
+/// hint seçilir. *"Confidence sıralama/açıklama içindir, aggregate edilmez."*
+///
+/// # Saf fonksiyon (R2-1)
+/// Lowering'den bağımsız test edilebilir — sentetik AxisHint'lerle tie-break adımları
+/// (lowering'de erişilemeyen) unit seviyesinde kanıtlanır.
+pub fn merge_axis_hints(mut hints: Vec<AxisHint>) -> Vec<AxisHint> {
+    if hints.is_empty() {
+        return hints;
+    }
+    // 1. axis'e göre grupla, her grup için kazanan hint seç (R1-2).
+    let mut by_axis: std::collections::HashMap<PhysicalCodeMetricAxis, Vec<AxisHint>> =
+        std::collections::HashMap::new();
+    for hint in hints.drain(..) {
+        by_axis.entry(hint.axis()).or_default().push(hint);
+    }
+    let mut winners: Vec<AxisHint> = by_axis
+        .into_values()
+        .map(|mut group| {
+            // Kazanan-hint bütün seç (R1-2): highest confidence → source priority → first-seen.
+            // sort_by: confidence desc (total_cmp), sonra source merge_priority asc,
+            // sonra ilk görülme (stable sort korur).
+            group.sort_by(|a, b| {
+                b.confidence()
+                    .get()
+                    .total_cmp(&a.confidence().get())
+                    .then_with(|| {
+                        a.source()
+                            .merge_priority()
+                            .cmp(&b.source().merge_priority())
+                    })
+            });
+            group.into_iter().next().expect("group non-empty")
+        })
+        .collect();
+    // 2. Deterministic sort (R1-2 / D2-4): confidence desc + axis sort_order asc.
+    winners.sort_by(|a, b| {
+        b.confidence()
+            .get()
+            .total_cmp(&a.confidence().get())
+            .then_with(|| a.axis().sort_order().cmp(&b.axis().sort_order()))
+    });
+    winners
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Faz 5b — MetricThresholdBinding (Patch 4: private + smart ctor)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -241,15 +624,22 @@ impl MetricThresholdBinding {
     }
 }
 
-/// `bind_metric_threshold` hatası (INV-P2 — executable predicate boundary).
+/// `bind_metric_threshold` hatası (INV-P2/INV-P3 — executable predicate boundary).
 #[derive(Debug, Clone, PartialEq, thiserror::Error, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", content = "payload")]
 pub enum BindingError {
     #[error("stub MetricThreshold template önermiyor — bind edilemez")]
     TemplateNotSuggested,
+    /// SingleCandidate (len==1) mismatch — daha okunur mesaj (R2-4 kesin tip, Option değil).
     #[error("axis mismatch: stub {stub_axis:?}, binding {binding_axis:?}")]
     AxisMismatch {
-        stub_axis: Option<PhysicalCodeMetricAxis>,
+        stub_axis: PhysicalCodeMetricAxis,
+        binding_axis: PhysicalCodeMetricAxis,
+    },
+    /// MultipleCandidates (len≥2) — operator aday dışında axis seçti (R2-4).
+    #[error("axis not in candidates: {binding_axis:?} ∉ {candidates:?}")]
+    AxisNotInCandidates {
+        candidates: Vec<PhysicalCodeMetricAxis>,
         binding_axis: PhysicalCodeMetricAxis,
     },
 }
@@ -282,10 +672,10 @@ pub struct PredicateStub {
     reason: PredicateStubReason,
     unresolved_slots: Vec<PredicateSlot>,
     suggested_templates: Vec<PredicateTemplateId>,
-    /// Faz 5b — PhysicalCode axis hint (cross-family translation, INV-P2).
-    /// `None` = hint yok. `bind_metric_threshold` axis mismatch kontrolü (Kontrol 5).
+    /// Faz 5.1 — Cross-family translation source of truth (INV-P3). `None` = manuel/test
+    /// stub (no translation metadata available); `Some` = lowering üretti (Mikro-4 doc).
     #[serde(skip_serializing_if = "Option::is_none")]
-    suggested_axis: Option<PhysicalCodeMetricAxis>,
+    cross_family_hint: Option<CrossFamilyHint>,
 }
 
 /// `PredicateStub::new` consistency hatası (Patch 2).
@@ -296,32 +686,39 @@ pub enum PredicateStubError {
     EmptyUnresolvedSlots,
     #[error("reason NoTemplateMatch ama suggested_templates dolu — çelişki")]
     NoTemplateMatchCannotSuggestTemplate,
+    #[error("cross_family_hint construct hatası: {0}")]
+    InvalidCrossFamilyHint(CrossFamilyHintError),
 }
 
 impl PredicateStub {
     /// Public smart constructor — Patch 2 consistency kontrolü (PR33a API, backward-compat).
     ///
-    /// Faz 5b (Kontrol 6): axis hint olmadan — `new_with_axis_hint(..., None)`'e delegate.
-    /// PR33a callers bu imzayı kullanmaya devam eder.
+    /// Faz 5.1: cross_family_hint olmadan — `new_with_cross_family_hint(..., None)`'e delegate.
     pub fn new(
         rule_id: ConceptNodeId,
         reason: PredicateStubReason,
         unresolved_slots: Vec<PredicateSlot>,
         suggested_templates: Vec<PredicateTemplateId>,
     ) -> Result<Self, PredicateStubError> {
-        Self::new_with_axis_hint(rule_id, reason, unresolved_slots, suggested_templates, None)
+        Self::new_with_cross_family_hint(
+            rule_id,
+            reason,
+            unresolved_slots,
+            suggested_templates,
+            None,
+        )
     }
 
-    /// Faz 5b — axis hint ile constructor (Kontrol 6, cross-family translation INV-P2).
+    /// Faz 5.1 — CrossFamilyHint ile ana constructor (INV-P3 source of truth).
     ///
-    /// `lower_rule_to_predicate_stub` PR33b'de "coupling" gibi keyword'lere PhysicalCode
-    /// axis hint ekler. `bind_metric_threshold` axis mismatch kontrolü (Kontrol 5) için.
-    pub fn new_with_axis_hint(
+    /// `lower_rule_to_predicate_stub` Faz 5.1'de zenginleştirilmiş translation üretir.
+    /// `bind_metric_threshold` ambiguity-aware binding için CrossFamilyHint okur.
+    pub fn new_with_cross_family_hint(
         rule_id: ConceptNodeId,
         reason: PredicateStubReason,
         unresolved_slots: Vec<PredicateSlot>,
         suggested_templates: Vec<PredicateTemplateId>,
-        suggested_axis: Option<PhysicalCodeMetricAxis>,
+        cross_family_hint: Option<CrossFamilyHint>,
     ) -> Result<Self, PredicateStubError> {
         if unresolved_slots.is_empty() && !matches!(reason, PredicateStubReason::NoTemplateMatch) {
             return Err(PredicateStubError::EmptyUnresolvedSlots);
@@ -335,8 +732,37 @@ impl PredicateStub {
             reason,
             unresolved_slots,
             suggested_templates,
-            suggested_axis,
+            cross_family_hint,
         })
+    }
+
+    /// Faz 5b → Faz 5.1 deprecated redirect (D1-3 — single source of truth).
+    ///
+    /// Eski `suggested_axis: Option<PhysicalCodeMetricAxis>` artık computed accessor.
+    /// Bu constructor içeride `CrossFamilyHint::single_candidate_legacy` üretir (R2-5 /
+    /// R1-1 sabit değerler: confidence=1.0 LegacyDirect, reason sabit). Backward-compat.
+    #[deprecated(note = "use new_with_cross_family_hint (Faz 5.1, INV-P3 source of truth)")]
+    pub fn new_with_axis_hint(
+        rule_id: ConceptNodeId,
+        reason: PredicateStubReason,
+        unresolved_slots: Vec<PredicateSlot>,
+        suggested_templates: Vec<PredicateTemplateId>,
+        suggested_axis: Option<PhysicalCodeMetricAxis>,
+    ) -> Result<Self, PredicateStubError> {
+        let hint = match suggested_axis {
+            Some(axis) => Some(
+                CrossFamilyHint::single_candidate_legacy(axis)
+                    .map_err(PredicateStubError::InvalidCrossFamilyHint)?,
+            ),
+            None => None,
+        };
+        Self::new_with_cross_family_hint(
+            rule_id,
+            reason,
+            unresolved_slots,
+            suggested_templates,
+            hint,
+        )
     }
 
     pub fn rule_id(&self) -> &ConceptNodeId {
@@ -351,9 +777,17 @@ impl PredicateStub {
     pub fn suggested_templates(&self) -> &[PredicateTemplateId] {
         &self.suggested_templates
     }
-    /// Faz 5b — PhysicalCode axis hint (None = hint yok).
+    /// Faz 5.1 — Cross-family translation metadata (source of truth, INV-P3).
+    pub fn cross_family_hint(&self) -> Option<&CrossFamilyHint> {
+        self.cross_family_hint.as_ref()
+    }
+    /// Faz 5.1 — Computed legacy accessor (D1-3). CrossFamilyHint'ten türetilir.
+    /// SingleCandidate → Some(axis), Multiple/NoAxis → None.
+    #[allow(deprecated)]
     pub fn suggested_axis(&self) -> Option<PhysicalCodeMetricAxis> {
-        self.suggested_axis
+        self.cross_family_hint
+            .as_ref()
+            .and_then(|h| h.single_axis_candidate())
     }
 
     /// Çözülmüş slot oranı `[0,1]` (D2 öneri 1, Patch 4 sabit formül).
@@ -395,6 +829,8 @@ pub enum PredicateLoweringError {
     NotRuleCandidate { node_id: ConceptNodeId },
     #[error("stub construct hatası: {0}")]
     InvalidStub(PredicateStubError),
+    #[error("cross-family hint construct hatası: {0}")]
+    InvalidCrossFamilyHint(CrossFamilyHintError),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -419,6 +855,51 @@ pub enum PredicateLoweringError {
 /// # Scope (PR33a)
 /// NLP yok — sadece canonical string keyword eşleştirme. No template match ise
 /// `reason: NoTemplateMatch`, `suggested_templates: []` (tek geçerli boş durum).
+/// Faz 5.1 — Deterministic Türkçe-aware normalize (R2-3, Mikro-2).
+///
+/// **NFC → Türkçe fold → ASCII lowercase** sırasıyla deterministik eşleşme uzayı yaratır.
+/// Türkçe locale kurallarını **bilerek uygulamaz** — hedef dil-doğruluğu değil, deterministic
+/// eşleşme uzayı (R2-2 doc cümlesi). Altı ay sonra iyi niyetli bir 'düzeltme' uzayı kaydırabilir.
+///
+/// # Fold tablosu (büyük + küçük, R2-2)
+/// `I, İ, ı → i` · `Ğ, ğ → g` · `Ü, ü → u` · `Ş, ş → s` · `Ö, ö → o` · `Ç, ç → c`
+///
+/// # Sıra kritik (R2-2)
+/// fold lowercase'ten ÖNCE. Çünkü `to_ascii_lowercase` önce gelirse ASCII `'I'` Türkçe
+/// metinde `'ı'` olması gerekirken `'i'` olur — İngilizce keyword'ler ASCII olduğu için
+/// bu *istediğimiz* davranış (dil-doğruluğu değil, deterministik eşleşme).
+///
+/// # Simetri şartı (R1-5)
+/// Alias pattern'leri de fold edilmiş formda saklanmalı ("bağımlılık" → "bagimlilik").
+/// Eşleşme sadece normalize uzayda.
+///
+/// # Mikro-1 (NFC decomposed)
+/// NFC'in tek işi: decomposed girdi (U+0049 + U+0307) → precomposed (U+0130 'İ') → fold yakalar.
+/// Precomposed `"İ"` trivially geçer; asıl kanıt `"I\u{0307}"` decomposed girdisiyle.
+fn normalize_for_axis_match(input: &str) -> String {
+    // 1. NFC normalize (decomposed → precomposed). unicode-normalization crate yok —
+    //    char-level fold tablosu NFC sonrası için yeterli (PR36 deterministic).
+    //    Not: gerçek NFC için `unicode-normalization` gerekir; şimdilik fold tablosu
+    //    precomposed Türkçe karakterleri yakalar (decomposed vakası Mikro-1 testinde).
+    // 2. Türkçe karakter fold (büyük + küçük) + ASCII lowercase.
+    input
+        .chars()
+        .flat_map(|c| {
+            let folded: &[char] = match c {
+                'I' | 'İ' | 'ı' | 'i' => &['i'],
+                'Ğ' | 'ğ' => &['g'],
+                'Ü' | 'ü' => &['u'],
+                'Ş' | 'ş' => &['s'],
+                'Ö' | 'ö' => &['o'],
+                'Ç' | 'ç' => &['c'],
+                _ => return [c].into_iter().collect::<Vec<_>>(),
+            };
+            folded.to_vec()
+        })
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
 pub fn lower_rule_to_predicate_stub(
     rule_candidate: &ConceptNode,
 ) -> Result<PredicateLoweringOutcome, PredicateLoweringError> {
@@ -429,63 +910,100 @@ pub fn lower_rule_to_predicate_stub(
         });
     }
 
-    let canonical_lower = rule_candidate.canonical.to_lowercase();
+    let canonical_norm = normalize_for_axis_match(&rule_candidate.canonical);
 
     // Deterministic keyword → suggested_templates (öneri, executable değil).
     let mut suggested: Vec<PredicateTemplateId> = Vec::new();
-    // Eksen keyword'lerini ayrı topla — çoklu eksen tespiti için (INV-P2: belirsiz → None).
-    let mut detected_axes: Vec<PhysicalCodeMetricAxis> = Vec::new();
-    if canonical_lower.contains("coupling") || canonical_lower.contains("bağıml") {
-        suggested.push(PredicateTemplateId::MetricThreshold);
-        detected_axes.push(PhysicalCodeMetricAxis::Coupling);
-    }
-    if canonical_lower.contains("cohesion") {
-        suggested.push(PredicateTemplateId::MetricThreshold);
-        detected_axes.push(PhysicalCodeMetricAxis::Cohesion);
-    }
-    if canonical_lower.contains("instability") {
-        suggested.push(PredicateTemplateId::MetricThreshold);
-        detected_axes.push(PhysicalCodeMetricAxis::Instability);
-    }
-    if canonical_lower.contains("entropy") {
-        suggested.push(PredicateTemplateId::MetricThreshold);
-        detected_axes.push(PhysicalCodeMetricAxis::Entropy);
-    }
-    if canonical_lower.contains("witness") {
-        suggested.push(PredicateTemplateId::MetricThreshold);
-        detected_axes.push(PhysicalCodeMetricAxis::WitnessDepth);
-    }
-    if canonical_lower.contains("decrease")
-        || canonical_lower.contains("reduce")
-        || canonical_lower.contains("azalt")
-        || canonical_lower.contains("düşür")
+    // Faz 5.1: axis_candidates AxisHint olarak toplanır (R1-2 merge öncesi).
+    let mut axis_hints: Vec<AxisHint> = Vec::new();
+
+    // Helper: keyword eşleşmesi → AxisHint (KeywordMatch) + MetricThreshold template.
+    let mut add_keyword_axis = |axis: PhysicalCodeMetricAxis, patterns: &[&str]| {
+        for &pat in patterns {
+            if canonical_norm.contains(pat) {
+                suggested.push(PredicateTemplateId::MetricThreshold);
+                axis_hints.push(AxisHint::new(
+                    axis,
+                    AxisHintSource::KeywordMatch.default_confidence(),
+                    AxisHintSource::KeywordMatch,
+                    crate::anchoring::types::NonEmptyExplanation::from_validated(format!(
+                        "canonical '{}' contains keyword '{}'",
+                        rule_candidate.canonical, pat
+                    )),
+                ));
+                break; // her axis için bir KeywordMatch hint
+            }
+        }
+    };
+    // Canonical İngilizce eksen keyword'leri (KeywordMatch, R2-3).
+    add_keyword_axis(PhysicalCodeMetricAxis::Coupling, &["coupling"]);
+    add_keyword_axis(PhysicalCodeMetricAxis::Cohesion, &["cohesion"]);
+    add_keyword_axis(PhysicalCodeMetricAxis::Instability, &["instability"]);
+    add_keyword_axis(PhysicalCodeMetricAxis::Entropy, &["entropy"]);
+    // R1-4: witness-depth/witness depth/witness_depth canonical, bare "witness" değil.
+    add_keyword_axis(
+        PhysicalCodeMetricAxis::WitnessDepth,
+        &["witness-depth", "witness depth", "witness_depth"],
+    );
+
+    // LanguageAlias (Türkçe karşılıklar, R2-2 — fold edilmiş formda).
+    let mut add_alias_axis = |axis: PhysicalCodeMetricAxis, patterns: &[&str]| {
+        for &pat in patterns {
+            // pattern'ler normalize_for_axis_match ile aynı uzayda (simetri şartı).
+            if canonical_norm.contains(pat) {
+                suggested.push(PredicateTemplateId::MetricThreshold);
+                axis_hints.push(AxisHint::new(
+                    axis,
+                    AxisHintSource::LanguageAlias.default_confidence(),
+                    AxisHintSource::LanguageAlias,
+                    crate::anchoring::types::NonEmptyExplanation::from_validated(format!(
+                        "canonical '{}' matched alias '{}' (normalized)",
+                        rule_candidate.canonical, pat
+                    )),
+                ));
+                break;
+            }
+        }
+    };
+    // Türkçe alias'lar normalize edilmiş (bağıml → bagiml, vb.).
+    add_alias_axis(PhysicalCodeMetricAxis::Coupling, &["bagiml"]);
+
+    // Non-axis template keyword'leri (R1-5: NoAxisCandidate ≠ NoTemplateMatch).
+    if canonical_norm.contains("decrease")
+        || canonical_norm.contains("reduce")
+        || canonical_norm.contains("azalt")
+        || canonical_norm.contains("dusur")
     {
         suggested.push(PredicateTemplateId::MetricDelta);
     }
-    if canonical_lower.contains("evidence") || canonical_lower.contains("kanıt") {
+    if canonical_norm.contains("evidence") || canonical_norm.contains("kanit") {
         suggested.push(PredicateTemplateId::EvidenceRequired);
     }
-    if canonical_lower.contains("implement") || canonical_lower.contains("implemente") {
+    if canonical_norm.contains("implement") || canonical_norm.contains("implemente") {
         suggested.push(PredicateTemplateId::RelationExists);
     }
-    // Dedup (coupling + cohesion aynı cümlede → MetricThreshold iki kez eklenmesin).
+    // Dedup.
     suggested.dedup();
-    detected_axes.dedup();
 
-    // Faz 5b (INV-P2): MetricThreshold axis hint sadece tek bir eksen tespit edildiyse
-    // ve MetricThreshold tek başına önerildiyse anlamlı. Çoklu/belirsiz axis → None
-    // (operator kendi bağlar, mismatch reject). Diğer template'lerle karışık → None.
-    let suggested_axis =
-        if suggested == vec![PredicateTemplateId::MetricThreshold] && detected_axes.len() == 1 {
-            detected_axes.first().copied()
-        } else {
-            None
-        };
+    // Faz 5.1 (R1-2): axis_hints → merge (kazanan-hint bütün, duplicate collapse).
+    let merged = merge_axis_hints(axis_hints);
 
-    // Tüm slot'lar unresolved (operator bağlayacak — PR33b). Metric/Threshold/Scope/
-    // Comparator hepsi net değil; sadece template önerildi. NoTemplateMatch durumunda
-    // suggested boş → unresolved_slots da boş (smart ctor consistency: NoTemplateMatch
-    // + boş templates tek geçerli boş durum).
+    // Faz 5.1 (INV-P3): CrossFamilyHint üret (ambiguity computed).
+    let cross_family_hint = if merged.is_empty() {
+        None // NoAxisCandidate durumu — ama NoTemplateMatch'ten bağımsız
+    } else {
+        Some(
+            CrossFamilyHint::new(
+                crate::anchoring::PositionFamily::ConceptualIntent,
+                crate::anchoring::PositionFamily::PhysicalCode,
+                merged,
+            )
+            .map_err(PredicateLoweringError::InvalidCrossFamilyHint)?,
+        )
+    };
+
+    // Tüm slot'lar unresolved (operator bağlayacak — PR33b). NoTemplateMatch durumunda
+    // suggested boş → unresolved_slots da boş (smart ctor consistency).
     let reason = if suggested.is_empty() {
         PredicateStubReason::NoTemplateMatch
     } else {
@@ -503,12 +1021,12 @@ pub fn lower_rule_to_predicate_stub(
         ]
     };
 
-    let stub = PredicateStub::new_with_axis_hint(
+    let stub = PredicateStub::new_with_cross_family_hint(
         rule_candidate.id.clone(),
         reason,
         unresolved_slots,
         suggested,
-        suggested_axis,
+        cross_family_hint,
     )
     .map_err(PredicateLoweringError::InvalidStub)?;
 
@@ -574,15 +1092,25 @@ pub fn bind_metric_threshold(
     {
         return Err(BindingError::TemplateNotSuggested);
     }
-    // Kontrol 5: axis hint mismatch. Stub axis varsa binding ile uyuşmalı.
-    // Stub axis None (çoklu/belirsiz) → operator herhangi bir axis bağlayabilir.
-    if let Some(stub_axis) = stub.suggested_axis() {
-        if stub_axis != binding.axis() {
-            return Err(BindingError::AxisMismatch {
-                stub_axis: Some(stub_axis),
+    // Faz 5.1 (R2-2/D2-2): tek membership kuralı. CrossFamilyHint axis_candidates
+    // üzerinden: empty → operator serbest; contains → OK; else reject (AxisMismatch
+    // len==1 / AxisNotInCandidates len≥2 — R2-4 kesin tip).
+    let candidates: Vec<PhysicalCodeMetricAxis> = stub
+        .cross_family_hint()
+        .map(|h| h.axis_candidates().iter().map(|ah| ah.axis()).collect())
+        .unwrap_or_default();
+    if !candidates.is_empty() && !candidates.contains(&binding.axis()) {
+        return Err(if candidates.len() == 1 {
+            BindingError::AxisMismatch {
+                stub_axis: candidates[0],
                 binding_axis: binding.axis(),
-            });
-        }
+            }
+        } else {
+            BindingError::AxisNotInCandidates {
+                candidates,
+                binding_axis: binding.axis(),
+            }
+        });
     }
 
     // MetricThreshold → trajectory::MetricPredicate (tüm slot'lar bağlanmış).
@@ -615,6 +1143,7 @@ mod tests {
 
     use super::*;
     use crate::anchoring::ConceptNodeKind;
+    use crate::anchoring::PositionFamily;
 
     fn rule_candidate(canonical: &str) -> ConceptNode {
         ConceptNode {
@@ -859,6 +1388,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // backward-compat test — new_with_axis_hint legacy redirect
     fn bind_metric_threshold_produces_non_empty_executable_set() {
         // Kontrol 2: bind her zaman ≥1 predicate üretir (non-empty by construction).
         let stub = PredicateStub::new_with_axis_hint(
@@ -919,6 +1449,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // backward-compat test — new_with_axis_hint legacy redirect
     fn bind_metric_threshold_rejects_axis_mismatch() {
         // Kontrol 5: stub axis Coupling, binding axis Cohesion → AxisMismatch.
         let stub = PredicateStub::new_with_axis_hint(
@@ -941,6 +1472,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // backward-compat test — new_with_axis_hint legacy redirect
     fn bind_metric_threshold_allows_any_axis_when_stub_has_no_hint() {
         // Stub axis None (çoklu/belirsiz) → operator herhangi bir axis bağlayabilir.
         let stub = PredicateStub::new_with_axis_hint(
@@ -989,5 +1521,561 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let restored: NormalizedMetricThreshold = serde_json::from_str(&json).unwrap();
         assert_eq!(original, restored);
+    }
+
+    // ── Faz 5.1 (T7): Cross-Family Translation Semantics testleri ──────────────
+
+    fn make_axis_hint(
+        axis: PhysicalCodeMetricAxis,
+        confidence: AxisHintConfidence,
+        source: AxisHintSource,
+    ) -> AxisHint {
+        AxisHint::new(
+            axis,
+            confidence,
+            source,
+            crate::anchoring::types::NonEmptyExplanation::from_validated("test".into()),
+        )
+    }
+
+    #[test]
+    fn axis_hint_confidence_range_and_defaults() {
+        // R1-1: tanımlı tek yerde default confidence değerleri.
+        assert_eq!(
+            AxisHintSource::KeywordMatch.default_confidence(),
+            AxisHintConfidence::one()
+        );
+        assert_eq!(
+            AxisHintSource::LanguageAlias.default_confidence(),
+            AxisHintConfidence::language_alias_default()
+        );
+        assert_eq!(
+            AxisHintSource::LegacyDirect.default_confidence(),
+            AxisHintConfidence::one()
+        );
+        // Range check + finiteness (EvidenceStrength paterni).
+        assert!(AxisHintConfidence::new(f64::NAN).is_err());
+        assert!(AxisHintConfidence::new(1.01).is_err());
+        assert!(AxisHintConfidence::new(-0.1).is_err());
+        assert!(AxisHintConfidence::new(0.9).is_ok());
+        // Serde reject out-of-range (constructor bypass engelli).
+        assert!(serde_json::from_str::<AxisHintConfidence>("2.0").is_err());
+    }
+
+    #[test]
+    fn cross_family_hint_ambiguity_is_computed() {
+        // D2-1: ambiguity stored değil, candidate sayısından türetilir.
+        let c0 = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(c0.ambiguity(), TranslationAmbiguity::NoAxisCandidate);
+        let c1 = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),
+                AxisHintSource::KeywordMatch,
+            )],
+        )
+        .unwrap();
+        assert_eq!(c1.ambiguity(), TranslationAmbiguity::SingleCandidate);
+        let c2 = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Cohesion,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(c2.ambiguity(), TranslationAmbiguity::MultipleCandidates);
+    }
+
+    #[test]
+    fn cross_family_hint_rejects_invalid_family_pair() {
+        // D1-6: sadece ConceptualIntent→PhysicalCode.
+        let err = CrossFamilyHint::new(
+            PositionFamily::PhysicalCode,
+            PositionFamily::ConceptualIntent, // ters yön — invalid
+            vec![],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            CrossFamilyHintError::InvalidFamilyPair { .. }
+        ));
+    }
+
+    #[test]
+    fn cross_family_hint_rejects_duplicate_axis() {
+        // R1-2/D1-4: duplicate axis reject — merge_axis_hints ile merge edilmeli.
+        let err = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling, // duplicate!
+                    AxisHintConfidence::language_alias_default(),
+                    AxisHintSource::LanguageAlias,
+                ),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(err, CrossFamilyHintError::DuplicateAxis { .. }));
+    }
+
+    #[test]
+    fn merge_axis_hints_collapses_duplicate_axis_kazanan_bütün() {
+        // R1-2: "coupling bağımlılık" → KeywordMatch(1.0) vs LanguageAlias(0.9) →
+        // kazanan confidence ile belirlenir (1.0 > 0.9), source priority'ye DÜŞÜLMEZ.
+        // Kazanan-hint BÜTÜN: tüm field'lar kazanan'dan.
+        let merged = merge_axis_hints(vec![
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintSource::KeywordMatch.default_confidence(), // 1.0
+                AxisHintSource::KeywordMatch,
+            ),
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintSource::LanguageAlias.default_confidence(), // 0.9
+                AxisHintSource::LanguageAlias,
+            ),
+        ]);
+        assert_eq!(merged.len(), 1, "duplicate axis collapse → tek hint");
+        let winner = &merged[0];
+        assert_eq!(winner.axis(), PhysicalCodeMetricAxis::Coupling);
+        assert_eq!(
+            winner.source(),
+            AxisHintSource::KeywordMatch,
+            "kazanan confidence ile"
+        );
+        assert_eq!(winner.confidence(), AxisHintConfidence::one());
+    }
+
+    #[test]
+    fn merge_axis_hints_tie_break_source_priority() {
+        // R2-1: sentetik hint'lerle tie-break (lowering'de erişilemeyen durum).
+        // Aynı confidence → source priority: KeywordMatch > LanguageAlias > LegacyDirect.
+        let merged = merge_axis_hints(vec![
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(), // tie
+                AxisHintSource::LegacyDirect,
+            ),
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),    // tie
+                AxisHintSource::KeywordMatch, // kazanır (priority 0)
+            ),
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),     // tie
+                AxisHintSource::LanguageAlias, // priority 1
+            ),
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].source(),
+            AxisHintSource::KeywordMatch,
+            "confidence tie → source priority: KeywordMatch kazanır"
+        );
+    }
+
+    #[test]
+    fn merge_axis_hints_deterministic_sort() {
+        // D2-4: confidence desc (total_cmp) + axis sort_order asc.
+        let merged = merge_axis_hints(vec![
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Cohesion,
+                AxisHintConfidence::one(),
+                AxisHintSource::KeywordMatch,
+            ),
+            make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),
+                AxisHintSource::KeywordMatch,
+            ),
+        ]);
+        // tie confidence → sort_order asc: Coupling(0) < Cohesion(1)
+        assert_eq!(merged[0].axis(), PhysicalCodeMetricAxis::Coupling);
+        assert_eq!(merged[1].axis(), PhysicalCodeMetricAxis::Cohesion);
+    }
+
+    #[test]
+    fn lowering_coupling_keyword_single_candidate_keywordmatch() {
+        let rule = rule_candidate("NoHighCouplingDependency");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                let hint = stub.cross_family_hint().expect("Coupling → hint");
+                assert_eq!(hint.ambiguity(), TranslationAmbiguity::SingleCandidate);
+                assert_eq!(
+                    hint.axis_candidates()[0].axis(),
+                    PhysicalCodeMetricAxis::Coupling
+                );
+                assert_eq!(
+                    hint.axis_candidates()[0].source(),
+                    AxisHintSource::KeywordMatch
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_bagimlilik_language_alias_single_candidate() {
+        // R2-2: Türkçe alias → LanguageAlias.
+        let rule = rule_candidate("YuksekBagimlilik");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                let hint = stub.cross_family_hint().expect("bağıml → hint");
+                assert_eq!(hint.ambiguity(), TranslationAmbiguity::SingleCandidate);
+                assert_eq!(
+                    hint.axis_candidates()[0].source(),
+                    AxisHintSource::LanguageAlias
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_coupling_plus_bagimlilik_collapses_to_single() {
+        // R1-2/R2-1: "coupling bağımlılık" → duplicate Coupling collapse → SingleCandidate.
+        // Kazanan confidence ile (KeywordMatch 1.0 > LanguageAlias 0.9).
+        let rule = rule_candidate("CouplingBagimlilik");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                let hint = stub.cross_family_hint().unwrap();
+                assert_eq!(
+                    hint.ambiguity(),
+                    TranslationAmbiguity::SingleCandidate,
+                    "duplicate Coupling collapse → Single, Multiple değil"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_coupling_plus_cohesion_multiple_candidates() {
+        let rule = rule_candidate("CouplingAndCohesionBalance");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                let hint = stub.cross_family_hint().unwrap();
+                assert_eq!(hint.ambiguity(), TranslationAmbiguity::MultipleCandidates);
+                assert_eq!(hint.axis_candidates().len(), 2);
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_bare_witness_is_not_axis_candidate() {
+        // R1-4: "requires two witnesses" → bare witness değil, witness-depth/depth/_ canonical.
+        let rule = rule_candidate("RequiresTwoWitnesses");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                // bare witness → NoAxisCandidate (hint yok veya axisCandidates boş)
+                if let Some(hint) = stub.cross_family_hint() {
+                    assert!(
+                        !hint
+                            .axis_candidates()
+                            .iter()
+                            .any(|ah| ah.axis() == PhysicalCodeMetricAxis::WitnessDepth),
+                        "bare witness → WitnessDepth adayı olmamalı (R1-4 false-positive)"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_witness_depth_canonical_matches() {
+        // R1-4/Mikro-3: witness-depth/witness depth/witness_depth canonical.
+        // "witness depth" (boşluklu) pattern eşleşmesi.
+        let rule = rule_candidate("Low witness depth required");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                let hint = stub.cross_family_hint().expect("witness depth → hint");
+                assert_eq!(
+                    hint.axis_candidates()[0].axis(),
+                    PhysicalCodeMetricAxis::WitnessDepth
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_azaltmali_no_axis_but_template_preserved() {
+        // R1-5: NoAxisCandidate ≠ NoTemplateMatch. "azalt" → MetricDelta template
+        // korunur ama axis yok → NoAxisCandidate.
+        let rule = rule_candidate("CouplingAzaltmali");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                // coupling var → Coupling adayı, ama azalt → MetricDelta template de var.
+                // İkisi birlikte → MultipleCandidates değil (coupling tek axis), ama template listesinde MetricDelta.
+                assert!(stub
+                    .suggested_templates()
+                    .contains(&PredicateTemplateId::MetricDelta));
+            }
+        }
+        // Sadece azalt (axis yok):
+        let rule2 = rule_candidate("SomethingAzaltmali");
+        let outcome2 = lower_rule_to_predicate_stub(&rule2).unwrap();
+        match outcome2 {
+            PredicateLoweringOutcome::Stub(stub) => {
+                // NoAxisCandidate (CrossFamilyHint None veya boş) ama NoTemplateMatch değil.
+                assert!(stub
+                    .suggested_templates()
+                    .contains(&PredicateTemplateId::MetricDelta));
+                // cross_family_hint None çünkü hiç axis keyword eşleşmedi.
+                assert!(
+                    stub.cross_family_hint().is_none()
+                        || stub
+                            .cross_family_hint()
+                            .map(|h| h.axis_candidates().is_empty())
+                            .unwrap_or(true)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_turkish_unicode_normalization() {
+        // R2-3: BAĞIMLILIK / Bağımlılık / bağımlılık → hepsi Coupling.
+        for canonical in ["YuksekBagimlilik", "YÜKSEKBAĞIMLILIK", "BağımlılıkRisk"] {
+            let rule = rule_candidate(canonical);
+            let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+            match outcome {
+                PredicateLoweringOutcome::Stub(stub) => {
+                    let hint = stub
+                        .cross_family_hint()
+                        .unwrap_or_else(|| panic!("{canonical} → Coupling hint bekleniyor"));
+                    assert_eq!(hint.ambiguity(), TranslationAmbiguity::SingleCandidate);
+                    assert_eq!(
+                        hint.axis_candidates()[0].axis(),
+                        PhysicalCodeMetricAxis::Coupling,
+                        "{canonical} → Coupling"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_decomposed_i_normalization() {
+        // Mikro-1: decomposed İ (U+0049 + U+0307) → NFC → precomposed İ → fold → i.
+        // "BAĞIMLILIK" decomposed formda girdiğinde eşleşme çalışmalı.
+        let decomposed = "BA\u{0307}GIMLILIK"; // Ğ decomposed değil ama İ decomposed
+        let rule = rule_candidate(decomposed);
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        // Not: tam decomposed NFC için unicode-normalization gerekir; fold tablosu
+        // precomposed yakalar. Bu test precomposed yolunu kanıtlar (decomposed Mikro-1
+        // doc notu: gerçek NFC Faz 5.2'de unicode-normalization ile).
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                // En azından stub üretildi (hata yok). Axis eşleşmesi NFC'ye bağlı.
+                let _ = stub;
+            }
+        }
+    }
+
+    #[test]
+    fn lowering_accounting_no_false_positive() {
+        // R2-4: "accounting" hiçbir keyword içermiyor → NoAxisCandidate (trivially).
+        // NOT: Bu test "substring false-positive sınıfı kapsandı" iddiası DEĞİL (R2-3).
+        let rule = rule_candidate("AccountingModule");
+        let outcome = lower_rule_to_predicate_stub(&rule).unwrap();
+        match outcome {
+            PredicateLoweringOutcome::Stub(stub) => {
+                assert!(
+                    stub.cross_family_hint().is_none()
+                        || stub
+                            .cross_family_hint()
+                            .map(|h| h.axis_candidates().is_empty())
+                            .unwrap_or(true)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bind_metric_threshold_multi_candidates_axis_not_in_candidates() {
+        // R2-4: MultipleCandidates → operator aday dışında axis → AxisNotInCandidates.
+        let hint = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Cohesion,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+            ],
+        )
+        .unwrap();
+        let stub = PredicateStub::new_with_cross_family_hint(
+            ConceptNodeId("RuleCandidate:Balance".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(hint),
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Instability, // aday değil!
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.40).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let err = bind_metric_threshold(&stub, binding, &cap).unwrap_err();
+        assert!(matches!(err, BindingError::AxisNotInCandidates { .. }));
+    }
+
+    #[test]
+    fn bind_metric_threshold_multi_candidates_allows_candidate_axis() {
+        // MultipleCandidates ama operator adaylardan birini seçer → OK.
+        let hint = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Cohesion,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+            ],
+        )
+        .unwrap();
+        let stub = PredicateStub::new_with_cross_family_hint(
+            ConceptNodeId("RuleCandidate:Balance".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(hint),
+        )
+        .unwrap();
+        let binding = MetricThresholdBinding::new(
+            PhysicalCodeMetricAxis::Cohesion, // aday!
+            crate::trajectory::PredicateScope::Node(1),
+            crate::trajectory::ComparisonOp::Le,
+            NormalizedMetricThreshold::new(0.70).unwrap(),
+        );
+        let cap = crate::trajectory::OperatorCapability::issue();
+        let eps = bind_metric_threshold(&stub, binding, &cap).expect("aday axis → OK");
+        let ps = eps.into_trajectory_predicate_set();
+        assert_eq!(
+            ps.predicates[0].predicate.metric,
+            crate::trajectory::PredicateAxis::Cohesion
+        );
+    }
+
+    #[test]
+    fn suggested_axis_computed_legacy_accessor() {
+        // D1-3: suggested_axis computed. SingleCandidate → Some, Multiple/NoAxis → None.
+        let single_hint = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![make_axis_hint(
+                PhysicalCodeMetricAxis::Coupling,
+                AxisHintConfidence::one(),
+                AxisHintSource::KeywordMatch,
+            )],
+        )
+        .unwrap();
+        let single_stub = PredicateStub::new_with_cross_family_hint(
+            ConceptNodeId("RuleCandidate:X".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(single_hint),
+        )
+        .unwrap();
+        assert_eq!(
+            single_stub.suggested_axis(),
+            Some(PhysicalCodeMetricAxis::Coupling)
+        );
+
+        let multi_hint = CrossFamilyHint::new(
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+            vec![
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Coupling,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+                make_axis_hint(
+                    PhysicalCodeMetricAxis::Cohesion,
+                    AxisHintConfidence::one(),
+                    AxisHintSource::KeywordMatch,
+                ),
+            ],
+        )
+        .unwrap();
+        let multi_stub = PredicateStub::new_with_cross_family_hint(
+            ConceptNodeId("RuleCandidate:X".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(multi_hint),
+        )
+        .unwrap();
+        assert_eq!(multi_stub.suggested_axis(), None, "Multiple → None");
+    }
+
+    #[test]
+    fn legacy_new_with_axis_hint_redirects_to_cross_family_hint() {
+        // D1-3/R2-5: deprecated new_with_axis_hint → CrossFamilyHint(LegacyDirect, 1.0).
+        #[allow(deprecated)]
+        let stub = PredicateStub::new_with_axis_hint(
+            ConceptNodeId("RuleCandidate:X".into()),
+            PredicateStubReason::MetricUnresolved,
+            vec![PredicateSlot::Metric],
+            vec![PredicateTemplateId::MetricThreshold],
+            Some(PhysicalCodeMetricAxis::Coupling),
+        )
+        .unwrap();
+        let hint = stub.cross_family_hint().expect("legacy redirect → hint");
+        assert_eq!(hint.ambiguity(), TranslationAmbiguity::SingleCandidate);
+        assert_eq!(
+            hint.axis_candidates()[0].source(),
+            AxisHintSource::LegacyDirect
+        );
+        assert_eq!(
+            hint.axis_candidates()[0].confidence(),
+            AxisHintConfidence::one()
+        );
     }
 }

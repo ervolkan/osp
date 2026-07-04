@@ -12,4 +12,4 @@ error: cannot construct `PredicateStub` with struct literal syntax due to privat
 14 |         suggested_templates: vec![PredicateTemplateId::MetricThreshold],
    |         --------------------------------------------------------------- private field
    |
-   = note: ...and other private field `suggested_axis` that was not provided
+   = note: ...and other private field `cross_family_hint` that was not provided

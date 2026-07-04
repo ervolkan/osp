@@ -19,7 +19,9 @@ Paper 2'nin `paper2-notes/` pattern'ini izler (README + stage dosyaları + evide
 | Faz 4.1 | Planlandı | PositionSnapshot/HasPosition graph wiring (Faz 4'ten ayrıldı) |
 | **Faz 5a** | ✅ PR33a | PredicateStub bridge — TaskCandidate lane + RuleCandidate→PredicateStub + INV-P1 type-level |
 | **Faz 5b** | ✅ PR33b | Navigator bridge — MetricThreshold slot binding + Accepted TaskCandidate→Task genesis + INV-P2 type-level |
-| Faz 5.1 | Planlandı | Diğer 3 template (MetricDelta/Evidence/Relation) + cross-family translation maturation + OperatorCapability hardening |
+| **Faz 5.1** | ✅ PR36 | Cross-family translation semantics — CrossFamilyHint + ambiguity-preserving axis hinting + INV-P3 type-level |
+| Faz 5.2 | Planlandı | MetricDelta executable + glossary genişletme + ayraç normalizasyonu |
+| Faz 5.3 | Planlandı | EvidenceRequired + RelationExists executable |
 | Faz 6 | Planlandı | Concept Synthesis (code repo → concept hipotezleri) |
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
@@ -42,6 +44,7 @@ Mekanizma önce deterministic olarak kanıtlanır, stochastic katmanlar sonra ek
 - [`faz4-code-evidence.md`](faz4-code-evidence.md) — Faz 4 CodeEvidenceProvider + evidence-gated ImplementedBy + INV-C6
 - [`faz5a-predicate-stub-bridge.md`](faz5a-predicate-stub-bridge.md) — Faz 5a PredicateStub bridge + TaskCandidate lane + INV-P1
 - [`faz5b-navigator-bridge.md`](faz5b-navigator-bridge.md) — Faz 5b Navigator bridge + MetricThreshold slot binding + INV-P2
+- [`faz5-1-cross-family-translation.md`](faz5-1-cross-family-translation.md) — Faz 5.1 Cross-family translation semantics + INV-P3
 
 ## Evidence
 
