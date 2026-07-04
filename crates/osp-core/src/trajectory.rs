@@ -46,29 +46,39 @@ pub type TaskAttemptId = u64;
 // OperatorCapability (INV-T2 — operator-only genesis, type-level)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// INV-T2 — Trusted operator capability token. **Private constructor** (`_private: ()`)
-/// sayesinde agent kodu bu tipi üretemez; sadece trusted boundary'de alınır.
+/// INV-T2 — Operator capability token. `_private: ()` field struct literal forge'i
+/// engeller (type-level). Capability issuance explicit trusted-boundary API ile.
 ///
 /// `Trajectory::new()` ve `Milestone`/`Task` genesis (PR34 `task_bridge` dahil) bu
-/// capability'yi zorunlu kılar → agent hedef belirleyemez (INV-T2, Seçenek A — insan
-/// mimar). PermissionMask (runtime value, agent üretebilir) YERİNE capability tipi
-/// compile-time korur.
+/// capability'yi zorunlu kılar → imza seviyesinde caller bir operator authority
+/// temsil etmelidir (INV-T2, Seçenek A — insan mimar). PermissionMask (runtime value,
+/// agent üretebilir) YERİNE capability tipi ismiyle "trusted session" sorumluluğunu
+/// çağırana yükler.
 ///
-/// # Hardening (PR35)
-/// Eski `issue()` public'ti — dış crate kolayca capability mint edebiliyordu. Artık:
-/// - **`pub(crate) issue()`** — osp-core içi (TCB) sadece.
-/// - **`pub issue_for_operator_session()`** — downstream trusted boundary (osp-cli
-///   operator mode, osp-mcp operator-mode startup). İsmi "trusted caller sorumluluğu"
-///   anlatır — bu metodu çağıran kod operator authority boundary'sidir.
-/// - **`#[cfg(test)] issue_for_tests()`** — osp-core testleri.
+/// # PR35 — trusted-boundary API hardening (claim düzeltmesi)
+/// Eski `issue()` public'ti — generic isim, herkes çağırabiliyordu, semantik belirsizdi.
+/// PR35:
+/// - **`pub(crate) issue()`** — osp-core içi (TCB + testler) sadece. External erişilemez.
+/// - **`pub issue_for_operator_session()`** — downstream trusted-boundary. İsmi kasıtlı:
+///   çağıran kod operator authority boundary'sidir ve runtime'da operator olduğunu
+///   doğrulamış olmalı (ServerMode, CLI flag, vb.).
 ///
-/// Type-level forge (struct literal) zaten engelliydi (private field). PR35 ile
-/// *unforgeable capability convention* → gerçek type-level boundary'ye dönüşür.
+/// **Claim seviyesi (düzeltildi — D1 review PR35):**
+/// - Type-level forge (struct literal): KAPALI (private field).
+/// - `issue()` external: KAPALI (pub(crate)).
+/// - `issue_for_operator_session()` external: **AÇIK** — bu public API'dir.
+///
+/// Bu, **tam type-level unforgeability DEĞİL**, *trusted-boundary naming hardening*'dir.
+/// *"Untrusted callers must not call issue_for_operator_session; enforcement is at the
+/// operator-session boundary (runtime: ServerMode / CLI flag)."* Gerçek type-level
+/// unforgeability için operator console (Faz 8) core içinde trusted entrypoint getirecek
+/// — o zaman `issue_for_operator_session()` da pub(crate)'e inebilir.
 ///
 /// ```
 /// use osp_core::trajectory::OperatorCapability;
 /// // Agent kodu: OperatorCapability { _private: () } → COMPILE ERROR (private field)
-/// // Trusted boundary: OperatorCapability::issue_for_operator_session() → OK
+/// // External crate: OperatorCapability::issue() → COMPILE ERROR (pub(crate))
+/// // Trusted-boundary: OperatorCapability::issue_for_operator_session() → OK (public)
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorCapability {
@@ -88,8 +98,11 @@ impl OperatorCapability {
     /// mode startup). Bu metodu çağıran kod **operator authority boundary'sidir** —
     /// çağıran, operator olduğunu runtime'da doğrulamış olmalı (ServerMode, CLI flag, vb.).
     ///
-    /// İsim kasıtlı: "trusted session" sorumluluğunu anlatır. Agent/automation kodu bu
-    /// metodu doğrudan çağırmamalı; operator console / human-in-the-loop gerek.
+    /// # Enforcement boundary (runtime, compile-time DEĞİL)
+    /// Bu public API'dir — type-level unforgeability sağlamaz. Enforcement operator-session
+    /// boundary'sinde runtime'dadır. *"Untrusted callers must not call this; enforcement is
+    /// at the operator-session boundary."* Gerçek type-level boundary için Faz 8 operator
+    /// console core içinde trusted entrypoint getirecek.
     pub fn issue_for_operator_session() -> Self {
         Self { _private: () }
     }
