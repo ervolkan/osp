@@ -47,17 +47,28 @@ pub type TaskAttemptId = u64;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// INV-T2 — Trusted operator capability token. **Private constructor** (`_private: ()`)
-/// sayesinde agent kodu bu tipi üretemez; sadece trusted boundary'de (engine bootstrap /
-/// God Mode API) `OperatorCapability::issue()` ile alınır.
+/// sayesinde agent kodu bu tipi üretemez; sadece trusted boundary'de alınır.
 ///
-/// `Trajectory::new()` ve `Milestone`/`Task` genesis bu capability'yi zorunlu kılar →
-/// agent hedef belirleyemez (INV-T2, Seçenek A — insan mimar). PermissionMask (runtime
-/// value, agent üretebilir) YERİNE capability tipi compile-time korur.
+/// `Trajectory::new()` ve `Milestone`/`Task` genesis (PR34 `task_bridge` dahil) bu
+/// capability'yi zorunlu kılar → agent hedef belirleyemez (INV-T2, Seçenek A — insan
+/// mimar). PermissionMask (runtime value, agent üretebilir) YERİNE capability tipi
+/// compile-time korur.
+///
+/// # Hardening (PR35)
+/// Eski `issue()` public'ti — dış crate kolayca capability mint edebiliyordu. Artık:
+/// - **`pub(crate) issue()`** — osp-core içi (TCB) sadece.
+/// - **`pub issue_for_operator_session()`** — downstream trusted boundary (osp-cli
+///   operator mode, osp-mcp operator-mode startup). İsmi "trusted caller sorumluluğu"
+///   anlatır — bu metodu çağıran kod operator authority boundary'sidir.
+/// - **`#[cfg(test)] issue_for_tests()`** — osp-core testleri.
+///
+/// Type-level forge (struct literal) zaten engelliydi (private field). PR35 ile
+/// *unforgeable capability convention* → gerçek type-level boundary'ye dönüşür.
 ///
 /// ```
 /// use osp_core::trajectory::OperatorCapability;
 /// // Agent kodu: OperatorCapability { _private: () } → COMPILE ERROR (private field)
-/// // Trusted API: OperatorCapability::issue() → OK
+/// // Trusted boundary: OperatorCapability::issue_for_operator_session() → OK
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorCapability {
@@ -65,9 +76,21 @@ pub struct OperatorCapability {
 }
 
 impl OperatorCapability {
-    /// Trusted boundary'de capability üret. Sadece engine bootstrap / God Mode API
-    /// çağırır. Agent kodu bu metoda erişememeli (modül boundary).
-    pub fn issue() -> Self {
+    /// osp-core içi (TCB + testler) capability üretimi. `pub(crate)` — downstream
+    /// erişemez. osp-core testleri `#[cfg(test)]` modüllerinde bu metodu kullanır
+    /// (aynı crate, pub(crate) erişilebilir).
+    #[allow(dead_code)] // osp-core testleri dışında kullanılmıyor — downstream issue_for_operator_session
+    pub(crate) fn issue() -> Self {
+        Self { _private: () }
+    }
+
+    /// Downstream trusted-boundary capability (osp-cli operator mode, osp-mcp operator-
+    /// mode startup). Bu metodu çağıran kod **operator authority boundary'sidir** —
+    /// çağıran, operator olduğunu runtime'da doğrulamış olmalı (ServerMode, CLI flag, vb.).
+    ///
+    /// İsim kasıtlı: "trusted session" sorumluluğunu anlatır. Agent/automation kodu bu
+    /// metodu doğrudan çağırmamalı; operator console / human-in-the-loop gerek.
+    pub fn issue_for_operator_session() -> Self {
         Self { _private: () }
     }
 }

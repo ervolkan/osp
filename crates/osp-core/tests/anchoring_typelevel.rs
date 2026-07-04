@@ -38,4 +38,7 @@ fn type_level_invariants_compile_fail() {
     // Faz 5b — INV-P2 (executable predicate set type-level)
     t.compile_fail("tests/compile_fail/cP2_executable_predicate_set_literal.rs");
     t.compile_fail("tests/compile_fail/cP2_executable_predicate_set_deserialize.rs");
+    // PR35 — INV-T2 (OperatorCapability hardening, type-level)
+    t.compile_fail("tests/compile_fail/t2_operator_capability_issue_external.rs");
+    t.compile_fail("tests/compile_fail/t2_operator_capability_literal.rs");
 }

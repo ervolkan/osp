@@ -152,7 +152,8 @@ impl OspMcpServer {
     /// Yeni server kur (startup'ta main.rs çağırır). LLM client inject edilir.
     pub fn new(workspace: Workspace, mode: ServerMode, llm: Arc<dyn LlmClient>) -> Self {
         let operator_capability = if mode.allows_operator_tools() {
-            Some(OperatorCapability::issue())
+            // Trusted-boundary API (PR35 hardening) — operator-mode startup.
+            Some(OperatorCapability::issue_for_operator_session())
         } else {
             None
         };

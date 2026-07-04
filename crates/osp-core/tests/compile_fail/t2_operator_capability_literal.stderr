@@ -1,0 +1,5 @@
+error[E0451]: field `_private` of struct `OperatorCapability` is private
+ --> tests/compile_fail/t2_operator_capability_literal.rs:8:37
+  |
+8 |     let _cap = OperatorCapability { _private: () };
+  |                                     ^^^^^^^^ private field

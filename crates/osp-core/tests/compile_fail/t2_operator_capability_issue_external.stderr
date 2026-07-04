@@ -1,0 +1,10 @@
+error[E0624]: associated function `issue` is private
+ --> tests/compile_fail/t2_operator_capability_issue_external.rs:9:36
+  |
+9 |     let _cap = OperatorCapability::issue();
+  |                                    ^^^^^ private associated function
+  |
+ ::: src/trajectory.rs
+  |
+  |     pub(crate) fn issue() -> Self {
+  |     ----------------------------- private associated function defined here

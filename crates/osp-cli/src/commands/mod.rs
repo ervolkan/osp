@@ -216,7 +216,8 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
         TaskPolicy, TaskStatus, TrajectoryId,
     };
     // 4. Task registry (basit — coupling <= 0.55 predicate).
-    let _cap = OperatorCapability::issue(); // CLI = operator mode (INV-T2)
+    // CLI = operator mode (INV-T2) — trusted-boundary API (PR35 hardening).
+    let _cap = OperatorCapability::issue_for_operator_session();
     let mut task_registry = InMemoryTaskRegistry::new();
     let mut policy = TaskPolicy::default();
     policy.maneuver_limit = args.maneuver_limit;
