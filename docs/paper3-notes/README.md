@@ -25,6 +25,9 @@ Paper 2'nin `paper2-notes/` pattern'ini izler (README + stage dosyaları + evide
 | Faz 6 | Planlandı | Concept Synthesis (code repo → concept hipotezleri) |
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
+| **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
+| Faz 8b | Planlandı | SupersedeSession + ReopenSession + CLI `osp review` + desktop Cockpit |
+| Faz 8c | Planlandı | promote_to_accepted kaldırma (legacy path migrate) |
 
 ## Disiplin (§11)
 

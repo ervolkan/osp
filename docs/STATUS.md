@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-05 (Paper 3 Faz 5.1 tamamlandı, Paper 3 taslak yazımında)
+> **Son güncelleme:** 2026-07-05 (Paper 3 v1.1 public manuscript — arXiv editorial pass tamam, Zenodo yolunda)
 > **Detaylı roadmap:** [`agent-trajectory-roadmap.md`](agent-trajectory-roadmap.md)
 > **Invariant spec:** [`invariant-spec.md`](invariant-spec.md)
 > **MCP tasarım:** [`mcp-design.md`](mcp-design.md)
@@ -10,7 +10,7 @@
 OSP (Ontological Space Protocol / Software Physics) — software architecture analysis +
 AI agent navigation. Üç makale stratejisi: **Paper 1** (statik uzay, kanıtlandı v2.6) +
 **Paper 2** (dinamik/agent, draft v1.2 yazıldı) + **Paper 3** (Genesis Layer/Concept
-Anchoring, **omurga tamam — taslak yazımında**).
+Anchoring, **v1.1 public manuscript — arXiv adayı**).
 
 ---
 
@@ -29,14 +29,25 @@ G2c corpus runner ✅ G2c-1→5 TAMAM (RQ9 kanıt + gerçek LLM + external corpu
 osp-sdk (H)       ⬜ — TypeScript/Python/Rust bindings (opsiyonel)
 osp-desktop/3D    ⬜ E opsiyonel — trajectory correction UI
 Paper 2           ✍️ DRAFT v1.2 yazıldı (docs/paper2-draft-v1.md) — review sonrası arXiv adayı
-Paper 3           ✍️ OMRGA TAMAM — taslak yazımında (docs/paper3-draft dalı)
+Paper 3           ✅ v1.1 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52cc9c9)
 ```
 
 ## Paper 3 (Genesis Layer / Concept Anchoring) Durumu
 
-Paper 3 omurgası Faz 0-5.1 + 3 hardening PR ile tamamlandı. **Aşama 1 evidence freeze 4 review
-turu sonunda sertleştirildi** (canonical-kesme + marker-kaçırma tuzakları yapısal imkânsız).
-**Aşama 2 iskelet hazır** (`paper3-draft-v1.md`). Aşama 3 (bölüm dolgu) bekliyor.
+Paper 3 **v1.1 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
+tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
+için draft deposit bekliyor. **719 test, 0 development marker, 367 kelime abstract.**
+
+### Bu oturumda yapılanlar (PR #37-#42)
+
+| PR | İçerik |
+|---|---|
+| #37 | Aşama 1 evidence freeze hardening + held-out + metadata + conformance (4 review turu) |
+| #38 | Aşama 3 kalp bölümler: Abstract + §2 Motivating Example + §5 Cross-Family Translation |
+| #39 | Aşama 4 kalan bölümler: first-complete draft (§1, §3, §4, §6, §7, §8, §9-§12, Appendix, References) |
+| #40 | Faz 8a: OperatorReviewSession (INV-C12/C13, real promotion — protokolün eksik organı) |
+| #41 | Threat/limitations tightening (InReview sil, promote_to_accepted deprecated, 11 madde) |
+| #42 | arXiv editorial pass (Zenodo evidence pack, development markers temiz, public manuscript yüzeyi) |
 
 ### Fazlar
 
@@ -57,10 +68,15 @@ turu sonunda sertleştirildi** (canonical-kesme + marker-kaçırma tuzakları ya
 | Faz 6 | Planlandı | Concept Synthesis (code repo → concept hipotezleri) |
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
+| **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
+| Faz 8b | Planlandı | SupersedeSession + ReopenSession + CLI `osp review` + desktop Cockpit |
+| Faz 8c | Planlandı | promote_to_accepted kaldırma (legacy path migrate) |
 
-### Invariant'lar (11 Paper 3'e özgü)
+### Invariant'lar (13 Paper 3'e özgü + INV-T2 boundary)
 
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
+- **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)
+- **INV-C13** (no reviewed operator decision without record): Accepted/Rejected geçişi DecisionRecord ile atomik
 - **INV-P1** (predicate lowering): RuleCandidate → PredicateStub, never ExecutablePredicateSet
 - **INV-P2** (binding): keyword hint ≠ executable predicate — operator binding zorunlu
 - **INV-P3** (translation): ambiguity-preserving — translation proposes candidate meaning, binding creates commitment
@@ -139,27 +155,27 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 3 Aşama 3 (bölüm dolgu).** `docs/paper3-draft-v1.md` iskeleti hazır.
-- Aşama 1 (evidence freeze hardening + held-out + metadata + conformance) TAMAM (4 review turu)
-- Aşama 2 (iskelet) TAMAM
-- Aşama 3 (bölüm dolgu: abstract ~350 kelime + §1-§12 + Appendix + References) bekliyor
+**Paper 3 Zenodo → endorsement → arXiv.** Paper 3 v1.1 public manuscript hazır (`52cc9c9`).
+- v1.1 first-complete + Faz 8a real promotion + threat tightening + arXiv editorial TAMAM
+- **Sıradaki:** Zenodo evidence pack + P1/P2 deposit → 3 DOI → References doldur → endorsement → arXiv
+- Evidence pack hazır: `docs/paper3-notes/evidence-pack/` (README + MANIFEST)
 - Detaylı handoff: [`paper3-notes/HANDOFF.md`](paper3-notes/HANDOFF.md)
 
 Paper 2 v1.2 review ile arXiv adayı (docs/paper2-draft-v1.md).
-Paper 3 omurga tamam — Faz 6/7 paper sonrasına ertelendi.
+Paper 3 v1.1 public manuscript — Zenodo yolunda.
 
 ## Test Durumu
 
 ```
 cargo test --workspace --exclude osp-desktop
 ```
-- osp-core: 447 unit + integration (Paper 1/2/3 birleşik, 18 type-level trybuild)
+- osp-core: 494 unit + integration (Paper 1/2/3 birleşik, 22 type-level trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
 - osp-cli: smoke
 - osp-mcp: 8 unit + 7 INV-T1 integration
 - osp-spike: ~32
-- Toplam: 16+ test grubu, hepsi yeşil
+- Toplam: 719+ test, hepsi yeşil (`RUSTFLAGS="-D warnings"` temiz)
 
 ## Önemli Commit'ler
 
