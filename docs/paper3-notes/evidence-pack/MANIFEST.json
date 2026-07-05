@@ -1,0 +1,52 @@
+{
+  "manifest_version": "manifest.v1",
+  "artifact_for": "OSP Paper 3 — Concept Anchoring: From Human Sentences to Bound Project Work",
+  "author": "Volkan Er",
+  "orcid": "0009-0001-3685-4820",
+  "snapshot_date": "2026-07-05",
+  "license": "CC-BY-4.0",
+  "note": "sha256 values computed over repository LF-normalized content (canonical stored form). CRLF working-tree hashes will differ; repository-form is authoritative.",
+  "files": [
+    {
+      "file": "e2e-binding-chain-replay.json",
+      "purpose": "End-to-end binding chain: sentence to RuleCandidate to Task (8 steps, Step 1 real pipeline, Step 6 real promotion)",
+      "generated_by_test": "paper3_evidence.rs::build_e2e_binding_chain_replay",
+      "schema_version": "e2e-replay.v1",
+      "sha256": "be733f384a2d443d81243042b6f58362bfc6e847296d74c10e01a3336ebd62f3",
+      "paper_section": "7.4"
+    },
+    {
+      "file": "e2e-rejected-paths-replay.json",
+      "purpose": "Six rejected-path replays proving gates refuse invalid input (AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted, NotFound/StaleBasis, NotPromotableFrom)",
+      "generated_by_test": "paper3_evidence.rs::build_e2e_rejected_paths_replay",
+      "schema_version": "rejected-paths.v1",
+      "sha256": "66a9a892e5d67e4a0d5d1fbbd80a99c901616a6396532b0bfc369879a08d334e",
+      "paper_section": "7.5"
+    },
+    {
+      "file": "held-out-adversarial-fixtures.json",
+      "purpose": "Five held-out adversarial sentences (4 held_out + 1 regression_anchored) — non-tautological conformance",
+      "generated_by_test": "paper3_heldout.rs::build_held_out_fixtures_json",
+      "schema_version": "held-out.v1",
+      "sha256": "12babf65966e89d99d4d98460369695a3a54a4e52f2deceacbbb40d43fad7a41",
+      "paper_section": "7.3"
+    },
+    {
+      "file": "conformance-results.json",
+      "purpose": "13 golden + 5 held-out conformance results (five-state: Conform 12, PartialConform 2, KnownLimitation 2, RejectAsExpected 2, UnexpectedFailure 0)",
+      "generated_by_test": "analyst-assigned, test-referenced (anchoring_mvp.rs + paper3_heldout.rs)",
+      "schema_version": "conformance.v1",
+      "sha256": "ffadf793ec562af069701411362ec7904518ca266016433b376d2b252980fb63",
+      "paper_section": "7.2"
+    },
+    {
+      "file": "run-metadata.json",
+      "purpose": "Volatile run info: frozen commit, rust toolchain, osp-core test count, trybuild counts, evidence strata",
+      "generated_by_test": "manual + frozen",
+      "schema_version": "run-metadata.v1",
+      "sha256": "1bdda5e5ace7faf37ae04fae8f77e6cdeaa31fd0ae88919dc9b912794bf724f1",
+      "paper_section": "7 (metadata)"
+    }
+  ],
+  "integrity_note": "Each sha256 is recorded both here and in run-metadata.json. The repository-form (LF-normalized) sha256 is authoritative; Windows CRLF checkouts will produce different working-tree hashes."
+}
