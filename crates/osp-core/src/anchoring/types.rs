@@ -195,7 +195,7 @@ impl std::error::Error for SimilarityOutOfRange {}
 // Faz 4 modelleme kararı (D15 — provenance yorumu): "Observed" yeni bir `DecisionStatus`
 // variantı DEĞİLDİR. İki lane net ayrılır:
 //
-//   DecisionStatus        = graph acceptance lane (Candidate→InReview→Accepted)
+//   DecisionStatus        = graph acceptance lane (Candidate→Accepted)
 //   ObservedCodeEvidence  = epistemik provenance lane (MetricSource'tan)
 //
 // "Observed code reality is evidence, not acceptance." — bir CodeEntity node'unun

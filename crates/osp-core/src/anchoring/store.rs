@@ -134,9 +134,13 @@ pub trait AnchorStore {
     ///
     /// **Legacy/trusted-test path (Faz 8a scope out):** Bu metod in-crate testler ve
     /// `seed_trusted` bootstrap için var; `DecisionRecord` ledger yazMAZ. INV-C13
-    /// ("no decision without record") kapsamı *reviewed operator decision path*'tir
-    /// (`apply_decision`); bu legacy path trusted boundary exception olarak kabul edilir.
-    /// Operator console (Faz 8b) bu legacy yolu deprecated edecek.
+    /// ("no reviewed operator decision without record") kapsamı *reviewed operator
+    /// decision path*'tir (`apply_decision`); bu legacy path trusted boundary exception
+    /// olarak kabul edilir. Backends should keep this path only for trusted bootstrap/test
+    /// compatibility until Phase 8c migration.
+    #[deprecated(
+        note = "use OperatorReviewSession for reviewed promotion; this legacy/trusted-test path writes no ledger record and is outside INV-C13 scope; planned for Phase 8c removal"
+    )]
     fn promote_to_accepted(
         &mut self,
         node_id: &ConceptNodeId,
@@ -270,6 +274,10 @@ impl InMemoryAnchorStore {
     pub fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, StoreError> {
         <Self as AnchorStore>::apply_plan(self, plan)
     }
+    #[deprecated(
+        note = "use OperatorReviewSession for reviewed promotion; this legacy/trusted-test path writes no ledger record and is outside INV-C13 scope; planned for Phase 8c removal"
+    )]
+    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     pub fn promote_to_accepted(
         &mut self,
         node_id: &ConceptNodeId,
@@ -378,6 +386,7 @@ impl AnchorStore for InMemoryAnchorStore {
         Ok(self.apply_plan_inner(plan))
     }
 
+    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     fn promote_to_accepted(
         &mut self,
         node_id: &ConceptNodeId,
@@ -605,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     fn store_promotion_requires_operator_acceptance() {
         let mut store = InMemoryAnchorStore::new();
         store
@@ -625,6 +635,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     fn promotion_rejects_unknown_node() {
         let mut store = InMemoryAnchorStore::new();
         let cap = OperatorAcceptance::issue_for_tests();
@@ -752,6 +763,7 @@ mod tests {
     // ── Faz 5a (T6, Patch 4/5): TaskCandidate promote — INV-T2 boundary ───────
 
     #[test]
+    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     fn promote_task_candidate_does_not_create_trajectory_task() {
         // Patch 4/5: Accepted TaskCandidate ≠ trajectory::Task.
         // PR33a anchoring içinde kalır — trajectory genesis'e (OperatorCapability,
@@ -844,5 +856,84 @@ mod tests {
             2,
             "candidate bucket'lar seed'lendi"
         );
+    }
+
+    /// Re-proposal after rejection — characterization (Paper 3 Faz 8a+).
+    ///
+    /// Bu test normative DEĞİL — mevcut apply_plan davranışını karakterize eder.
+    /// "Observed behavior ≠ intended reversal protocol."
+    ///
+    /// Senaryo: RuleCandidate:X reject edilir. Aynı canonical'a ikinci DerivesRule
+    /// candidate içeren plan apply_plan'a verilirse ne olur?
+    ///
+    /// Gözlenen: apply_plan_inner "node yoksa ghost oluştur" mantığıyla çalışır —
+    /// reddedilmiş node zaten var, new_nodes=0, sadece edge eklenir. Status DEĞİŞMEZ.
+    /// Phase 8b ReopenSession normative reversal semantics tanımlayacak.
+    #[test]
+    fn re_proposal_after_rejection_current_semantics_is_characterized() {
+        use crate::anchoring::types::{
+            AnchorCandidate, AnchorPlan, AnchorScoreBreakdown, ConceptPacketId,
+        };
+        use crate::anchoring::{AnchorDecisionKind, ConceptEdgeKind, ThresholdBand};
+
+        // Reddedilmiş RuleCandidate:X seed'le.
+        let rejected_node = ConceptNode {
+            id: ConceptNodeId("RuleCandidate:X".into()),
+            canonical: "X".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Rejected,
+            position_family: crate::anchoring::PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(rejected_node);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+
+        // Aynı RuleCandidate:X target'ına ikinci DerivesRule edge'li plan.
+        let plan = AnchorPlan {
+            packet_id: ConceptPacketId("pkt:reproposal".into()),
+            candidates: vec![AnchorCandidate {
+                packet_id: ConceptPacketId("pkt:reproposal".into()),
+                target_node_id: ConceptNodeId("RuleCandidate:X".into()),
+                edge_kind: ConceptEdgeKind::DerivesRule,
+                score: AnchorScoreBreakdown::zeroed(),
+                explanation: Some(
+                    crate::anchoring::types::NonEmptyExplanation::new(
+                        "re-proposal after rejection",
+                    )
+                    .unwrap(),
+                ),
+            }],
+            decision: AnchorDecisionKind::TentativeLink,
+            threshold_band: ThresholdBand::Tentative,
+            requires_operator_review: true,
+            negative_assertions: vec![],
+            redirects: vec![],
+        };
+
+        let apply_result = store.apply_plan(&plan).expect("apply_plan");
+
+        // KARAKTERİZASYON: reddedilmiş node zaten var → new_nodes = 0.
+        assert_eq!(
+            apply_result.new_nodes, 0,
+            "reddedilmiş node zaten var → yeni node doğmuyor (duplicate önleniyor)"
+        );
+        assert_eq!(apply_result.new_edges, 1, "ikinci DerivesRule edge ekleniyor");
+
+        // Status DEĞİŞMEDİ — hala Rejected.
+        let node_after = store
+            .graph()
+            .node(&ConceptNodeId("RuleCandidate:X".into()))
+            .expect("node mevcut");
+        assert_eq!(
+            node_after.decision_status,
+            DecisionStatus::Rejected,
+            "re-proposal status'ü DEĞİŞTİRMİYOR — hala Rejected"
+        );
+
+        // SONUÇ (Paper 3 §10/§11'e yansır): "The current canon gate preserves canonical
+        // identity even across rejected nodes, but this is not yet a reversal protocol;
+        // it makes re-proposal visible as a collision with prior rejection (new edge to
+        // rejected node, no status change)." Phase 8b ReopenSession normative reversal.
     }
 }

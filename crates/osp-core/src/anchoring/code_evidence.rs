@@ -12,7 +12,7 @@
 //! edilir — bu faz sadece deterministik stub ile **mechanism proof**.
 //!
 //! # INV-C6 epistemik ayrımı (D15 — provenance yorumu)
-//! - `DecisionStatus` = graph acceptance lane (Candidate→InReview→Accepted)
+//! - `DecisionStatus` = graph acceptance lane (Candidate→Accepted)
 //! - `ObservedCodeEvidence` = epistemik provenance lane (MetricSource'tan)
 //!
 //! "Observed code reality is evidence, not acceptance." Provider observed evidence döndürür

@@ -30,6 +30,12 @@
 //! olmamalıdır (osp-mcp tool listesi, agent API). Tip sınırı süreç sınırını
 //! aşamadığı için bu bir deployment disiplinidir; araç listesi seviyesinde
 //! denetlenir.
+//!
+//! # SystemTime notu
+//! `DecisionRecord` ve `PresentedBasis` `SystemTime::now()` kullanır. Ledger v1'de
+//! InMemory + freeze edilmediği için sorun yok. İleride ledger snapshot testlerine
+//! girerse, deterministic `Clock` trait (testte deterministic, production'da system)
+//! gerekir (Phase 8b+).
 
 use crate::anchoring::store::AnchorStore;
 use crate::anchoring::types::{ConceptNode, ConceptNodeId, NonEmptyExplanation};
@@ -390,7 +396,7 @@ impl OperatorReviewSession {
     ///
     /// **v1 scope:** Yalnız `DecisionStatus::Candidate` node'lar review edilebilir
     /// (`PresentedBasis::compile` `candidate_query` üzerinden bulur; o da sadece
-    /// Candidate döndürür). `InReview` şemada reserved, v1 akışında kullanılmaz.
+    /// Candidate döndürür).
     pub fn accept<S: AnchorStore + ?Sized>(
         &mut self,
         store: &mut S,

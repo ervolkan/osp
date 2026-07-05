@@ -139,7 +139,6 @@ pub enum PositionFamily {
 #[serde(rename_all = "PascalCase")]
 pub enum DecisionStatus {
     Candidate,
-    InReview,
     Accepted,
     Deprecated,
     Rejected,

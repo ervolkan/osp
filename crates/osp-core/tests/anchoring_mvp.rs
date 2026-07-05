@@ -188,7 +188,6 @@ fn load_all() -> Vec<AnchoringFixture> {
 fn status_from_str(s: &str) -> DecisionStatus {
     match s {
         "Accepted" => DecisionStatus::Accepted,
-        "InReview" => DecisionStatus::InReview,
         "Deprecated" => DecisionStatus::Deprecated,
         "Rejected" => DecisionStatus::Rejected,
         _ => DecisionStatus::Candidate,

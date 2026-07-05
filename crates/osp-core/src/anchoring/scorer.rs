@@ -195,7 +195,6 @@ impl AnchorScorer {
         match graph.node(target_id) {
             Some(n) => match n.decision_status {
                 crate::anchoring::DecisionStatus::Accepted => 1.0,
-                crate::anchoring::DecisionStatus::InReview => 0.7,
                 crate::anchoring::DecisionStatus::Candidate => 0.5,
                 crate::anchoring::DecisionStatus::Deprecated => 0.2,
                 crate::anchoring::DecisionStatus::Rejected => 0.0,
