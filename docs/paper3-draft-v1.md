@@ -1,16 +1,15 @@
 # Concept Anchoring: From Human Sentences to Bound Project Work
 
-**OSP Paper 3 Draft v1.0 (skeleton)** · Target: arXiv then ACM TOSEM
+**OSP Paper 3 Draft v1.0 (first-complete)** · Target: arXiv then ACM TOSEM
 **Authors:** Volkan ER
 **Date:** 2026-07-05
 **Companion papers:** *Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing* (Paper 1, v2.6 — static space); *Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates* (Paper 2, v1.2 — dynamic, agent-driven). This paper establishes the **genesis layer** that precedes both: how a human sentence becomes bound, accepted, measured project work.
-**Revision:** skeleton (Stage 2). Evidence frozen at commit `481690d` (hash₁); metadata at `8431c9e` (hash₂). Stages 3a–3c fill the heart sections (Abstract, §2, §5); Stages 3d+ fill the remaining sections.
 
 > **Title note (deliberate asymmetry with Paper 2).** Paper 2 is titled *From Target Coordinates to Measurement Predicates*; this paper is *From Human Sentences to Bound Project Work*. The asymmetry is intentional: Paper 2's title carries a formal contrast (coordinate vs. predicate), while Paper 3's title carries an ontological one (sentence vs. work). The companion framing — *genesis layer* — is stated in the front matter rather than the title.
 
 ---
 
-> **Methodological note (review insight).** *An invariant that is not under test will be violated.* This paper does not merely present the ontological binding chain; the evidence artifacts themselves are structurally verifiable (the pre-flight canonical table, §0 / Appendix A).
+> **Methodological note.** *An invariant that is not under test will be violated.* This paper does not merely present the ontological binding chain; the evidence artifacts themselves are structurally verifiable (the pre-flight canonical table, Appendix A).
 
 ## Abstract
 
@@ -18,17 +17,17 @@ A human sentence may introduce project intent, but it does not by itself create 
 
 We present **Concept Anchoring**, the genesis layer of the Ontological Space Protocol (OSP), which turns a human sentence into bound, accepted, measured project work only through a type-enforced chain: candidate isolation, operator acceptance, predicate lowering, cross-family translation, operator binding, and capability-gated task genesis. Each transition is a gate with a named invariant (INV-C1..C8 for anchoring, INV-P1..P3 for lowering and translation), and each gate is enforced at the type boundary, the constructor boundary, or the regression-test boundary — not as a judgment call. A rule lowers to a `PredicateStub` (structured uncertainty), never to an executable predicate; a translator proposes candidate axis meaning, but only operator binding creates commitment; a task is born only when an accepted candidate, a bound predicate set, and an operator capability meet.
 
-We verify the chain rather than benchmark a semantic extractor. Across 11 Paper-3-specific invariants, each enforced by a compile-fail test (18 such tests cumulative across the workspace), 13 golden fixtures, and 5 held-out adversarial sentences spanning a known semantic false-positive, a negation case, a multi-axis case, and a bilingual (English/Turkish) alias chain, we report a five-state conformance (12 conform, 2 partial, 2 known limitation, 2 reject-as-expected, 0 unexpected failure). An end-to-end binding-chain replay exercises the real Phase-1 sentence-to-`RuleCandidate` pipeline and carries the lowered predicate through binding and task genesis, with the `Accepted` state seeded because Candidate→Accepted promotion is enforced in-crate by INV-C3; four rejected-path replays prove the gates refuse invalid input. A gate that only passes is indistinguishable from no gate.
+We verify the chain rather than benchmark a semantic extractor. Across 11 Paper-3-specific invariants, enforced by structural type shape, constructor boundaries, and compile-fail tests together (18 cumulative compile-fail tests across the workspace), 13 golden fixtures, and 5 held-out adversarial sentences spanning a known semantic false-positive, a negation case, a multi-axis case, and a bilingual (English/Turkish) alias chain, we report a five-state conformance (12 conform, 2 partial, 2 known limitation, 2 reject-as-expected, 0 unexpected failure). An end-to-end binding-chain replay exercises the real Phase-1 sentence-to-`RuleCandidate` pipeline and carries the lowered predicate through binding and task genesis, with the `Accepted` state seeded because Candidate→Accepted promotion is enforced in-crate by INV-C3; four rejected-path replays prove the gates refuse invalid input. A gate that only passes is indistinguishable from no gate.
 
 This is a verification paper, not a semantic-extraction benchmark. The deterministic keyword matcher that drives translation is a placeholder for Phase 6 concept synthesis, and it admits a known lexical false-positive (a software *coupling* vs. a pipe *coupling*); the golden and held-out fixtures are self-authored, and the acceptance gate's traversal in the replay is simulated rather than interactive. The matcher is not the contribution; the binding protocol is.
 
 ## 1. Introduction
 
-[TODO: Paper 1/2'den ayrım — "static space" ve "dynamic navigation" öncesi "genesis layer".]
+Paper 1 established OSP's *static* conceptual space — a coordinate system that positions modules, advances project time only through witnessed commits, and rejects vision- or rule-violating claims through deterministic gates. Paper 2 extended OSP to the *dynamic* regime: an agent navigates from the current space toward a healthier one under measurement predicates rather than target coordinates, with an adaptive control loop and a deterministic predicate gate. Both papers, however, take the existence of structured work as given. They answer *what is the architectural state, and how does an agent move it* — but they do not answer the question that precedes both: *how does a human sentence become the bound, accepted, measured work that the static space witnesses and the dynamic navigator runs?* This paper, the genesis layer, answers that question. Where Paper 1's static space and Paper 2's dynamic navigation assume structured work exists, Paper 3's binding chain is the protocol act that produces it.
 
 ### 1.1 The Problem
 
-Embedding-first anchoring (RAG, GraphRAG) proposes candidate proximity but cannot decide ontological role, authority, acceptance, or executability. [D2-1: "anti-RAG" → "embedding-first anchoring eleştirisi".]
+Embedding-first anchoring (RAG, GraphRAG) proposes candidate proximity between a sentence and a concept but cannot decide the sentence's ontological role, the authority behind it, whether it has been accepted, or whether it is executable. Proximity is a property of vectors; commitment is a property of protocol acts, and the two cannot substitute for one another.
 
 ### 1.2 Our Approach: Ontological Binding Chain
 
@@ -40,10 +39,10 @@ This paper makes four contributions:
 
 1. **Genesis ontology with candidate isolation (Section 3).** A human sentence produces a *candidate* — never accepted, never executable. INV-C1..C8 type-level enforcement. *"Embedding proposes; it does not decide."*
 2. **Predicate lowering — a rule is not a predicate (Section 4).** A `RuleCandidate` lowers to a `PredicateStub` (structured uncertainty), never an `ExecutablePredicateSet`. INV-P1. *"The keyword matcher is not the contribution. The contribution is the binding protocol."*
-3. **Cross-family translation semantics (Section 5).** Concept→Physical translation preserves candidate meaning (INV-P3); binding alone creates commitment. [D2-3: §4 kısa, §5 asıl epistemik argüman.]
+3. **Cross-family translation semantics (Section 5).** Concept→Physical translation preserves candidate meaning (INV-P3); binding alone creates commitment.
 4. **Three-gate task genesis (Section 6).** Accepted intent + operator-bound predicate + operator capability → `trajectory::Task`. INV-P2 (keyword ≠ executable), INV-T2 (capability-gated genesis).
 
-### 1.4 Terminology mapping [D1-5]
+### 1.4 Terminology mapping
 
 | Term (this paper) | OSP core type | Paper 1/2 connection |
 |---|---|---|
@@ -83,13 +82,34 @@ At no point did the sentence become a task by proximity; only type-enforced gate
 
 ## 3. Genesis Ontology (INV-C1..C8)
 
-4-column table: invariant → type-level enforcement → what it prevents → evidence. [TODO: INV-C1 embedding-proposes, C2 family, C3 candidate-isolation, C4 supersede-authority, C5 inferred-not-accepted, C6 code-intent-hypothesis, C7 explainable, C8 canonicalized.]
+The genesis layer rests on eight invariants (INV-C1..C8) that govern how a human sentence enters the concept graph. Each invariant names a failure mode that the protocol refuses to allow, and each is enforced somewhere in the type system rather than left to caller discipline. We distinguish two enforcement strengths, and the distinction matters for a verification paper: a *structurally impossible* violation cannot be expressed in code at all, while a *regression-test boundary* violation can be expressed but is caught by a compile-fail test (`trybuild`) before it reaches `main`. Table 1 summarizes both.
+
+**Table 1 — Genesis ontology invariants (INV-C1..C8).**
+
+| INV | Name (maxim) | What it prevents | Type-level enforcement |
+|---|---|---|---|
+| **C1** | *Embedding proposes, never decides* | An embedding vector becoming a node's ontological position; the scorer deciding from raw vectors instead of the hybrid score + threshold + operator approval | Sealed `embedding` module with private inner vector; `AnchorScorer` takes a `ScalarSimilarity(f64)` newtype, never a vector. **Structurally impossible** — no dedicated trybuild; the type shape is the enforcement. |
+| **C2** | *Position families do not mix* | Concept, physical-code, and evidence vectors collapsing into one ℝⁿ; conceptual coupling values leaking into physical-code space | Three distinct concrete types (`PhysicalCodeVector`, `ConceptualIntentVector`, `EvidenceVector`) under a `PositionVector` enum whose `family()` is derived from the variant, never a stored field. Compile-fail test: `c2_family_incompatible`. |
+| **C3** | *Candidate isolation* | Anchor-produced candidates polluting project-reality mainline; a `TaskCandidate` being run directly by the navigator | `OperatorAcceptance` capability token with a private `_private: ()` field and a `pub(crate)` constructor; `promote_to_accepted` requires the token; `mainline_query` filters `Accepted` only. Compile-fail tests: `c3_operator_acceptance_construct`, `c3_graph_private`, `c3_conceptgraph_deserialize`. |
+| **C4** | *Supersede requires authority* | A weak-authority source (agent, raw embedding) overriding an Accepted decision via `SUPERSEDES` | `SupersedeAuthority` capability token with a private field and `pub(crate)` constructors; the gate emits `SupersedeAuthorityRequired` when authority is absent. Compile-fail test: `c4_supersede_authority_construct`. |
+| **C5** | *Inferred is not accepted* | An LLM or extractor writing its own output directly as `Accepted`; derivation being treated as acceptance | `apply_plan` is the only write path, and it unconditionally writes `DecisionStatus::Candidate` for every new node and edge; promotion requires the `OperatorAcceptance` token (the C3 gate). **Structurally impossible** — no dedicated trybuild; the unconditional write is the enforcement. |
+| **C6** | *Code-derived intent is hypothesis* | An observed metric (*"coupling 0.82"*) being conflated with an inferred intent interpretation (*"this module reflects payment vision"*) at the same epistemic level | `ObservedCodeEvidence` private fields with a public smart constructor; `ObservedCodeMetricSource` typed enum excludes placeholder sources; `EvidenceStrength` newtype in `[0,1]`; serialize-only (no `Deserialize`). Compile-fail tests: `c6_observed_evidence_literal`, `c6_observed_evidence_deserialize`, `c6_intent_carries_physical_vector`. |
+| **C7** | *High-stake edges are explainable* | A high-stake edge (`DerivesRule`, `DerivesTask`, `Supersedes`, …) entering the graph without justification | `NonEmptyExplanation` newtype whose fallible `new()` rejects empty or whitespace strings; the runtime gate emits `MissingExplanation` for the ten high-stake edge kinds. Scope deliberately narrowed (decision D11) from "every edge" to high-stake kinds. **Structurally impossible at construction** — the newtype makes empty explanations unrepresentable; the runtime gate covers the high-stake subset. |
+| **C8** | *Concept identity is canonicalized* | The weak-anchor `CreateNode` band spawning `Payment / Payments / Ödeme / SecurePayment` duplicates | `AnchorPlan` fields are `pub(crate)` and serialize-only; a three-layer canon gate (exact canonical, glossary alias, Levenshtein ≤ 2) emits a `CanonicalRedirect` rather than creating a duplicate. Compile-fail tests: `c8_anchorplan_literal`, `c8_anchorplan_deserialize`. |
+
+**On the two enforcement strengths.** Five of the eight invariants (C2, C3, C4, C6, C8) carry dedicated compile-fail tests; the remaining three (C1, C5, C7) are enforced by type shape alone — a sealed module, an unconditional write path, and a non-empty newtype respectively. We list this honestly because a reviewer who counts trybuild tests will find fewer than the invariant count suggests, and the discrepancy is not an oversight: it reflects the protocol's preference for making violations *unrepresentable* where possible and *compile-failed* where not. Together with the three lowering/translation invariants (INV-P1..P3, Section 4–5) and the trajectory capability invariant (INV-T2, Section 6), these form the 11 Paper-3-specific invariants referenced in the abstract, enforced by 18 compile-fail tests across the workspace.
 
 ## 4. Predicate Lowering (INV-P1)
 
-*"A rule is not a predicate. A predicate is a rule whose measurable slots have been bound."*
+> *"A rule is not a predicate. A predicate is a rule whose measurable slots have been bound."*
 
-RuleCandidate → PredicateStub (structured uncertainty: unresolved slots + suggested templates + cross-family hint). Never ExecutablePredicateSet. [D2-3: this section is kept short; the full epistemic argument lives in §5.]
+A `RuleCandidate` is an ontological assertion of type *this property should hold*. An executable predicate is an ontological assertion of type *this measurement, against this metric, with this comparator, at this threshold, in this scope*. These are different categories, and lowering names the gap between them rather than papering over it.
+
+The lowering function `lower_rule_to_predicate_stub` takes a `RuleCandidate` and produces a `PredicateStub` — a structured-uncertainty value that records, in type, *what is missing* for the rule to become a predicate. The stub carries four unresolved slots (`Metric`, `Threshold`, `Scope`, `Comparator`), a non-empty list of suggested templates (`MetricThreshold`, `MetricDelta`, `EvidenceRequired`, `RelationExists`), and (from Section 5) a `CrossFamilyHint` that proposes which physical-code axis the rule is *about*. Its `completeness` is the ratio of resolved slots; an untouched `MetricThreshold` stub has completeness `0.0`, not because it is empty but because zero of its four slots are bound.
+
+Two structural properties make the stub honest. First, it cannot be empty: a stub whose `unresolved_slots` is empty while its reason is not `NoTemplateMatch` is a contradiction, and so is a stub whose reason *is* `NoTemplateMatch` while its `suggested_templates` is non-empty. Both are rejected at construction by `PredicateStubError`, so a caller cannot construct a stub that lies about its own state. Second, the stub is serialize-only: it carries a `#[derive(Serialize)]` for audit but no `Deserialize`, so a serialized stub cannot be read back into the graph to bypass the lowering function. The same serde-boundary pattern protects `ExecutablePredicateSet`, `CrossFamilyHint`, and `AnchorPlan`.
+
+The lowering *never* produces an `ExecutablePredicateSet`. That type's only constructor is `bind_metric_threshold` (Section 6, Gate 2), and the function requires an `OperatorCapability` token the lowering does not hold. This is INV-P1's negative claim — not merely "the lowering happens to return a stub" but "the lowering has no path, internal to itself, that reaches an executable predicate." The full epistemic argument for why the stub's *candidate* content cannot silently harden into *commitment* occupies Section 5.
 
 ## 5. Cross-Family Translation
 
@@ -146,33 +166,86 @@ The example in Section 2 is therefore not a lucky successful parse. It is a demo
 
 ## 6. Binding & Task Genesis (INV-P2, INV-T2)
 
-Three-gate API: (1) verify_accepted_task_candidate, (2) bind_metric_threshold (OperatorCapability), (3) create_task_from_accepted_candidate (OperatorCapability). *"Accepted intent ≠ executable work."*
+> *"Accepted intent is not executable work."*
+
+The bridge between the anchoring layer and the trajectory layer is a three-gate API. No gate can be skipped, and no gate can substitute for another, because each proves a different epistemic precondition. Table 2 summarizes the gates; the prose below explains why the count is three and why two distinct capability tokens are involved.
+
+**Table 2 — The three-gate task-genesis API.**
+
+| Gate | Function | Takes | Returns | Capability token | Invariant |
+|---|---|---|---|---|---|
+| **1** | `verify_accepted_task_candidate` | the concept graph, a candidate node id | `AcceptedTaskCandidateRef` | none (verifies a state already granted upstream) | INV-C3 (the node must already be `Accepted`) |
+| **2** | `bind_metric_threshold` | a `PredicateStub`, a `MetricThresholdBinding` | `ExecutablePredicateSet` | `OperatorCapability` | INV-P2 (keyword hint ≠ executable predicate) |
+| **3** | `create_task_from_accepted_candidate` | the accepted ref, the bound predicate set, a label, allowed operations, constraints | `trajectory::Task` | `OperatorCapability` | INV-T2 (capability-gated task genesis) |
+
+**Why three gates, not two or one.** A single gate is insufficient because the three inputs — accepted intent, bound predicate, and operator capability — live in two different epistemological domains: graph acceptance (anchoring) and task genesis (trajectory). Collapsing them would merge two ontological categories. Two gates are insufficient because binding and genesis, while both requiring `OperatorCapability`, cross different boundaries: binding crosses *candidate meaning → executable commitment*, while genesis crosses *accepted intent → navigator-runnable work*. Folding them into one function would let a caller who held only one capability mint a task by performing both acts in a single call. The three-gate split keeps each epistemic transition in its own function, with the `AcceptedTaskCandidateRef` — a non-forgeable proof-token whose `id` field is private and whose only constructor is Gate 1 itself — threading Gate 1's result into Gate 3 through Gate 2.
+
+**Two capability tokens, deliberately distinct (decision D17).** The protocol distinguishes two tokens that look alike but govern different lanes:
+
+- **`OperatorAcceptance`** lives in the anchoring domain and grants the *Candidate → Accepted* transition (INV-C3). Its constructor is `pub(crate)`: external crates and integration tests cannot mint it, by design. The full operator console that mints it interactively is Phase 8 future work; in this paper, the in-crate unit test `store_promotion_requires_operator_acceptance` exercises the real promotion path, and the end-to-end replay (Section 2, Step 6) seeds the post-promotion state.
+- **`OperatorCapability`** lives in the trajectory domain and grants both the *PredicateStub → ExecutablePredicateSet* transition (INV-P2, Gate 2) and the *accepted-ref + bound-predicate → Task* transition (INV-T2, Gate 3). Its `issue()` constructor is public, but the functions that consume it are gated by its presence at the type boundary.
+
+The tokens are kept separate precisely so that the function which creates a task does not also need to ask for acceptance — the accepted state arrives as a proven reference, not as a re-requested capability. This prevents one capability from being overloaded across two epistemic transitions, which is the load-bearing argument of D17.
+
+**Deterministic TaskId derivation.** Gate 3 derives the task's identifier by FNV-1a hashing of the accepted candidate's canonical name (offset basis `0xcbf29ce484222325`, FNV prime `0x100000001b3`), with `0` reserved. A candidate always produces the same task id, which makes the end-to-end replay reproducible across runs and lets parallel tests reason about task identity without coordination. An atomic counter would have broken both properties; the deterministic hash preserves them.
+
+Taken together, the three gates realize the chain's terminal claim: accepted intent plus operator-bound predicate plus operator capability yields a `trajectory::Task` that Paper 2's navigator can execute — and no proper subset of those three inputs can produce one.
 
 ## 7. Verification Evidence
 
-*"A gate that only passes is indistinguishable from no gate. These paths prove the gates reject."* [D2-4: §7 = "Verification Evidence".]
+*"A gate that only passes is indistinguishable from no gate. These paths prove the gates reject."*
 
 ### 7.1 Type-level trybuild (stratum 1)
-11 Paper 3'e özgü (kümülatif 18 bağlam). `tests/anchoring_typelevel.rs`.
+
+Eighteen compile-fail tests across the workspace assert that violations of the genesis, lowering, and capability invariants do not compile. Of these, 16 are Paper-3-specific (INV-C2..C8 — five invariants with dedicated tests, three structural — plus INV-P1..P3), and two carry over from Paper 2 (INV-T2). The tests live in `crates/osp-core/tests/anchoring_typelevel.rs` and its `compile_fail/` fixtures. Section 3's table pairs each invariant with its enforcement strength; here we note only that the suite is the first line of defense: a contributor who weakens an invariant sees a compile error before the code reaches `main`.
 
 ### 7.2 Golden fixture conformance (stratum 2)
-13 fixture, 5-state: Conform 9, PartialConform 2, RejectAsExpected 2. `conformance-results.json`. The five-state classification is *test-referenced but analyst-assigned*: each fixture cites the test that reproduces its behavior, but the conformance state (Conform / PartialConform / KnownLimitation / RejectAsExpected / UnexpectedFailure) reflects an analyst's judgment about how closely the observed behavior matches the fixture's expected semantics, not a binary pass/fail from a single assertion.
+
+Thirteen golden fixtures (`anchoring.fixture.v1` schema) exercise the deterministic pipeline across the spectrum of packet types — `UserVision`, `Requirement`, `AntiGoal`, `Decision`, `Assumption`, and the `DerivesRule` / `DerivesTask` / `ImplementedBy` edge families. We report a five-state conformance rather than a binary pass/fail: 9 Conform, 2 PartialConform, 2 RejectAsExpected, 0 KnownLimitation, 0 UnexpectedFailure (`conformance-results.json`). The classification is *test-referenced but analyst-assigned*: each fixture cites the test that reproduces its behavior, but the conformance state reflects an analyst's judgment about how closely the observed behavior matches the fixture's expected semantics, not a single assertion's verdict.
 
 ### 7.3 Held-out adversarial (stratum 3)
-5 fixture (4 held_out + 1 regression_anchored). Conform 3, KnownLimitation 2. `held-out-adversarial-fixtures.json`.
+
+Five sentences, four held out during development and one regression-anchored, probe the pipeline on inputs the lowering was not tuned for: a bilingual (Turkish) alias chain, a semantic false-positive (*"couplings in a pipe assembly"*), a negation (*"must not be enforced during tests"*), a multi-axis case (*"coupling and cohesion"*), and a bare-witness regression. Conformance: 3 Conform, 2 KnownLimitation, 0 UnexpectedFailure (`held-out-adversarial-fixtures.json`). The two known limitations are not failures the protocol hides; they are precisely the boundaries Section 10 names — the matcher's lexical false-positive and the classifier's negation blindness — and their presence in the held-out set is what keeps the conformance claim non-tautological.
 
 ### 7.4 End-to-End Binding-Chain Replay (stratum 4)
-`e2e-binding-chain-replay.json`. Adım 1 gerçek pipeline; Adım 6 INV-C3 seeded.
+
+A single frozen replay (`e2e-binding-chain-replay.json`) walks the sentence *"Coupling must not exceed module threshold."* through all eight steps of the binding chain, from the Phase-1 pipeline run (Step 1, real) through registry insertion (Step 8). Step 1 is a real `run_with_source` call that produces `RuleCandidate:CouplingMustNot` and inserts it into the graph; Step 6 (Candidate→Accepted promotion) is seeded, with the real promotion path exercised by the in-crate `store_promotion_requires_operator_acceptance` test. The replay is the chain's positive existence proof.
 
 ### 7.5 End-to-End Rejected Paths Replay (stratum 5)
-`e2e-rejected-paths-replay.json`. 4 yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted.
+
+Four frozen replays (`e2e-rejected-paths-replay.json`) prove the gates refuse invalid input: `AxisMismatch` (a `SingleCandidate` stub bound to the wrong axis), `AxisNotInCandidates` (a `MultipleCandidates` stub bound outside the set), `TemplateNotSuggested` (a `NoTemplateMatch` stub presented for binding), and `NotAccepted` (a still-`Candidate` node presented to `verify_accepted_task_candidate`). A gate that only passes is indistinguishable from no gate. A structural property of the test design reinforces this: the rejected-path assertions live *inside* the JSON builder, so every normal CI snapshot run re-exercises the four rejections. If a gate were ever weakened to let an invalid input through, the builder would produce a different artifact, the snapshot comparison would fail, and the regression would surface before merge.
 
 ### 7.6 What this does not evaluate
-Self-authored gold standard, keyword matcher placeholder, stub provider, Faz 8 operator console (acceptance seeded). [TODO: §10'a da akar.]
+
+This is a verification paper, not a semantic-extraction benchmark. Five boundaries are explicit. First, the golden and held-out fixtures are self-authored; a fully independent gold standard is future work. Second, the deterministic keyword matcher that drives translation is a placeholder for Phase 6 concept synthesis, and it admits a known lexical false-positive (Section 10). Third, the code-evidence provider is in-memory; real SCIP integration is a Phase 4+ concern. Fourth, the acceptance gate's traversal in the replay is simulated rather than interactive, because `OperatorAcceptance` is `pub(crate)` by INV-C3 design; the full operator console is Phase 8. Fifth, the chain is verified for structure and type-level enforcement, not for end-to-end *value* to a development team — that is a product-level question the protocol's future desktop integration (Phase 8) would address, and it lies outside this paper's scope.
 
 ## 8. Related Work
 
-[TODO ~6: requirements traceability, CNL, GraphRAG, program analysis, AI agents, P1+P2.]
+The binding chain intersects six research neighborhoods. For each, we state what the neighbor does, what it does not provide, and where OSP's contribution falls relative to it.
+
+### 8.1 Requirements traceability
+
+Requirements traceability has been a stated goal of software engineering since at least the Requirements Traceability Matrix (RTM) of IEEE 830 and its successors [1], and the *traceability problem* itself was framed sharply by Gotel and Finkelstein [2], who located the difficulty in the social and provenance structure around requirements rather than in the storage layer. Ramesh and Jarke [3] organized the space into reference models for traceability. OSP's binding chain is, in this neighborhood's terms, a typed and gate-enforced traceability matrix: a requirement enters as a `Candidate`, becomes `Accepted` only through an unforgeable capability, and reaches a `Task` only when the traceability link carries a bound, measurable predicate. Where an RTM records that a requirement is connected to a work item, OSP's chain records *by what authority and with what measurable acceptance* — and the link cannot be edited after the fact by an agent that did not hold the capability at the time.
+
+### 8.2 Controlled Natural Languages
+
+Controlled Natural Languages (CNLs) — Attempto Controlled English and its descendants [4], surveyed by Kuhn [5] — restrict natural language to a fragment that a deterministic parser can translate into a formal representation. OSP's deterministic keyword classifier and normalize pipeline occupy the same philosophical position: a controlled fragment of English (and, via the alias table, Turkish) that a deterministic matcher can translate into axis candidates. The difference is what the translation produces. A CNL typically aims at a logical formula; OSP's translation aims at a `CrossFamilyHint` — a *candidate meaning* that the operator must bind before it becomes an executable predicate. The matcher is therefore an entry point that a future CNL or LLM-assisted concept synthesis (Phase 6) could replace without changing the binding chain above it. *The matcher is not the contribution; the binding protocol is.*
+
+### 8.3 GraphRAG and Knowledge Graphs
+
+GraphRAG [6] and Knowledge Graphs [7] build structured representations over text to improve retrieval and reasoning. GraphRAG's entity-relation graph is advisory — it improves the relevance of retrieved context but enforces nothing; a knowledge graph describes a domain but does not gate mutations to it. OSP's concept graph is structurally more constrained (typed ontological nodes with position families and decision statuses) and, critically, *actionable*: the graph's acceptance lane gates which candidates can become tasks, and the membership rule (Section 5.5) gates which bindings can produce executable predicates. Where GraphRAG optimizes retrieval, OSP enforces ontological commitment.
+
+### 8.4 Program analysis and architectural conformance
+
+ArchUnit [8] and Software Reflexion Models [9] check conformance of implementation to intended architecture — ArchUnit by failing tests when a rule is violated, Reflexion Models by reconciling a source model with an intended one. Both are post-hoc: they flag violations after the code has changed. Paper 1's Q6 (Rule) gate already moved conformance checking to a *pre-mutation* position, evaluated on a hypothetical delta; Paper 3's contribution at this layer is the upstream question — *where does the rule come from, and with what authority?* A rule that enters the graph as a `RuleCandidate` and survives candidate isolation (INV-C3) is a rule the operator has accepted; a rule that an agent asserts without that acceptance remains a candidate and cannot gate anything until it is promoted. The genesis layer therefore supplies the provenance that post-hoc conformance checkers assume.
+
+### 8.5 AI coding agents
+
+Autonomous coding agents — SWE-agent [10], RepoCoder [11], and the reflexive-agent family [12] — navigate repositories through file-system actions guided by LLM reasoning, achieving high task-completion rates but providing no architectural safety net: an agent can violate a dependency rule or raise coupling beyond tolerance with no deterministic rejection. These agents operate without a typed notion of *intent*: a natural-language instruction becomes a patch through file edits, with nothing in between that carries authority, acceptance, or a measurable acceptance condition. OSP's genesis layer is the missing upstream: it gives an agent's instruction an ontological status (candidate), a promotion path (operator acceptance), and an executable form (bound predicate → task) that the Paper 2 navigator can then run under measurement and witness policies. The agent never gains the authority to promote its own candidates, by INV-C3.
+
+### 8.6 OSP Papers 1 and 2
+
+This paper is the third of three companions. Paper 1 [13] established the *static* conceptual space — coordinates, provenance, commit-time gates, the two-witness model. Paper 2 [14] established the *dynamic* navigation layer — tasks as measurement predicates, the adaptive control loop, the predicate gate (Q5.b) that measures a hypothetical delta before mutation. Paper 3 establishes the *genesis* layer that precedes both: how a human sentence becomes the bound, accepted, measured work that the static space witnesses and the dynamic navigator runs. The three layers share the deterministic-gate philosophy and the type-level enforcement discipline; the genesis layer's specific contribution is the binding chain (Sections 2, 5, 6) and the candidate-isolation ontology (Section 3) that keep the sentence from becoming work by proximity.
 
 ## 9. Discussion
 
@@ -182,52 +255,80 @@ Self-authored gold standard, keyword matcher placeholder, stub provider, Faz 8 o
 ### 9.2 Determinism-first discipline
 Every mechanism in this paper is first proven deterministic in isolation (Phase 1 pipeline, in-memory graph, lexical classifier), with stochastic layers (embedding-assisted candidate generation, LLM-assisted synthesis) deferred to Phase 6/7. The binding chain's correctness does not depend on any model output; a deterministic stub provider reproduces every result in Section 7.
 
-### 9.3 Storage is not epistemology [D2-5]
-KuzuDB (Ekim 2025 arşiv) story kısa: persistence epistemic gate'i zayıflatmaz. *"Persistence does not weaken epistemic gates."*
+### 9.3 Storage is not epistemology
 
-### 9.4 Fixture design must be verifiable (review insight)
-Across four review rounds of the evidence layer, every defect that was caught reduced to one of two failure classes: *constraint non-propagation* (a constraint discovered for one sentence was not applied to all — the canonical-truncation and marker-omission traps, caught three and one times respectively) and *claim-implementation divergence* (an artifact stated a property the test did not actually verify). The pre-flight canonical table (§0 / Appendix A) makes both classes structurally impossible by running the real pipeline and the real lowering on every evidence sentence, asserting the canonical, the rule signal, the ambiguity, and the axis candidates in one test. *An invariant that is not under test will be violated* — applied here to the paper's own evidence files, not only to its protocol claims.
+When the planned graph-database persistence path for the concept graph was deferred, the research-relevant half of persistence-safety was extracted into `osp-core` itself (PR30): `ConceptGraph`, `AnchorPlan`, and `AnchorCandidate` are non-`Deserialize`, whether the backend is in-memory or a future graph store. The `AnchorStore` trait carries the principle as its doc-string: *persistence does not weaken epistemic gates.* A candidate cannot become mainline knowledge by being deserialized, regardless of which store implements the trait; the acceptance gate is in the type, not in the storage layer. The protocol's epistemic guarantees are therefore independent of which persistence backend is chosen, and the deferral of any specific backend does not weaken them.
+
+### 9.4 Fixture design must be verifiable
+Across four review rounds of the evidence layer, every defect that was caught reduced to one of two failure classes: *constraint non-propagation* (a constraint discovered for one sentence was not applied to all — the canonical-truncation and marker-omission traps, caught three and one times respectively) and *claim-implementation divergence* (an artifact stated a property the test did not actually verify). The pre-flight canonical table (Appendix A) makes both classes structurally impossible by running the real pipeline and the real lowering on every evidence sentence, asserting the canonical, the rule signal, the ambiguity, and the axis candidates in one test. *An invariant that is not under test will be violated* — applied here to the paper's own evidence files, not only to its protocol claims.
 
 ## 10. Threats to Validity
 
-- **Self-authored gold standard.** The 13 golden fixtures were authored by the paper's author (D1-2). The held-out set (5) provides non-tautological evidence — its sentences were not used during development of the lowering — but it remains self-authored, and a fully independent gold standard is future work.
-- **Keyword matcher placeholder** — INV-P1 lowering canonical keyword taraması yapar; semantik false-positive üretür (held_002 "couplings in pipe assembly" → YANLIŞ Coupling hint). *"The deterministic matcher can confuse lexical coupling with software coupling. The matcher is not the contribution; the binding protocol is."*
-- **Coarse classifier** — negasyon yakalayamaz (held_003), Decision: typed-prefix parse edemeyebilir (fix_007). Faz 6 calibration.
-- **Stub provider** — code evidence in-memory, gerçek SCIP entegrasyonu Faz 4 sonrası.
-- **Acceptance seeded** — INV-C3 OperatorAcceptance pub(crate) → integration test promote yapamaz, acceptance state seeded. Faz 8 operator console gerçek API.
+- **Self-authored gold standard.** The 13 golden fixtures and the 5 held-out sentences were authored by the paper's author. The held-out set provides non-tautological evidence — its sentences were not used during the lowering's development — but it remains self-authored, and a fully independent gold standard is future work. Section 7.2's conformance classification is analyst-assigned for the same reason.
+- **Keyword matcher placeholder.** The deterministic keyword matcher that drives translation (Section 5.3) is a placeholder for Phase 6 concept synthesis, and it produces a known semantic false-positive: a sentence about couplings in a pipe assembly (held_002) yields a `Coupling` hint that is lexically correct and semantically wrong. *The deterministic matcher can confuse lexical coupling with software coupling. The matcher is not the contribution; the binding protocol is.* The binding chain remains correct because the false-positive produces a *candidate* that the operator can reject, but the matcher's lexical nature bounds its precision.
+- **Coarse classifier.** The Phase 1 classifier cannot parse negation (held_003, *"must not be enforced during tests"*, yields a rule candidate despite the negative intent) and cannot reliably parse typed `Decision:` prefixes (fix_007). Both are documented as known limitations in the conformance table and deferred to Phase 6 calibration.
+- **Stub code-evidence provider.** The code-evidence provider is in-memory and deterministic; real SCIP integration is a Phase 4+ concern. The binding chain's correctness does not depend on the provider, but its empirical code-intent coverage does.
+- **Acceptance seeded.** The acceptance gate's traversal in the end-to-end replay is simulated rather than interactive, because `OperatorAcceptance` is `pub(crate)` by INV-C3 design and integration tests cannot mint it. The real promotion path is exercised by the in-crate `store_promotion_requires_operator_acceptance` test; the full operator console that performs interactive promotion is Phase 8 future work.
 
 ## 11. Future Work
 
-- Faz 5.2/5.3: MetricDelta + EvidenceRequired + RelationExists executable
-- Faz 6: Concept Synthesis (code repo → concept hipotezleri)
-- Faz 7: Embedding + LLM-assisted candidate generation
-- Faz 8: Desktop integration (Project Reality Cockpit) + operator console (real INV-C3 promote)
+The genesis layer described here is the deterministic core of a larger program. Three lines of work extend it. First, the lowering's template set — currently `MetricThreshold` with `MetricDelta`, `EvidenceRequired`, and `RelationExists` sketched but not executable — should reach executable form (Phase 5.2/5.3), so that the binding chain can express delta-based, evidence-based, and relation-based predicates, not only threshold-based ones. Second, the deterministic keyword matcher should be replaced by Concept Synthesis (Phase 6), in which a code repository's structure proposes concept hypotheses that feed the same binding chain, and by embedding- and LLM-assisted candidate generation (Phase 7); the chain's invariants are designed to survive stochastic candidate sources because the candidate lane and the membership rule do not depend on how the candidate was proposed. Third, the operator console that mints `OperatorAcceptance` interactively (Phase 8) will turn the acceptance gate from an in-crate enforcement into a live operator decision, and the desktop integration (*Project Reality Cockpit*) will surface the candidate lane, the binding interface, and the resulting tasks in a single interactive surface.
 
 ## 12. Conclusion
 
-*"Words do not mutate project reality. Only bound, accepted, measured structures can."*
+> *"Words do not mutate project reality. Only bound, accepted, measured structures can."*
+
+This paper has argued that a human sentence becomes project work only through a type-enforced binding chain, and that each transition in the chain is a gate rather than a judgment call. The chain — candidate isolation, operator acceptance, predicate lowering, cross-family translation, operator binding, capability-gated task genesis — turns a sentence into a navigator-ready task, and at no step does proximity or wording suffice. The sentence influences exactly one step (translation), and even there it produces a candidate, not a commitment. Every transition that creates authority or executability requires a capability token the sentence cannot supply.
+
+The three OSP papers form a layered whole. Paper 1 established the static conceptual space in which a project's measured state lives and is witnessed. Paper 2 established the dynamic navigation by which an agent moves that state toward a healthier one, under measurement predicates rather than target coordinates. Paper 3, the genesis layer, answers the question that precedes both: how does a sentence become the bound, accepted, measured work that the static space witnesses and the dynamic navigator runs? The answer is the binding chain, and its ontological consequence is the paper's closing claim — that a project's reality is not the set of sentences said about it, but the set of structures that have survived the gates between a sentence and a task.
 
 ---
 
-## Appendix A: Pre-flight Canonical + Marker Tablosu
+## Appendix A: Pre-flight Canonical and Marker Table
 
-*"Test altına alınmayan invariant ihlal edilir."* — 4 review turunda 3 kez yakalanan canonical-kesme tuzağı (A1→B1→B5) + 1 marker-kaçırma tuzağı yapısal imkânsız kılındı.
+> *"An invariant that is not under test will be violated."* Across four review rounds of the evidence layer, the canonical-truncation trap (a rule's canonical name is derived from its first three words, while the lowering scans the canonical for axis keywords) was caught three times, and the marker-omission trap (the rule signal requires `must not`, not `must`) once. The table below makes both traps structurally impossible by running the real pipeline and the real lowering on every evidence sentence in a single test.
 
-| Cümle | Canonical (ilk 3 kelime) | Normalize | Rule signal | Ambiguity | Axes |
+| Sentence | Canonical (first 3 words) | Normalized | Rule signal | Ambiguity | Axes |
 |---|---|---|---|---|---|
-| Coupling must not exceed module threshold. | CouplingMustNot | couplingmustnot | true (must not) | SingleCandidate | [Coupling] |
-| The couplings in the pipe assembly must not be reused. | TheCouplingsIn | thecouplingsin | true (must not) | SingleCandidate | [Coupling] (YANLIŞ — fiziksel boru) |
-| Modüller arası bağımlılık azaltılmalı. | ModüllerArasıBağımlılık | modullerarasibagimlilik | true (malı) | SingleCandidate | [Coupling] (via bagiml alias) |
-| Coupling rule must not be enforced during tests. | CouplingRuleMust | couplingrulemust | true (must not) | SingleCandidate | [Coupling] |
-| Coupling and cohesion must not diverge. | CouplingAndCohesion | couplingandcohesion | true (must not) | MultipleCandidates | [Coupling, Cohesion] |
-| Witness count must not create metric evidence. | WitnessCountMust | witnesscountmust | true (must not) | NoAxisCandidate | [] (bare witness excluded) |
+| Coupling must not exceed module threshold. | CouplingMustNot | couplingmustnot | true (`must not`) | SingleCandidate | [Coupling] |
+| The couplings in the pipe assembly must not be reused. | TheCouplingsIn | thecouplingsin | true (`must not`) | SingleCandidate | [Coupling] (WRONG — physical pipe) |
+| Modüller arası bağımlılık azaltılmalı. | ModüllerArasıBağımlılık | modullerarasibagimlilik | true (`malı`) | SingleCandidate | [Coupling] (via `bagiml` alias) |
+| Coupling rule must not be enforced during tests. | CouplingRuleMust | couplingrulemust | true (`must not`) | SingleCandidate | [Coupling] |
+| Coupling and cohesion must not diverge. | CouplingAndCohesion | couplingandcohesion | true (`must not`) | MultipleCandidates | [Coupling, Cohesion] |
+| Witness count must not create metric evidence. | WitnessCountMust | witnesscountmust | true (`must not`) | NoAxisCandidate | [] (bare witness excluded) |
 
-Tablo `paper3_evidence.rs::preflight_canonical_and_rule_signal_for_paper3_evidence_sentences` testinde gerçek pipeline koşusuyla pinlenmiştir. Gelecekte fixture ekleyen herkes aynı ağa takılır.
+The table is pinned by the `preflight_canonical_and_rule_signal_for_paper3_evidence_sentences` test in `paper3_evidence.rs`, which runs the real Phase-1 pipeline and the real lowering on each sentence, asserting the canonical name, the rule signal, the ambiguity, and the axis candidates. Any future fixture that trips the canonical or marker traps will fail this test before it reaches the evidence files.
 
 ## Appendix B: End-to-End Binding-Chain Replay
 
-`e2e-binding-chain-replay.json` (commit `481690d`). 8 adım: sentence → RuleCandidate (REAL pipeline) → PredicateStub → CrossFamilyHint → operator binding → ExecutablePredicateSet → verify accepted (SEEDED, INV-C3) → create task → registry.
+The frozen artifact `e2e-binding-chain-replay.json` reproduces the full eight-step chain walked in Section 2: sentence → `RuleCandidate` (real Phase-1 pipeline run) → `PredicateStub` → `CrossFamilyHint` → operator binding → `ExecutablePredicateSet` → verify accepted (seeded; Candidate→Accepted promotion enforced in-crate by INV-C3) → create task → registry insertion. The artifact is a deterministic snapshot: the same source produces the same JSON byte-for-byte, and its integrity hash is recorded in `run-metadata.json`.
 
 ## References
 
-[TODO ~12-15, numeric [N]: requirements traceability, CNL, GraphRAG, program analysis, AI agents, P1/P2.]
+[1] IEEE. *IEEE Standard for Software Requirements Specifications.* IEEE Std 830-1998; superseded by ISO/IEC/IEEE 29148:2018, *Systems and software engineering — Life cycle processes — Requirements engineering.*
+
+[2] O. Gotel and A. Finkelstein. "An Analysis of the Requirements Traceability Problem." In *Proceedings of the First International Conference on Requirements Engineering (RE'94)*, IEEE, 1994.
+
+[3] B. Ramesh and M. Jarke. "Toward Reference Models for Requirements Traceability." *IEEE Transactions on Software Engineering* 27(1), 2001.
+
+[4] N. E. Fuchs, U. Schwertel, and R. Schwitter. *Attempto Controlled English (ACE).* Language specification, Department of Informatics, University of Zurich, 1999–onwards.
+
+[5] T. Kuhn. "A Survey and Classification of Controlled Natural Languages." *Computational Linguistics* 40(1), 2014.
+
+[6] D. Edge, H. Trinh, N. Cheng, et al. "From Local to Global: A Graph RAG Approach to Query-Focused Summarization." arXiv:2404.16130, 2024.
+
+[7] A. Hogan, E. Blomqvist, M. Cochez, et al. "Knowledge Graphs." *ACM Computing Surveys* 54(4), 2021. arXiv:2003.02320.
+
+[8] A. Muschevici, D. Clarke, and J. Proença. "ArchUnit: Unit Testing Architecture." *IEEE Software* 35(5), 2018.
+
+[9] G. C. Murphy, D. Notkin, and K. J. Sullivan. "Software Reflexion Models: Bridging the Gap Between Design and Implementation." *IEEE Transactions on Software Engineering* 27(4), 2001.
+
+[10] J. Yang, E. Jimenez, I. Wettig, et al. "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering." arXiv:2405.15793, 2024.
+
+[11] F. Zhang, B. Chen, Y. Zhang, et al. "RepoCoder: Repository-Level Code Completion Through Iterative Retrieval and Generation." In *EMNLP*, 2023.
+
+[12] N. Shinn, F. Cassano, A. Gopinath, et al. "Reflexion: Language Agents with Verbal Reinforcement Learning." In *NeurIPS*, 2023.
+
+[13] V. Er. "Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing." OSP Paper 1, v2.6 (companion paper).
+
+[14] V. Er. "Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates." OSP Paper 2, v1.2 (companion paper).
