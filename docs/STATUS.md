@@ -34,8 +34,9 @@ Paper 3           ✍️ OMRGA TAMAM — taslak yazımında (docs/paper3-draft d
 
 ## Paper 3 (Genesis Layer / Concept Anchoring) Durumu
 
-Paper 3 omurgası Faz 0-5.1 + 3 hardening PR ile tamamlandı. Taslak yazımı `docs/paper3-draft`
-dalında devam ediyor (evidence freeze tamam, iskelet aşamasında).
+Paper 3 omurgası Faz 0-5.1 + 3 hardening PR ile tamamlandı. **Aşama 1 evidence freeze 4 review
+turu sonunda sertleştirildi** (canonical-kesme + marker-kaçırma tuzakları yapısal imkânsız).
+**Aşama 2 iskelet hazır** (`paper3-draft-v1.md`). Aşama 3 (bölüm dolgu) bekliyor.
 
 ### Fazlar
 
@@ -64,12 +65,22 @@ dalında devam ediyor (evidence freeze tamam, iskelet aşamasında).
 - **INV-P2** (binding): keyword hint ≠ executable predicate — operator binding zorunlu
 - **INV-P3** (translation): ambiguity-preserving — translation proposes candidate meaning, binding creates commitment
 
-### Paper 3 kanıtları
+### Paper 3 kanıtları (Aşama 1 evidence freeze sertleştirildi)
 
 - 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P)
-- 447 osp-core testi, 13 golden fixture
-- Uçtan uca binding chain replay JSON (`paper3-notes/evidence/e2e-binding-chain-replay.json`)
+- 450+ osp-core testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
+- **E2E binding chain replay** (Adım 1 gerçek pipeline koşusu) — `e2e-binding-chain-replay.json`
+- **E2E rejected paths replay** (4 negatif yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted) — `e2e-rejected-paths-replay.json`
+- **§0 pre-flight canonical + marker tablosu** (6 cümle × 4 sütun, gerçek pipeline koşusu) — `paper3_evidence.rs::preflight`
+- **5-state conformance** (18 cümle: Conform 12, PartialConform 2, KnownLimitation 2, RejectAsExpected 2) — `conformance-results.json`
+- **Run-metadata** (volatile'lerin tek evi: commit hash, sha256) — `run-metadata.json`
 - 7 faz evidence dosyası (`paper3-notes/faz*.md`)
+- **Aşama 2 iskelet:** `docs/paper3-draft-v1.md`
+
+#### Snapshot disiplini (A5)
+- Normal CI: `cargo test -p osp-core --test paper3_evidence --test paper3_heldout` (drift yakalar)
+- Dondurma: `PAPER3_FREEZE=1 cargo test -p osp-core --test {target} -- --ignored --nocapture`
+- *"Test altına alınmayan invariant ihlal edilir."*
 
 ## Aşama Tablosu
 
@@ -128,9 +139,10 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 3 taslak yazımı.** `docs/paper3-draft` dalında devam ediyor.
-- Aşama 1 (evidence freeze) tamam: uçtan uca zincir JSON donduruldu
-- Aşama 2 (iskelet) ve Aşama 3 (bölüm dolgu) bekliyor
+**Paper 3 Aşama 3 (bölüm dolgu).** `docs/paper3-draft-v1.md` iskeleti hazır.
+- Aşama 1 (evidence freeze hardening + held-out + metadata + conformance) TAMAM (4 review turu)
+- Aşama 2 (iskelet) TAMAM
+- Aşama 3 (bölüm dolgu: abstract ~350 kelime + §1-§12 + Appendix + References) bekliyor
 - Detaylı handoff: [`paper3-notes/HANDOFF.md`](paper3-notes/HANDOFF.md)
 
 Paper 2 v1.2 review ile arXiv adayı (docs/paper2-draft-v1.md).
