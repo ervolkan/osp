@@ -34,6 +34,7 @@ pub mod extractor;
 pub mod gate;
 pub mod pipeline;
 pub mod predicate_lowering;
+pub mod review;
 pub mod scorer;
 pub mod store;
 pub mod typed_ref;

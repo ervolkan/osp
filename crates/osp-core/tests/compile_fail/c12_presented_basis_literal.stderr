@@ -1,0 +1,9 @@
+error: cannot construct `PresentedBasis` with struct literal syntax due to private fields
+  --> tests/compile_fail/c12_presented_basis_literal.rs:10:18
+   |
+10 |     let _basis = PresentedBasis {
+   |                  ^^^^^^^^^^^^^^
+11 |         candidate_id: ConceptNodeId("RuleCandidate:X".into()),
+   |         ----------------------------------------------------- private field
+   |
+   = note: ...and other private fields `node_digest`, `canonical`, `explanation`, `evidence_summary`, `high_stake_flags` and `compiled_at` that were not provided

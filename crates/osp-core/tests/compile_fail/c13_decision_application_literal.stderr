@@ -1,0 +1,16 @@
+error: cannot construct `DecisionApplication` with struct literal syntax due to private fields
+  --> tests/compile_fail/c13_decision_application_literal.rs:9:16
+   |
+ 9 |     let _app = DecisionApplication {
+   |                ^^^^^^^^^^^^^^^^^^^
+10 |         candidate_id: ConceptNodeId("RuleCandidate:X".into()),
+   |         ----------------------------------------------------- private field
+   |
+   = note: ...and other private fields `decision`, `basis`, `reason`, `session_id`, `operator` and `decided_at` that were not provided
+help: you might have meant to use the `new` associated function
+   |
+ 9 -     let _app = DecisionApplication {
+10 -         candidate_id: ConceptNodeId("RuleCandidate:X".into()),
+11 -     };
+ 9 +     let _app = DecisionApplication::new(_, _, _, _, _, _, _);
+   |

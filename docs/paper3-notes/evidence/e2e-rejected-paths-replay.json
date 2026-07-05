@@ -56,11 +56,38 @@
       "invariant": "INV-C3: Candidate (Accepted olmayan) → task genesis reject. Promote OperatorAcceptance ister (pub(crate)).",
       "name": "NotAccepted (Candidate TaskCandidate, promote edilmemiş)",
       "path": 4
+    },
+    {
+      "actual_error_variant": "NotFound(ConceptNodeId(\"RuleCandidate:Yok\"))",
+      "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json (NotFound) + review_session_stale_basis_rejects_touctou (StaleBasis unit)",
+      "expected_rejection_variant": "ReviewError::NotFound (integration) / StaleBasis (unit TOCTOU)",
+      "gate": "PresentedBasis::compile + OperatorReviewSession::accept (INV-C12 informed acceptance)",
+      "input": {
+        "integration": "RuleCandidate:Yok (not found)",
+        "unit_stalebasis": "node canonical changed after basis compile"
+      },
+      "invariant": "INV-C12: karar anındaki temel, adayın karar anındaki içeriğine karşı tazelik-doğrulamalı.",
+      "name": "NotFound (integration) / StaleBasis (unit) — INV-C12 TOCTOU",
+      "note": "Integration test graph private → TOCTOU manipülasyon yapılamaz; StaleBasis tam kanıtı review.rs unit test'inde.",
+      "path": 5
+    },
+    {
+      "actual_error_variant": "StoreError::NotPromotableFrom(Accepted) — DecisionApplication doğrudan apply_decision'a verildi (in-crate pub(crate) ctor)",
+      "exercised_by_test_name": "apply_decision_rejects_accepted_node_not_promotable_from (review.rs unit, in-crate pub(crate) ctor)",
+      "expected_rejection_variant": "StoreError::NotPromotableFrom(Accepted)",
+      "gate": "AnchorStore::apply_decision (INV-C13 + NotPromotableFrom defense-in-depth)",
+      "input": {
+        "node": "RuleCandidate:AlreadyAccepted (DecisionStatus::Accepted)"
+      },
+      "invariant": "INV-C13 + NotPromotable: Accepted/Deprecated/Rejected durumundan accept/reject geçilemez (diriltme ayrı mekanizma).",
+      "name": "NotPromotableFrom (Accepted node → apply_decision)",
+      "note": "Integration test DecisionApplication::new (pub(crate)) ctor'a erişemez; tam kanıt review.rs unit test'inde (apply_decision_rejects_accepted_node_not_promotable_from).",
+      "path": 6
     }
   ],
   "schema_version": "rejected-paths.v1",
-  "subtitle": "A gate that only passes is indistinguishable from no gate. These four paths prove the gates reject.",
-  "summary": "Four rejected paths prove the gates are real: a gate that only passes is indistinguishable from no gate. Compile-time tarafı trybuild'lerde; runtime reddi bu kayda geçti.",
+  "subtitle": "A gate that only passes is indistinguishable from no gate. These paths prove the gates reject.",
+  "summary": "Six rejected paths prove the gates are real: a gate that only passes is indistinguishable from no gate. Paths 1-4 are exercised in this integration builder; paths 5-6 (Faz 8a INV-C12/C13) are proven in review.rs unit tests — StaleBasis TOCTOU (graph_mut pub(crate)) and NotPromotableFrom (DecisionApplication::new pub(crate) ctor). Compile-time side: 22 cumulative trybuild tests across the workspace.",
   "thesis": "Kapıların varlığını gösteren şey reddedilen yoldur.",
   "title": "Paper 3 — End-to-End Rejected Paths Replay"
 }

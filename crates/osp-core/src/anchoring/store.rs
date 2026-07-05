@@ -54,8 +54,41 @@ pub enum StoreError {
     AlreadyAccepted(ConceptNodeId),
     #[error("node Candidate değil: {0}")]
     NotCandidate(ConceptNodeId),
+    #[error("node {0:?} durumundan promote edilemez (Accepted/Deprecated/Rejected)")]
+    NotPromotableFrom(DecisionStatus),
+    #[error("basis candidate mismatch: basis={basis}, application={application}")]
+    BasisCandidateMismatch {
+        basis: ConceptNodeId,
+        application: ConceptNodeId,
+    },
     #[error("snapshot version uyumsuz: expected={expected}, found={found}")]
     InvalidSnapshotVersion { expected: u32, found: u32 },
+}
+
+/// `PresentedBasis`'in deterministic fingerprint'i → `[u8; 32]`.
+/// `DecisionRecord.basis_fingerprint` için. v1'de FNV-based (harici crate yok);
+/// audit kayıt bütünlüğü için yeterli, cryptographic security değil (doc'a not).
+/// İleri sürüm: gerçek sha256 crate + serde serialize.
+fn basis_fingerprint(basis: &crate::anchoring::review::PresentedBasis) -> [u8; 32] {
+    let fnv = |seed: u64, bytes: &[u8]| -> u64 {
+        let mut h = seed;
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    };
+    let mut h1: u64 = 0xcbf29ce484222325;
+    let mut h2: u64 = 0x6c62272e07bb0142;
+    h1 = fnv(h1, basis.canonical().as_bytes());
+    h1 = fnv(h1, &basis.node_digest().get().to_le_bytes());
+    h2 = fnv(h2, basis.candidate_id().0.as_bytes());
+    let mut out = [0u8; 32];
+    out[..8].copy_from_slice(&h1.to_le_bytes());
+    out[8..16].copy_from_slice(&h2.to_le_bytes());
+    out[16..24].copy_from_slice(&(h1 ^ h2).to_le_bytes());
+    out[24..32].copy_from_slice(&(h2.wrapping_add(h1)).to_le_bytes());
+    out
 }
 
 impl std::fmt::Display for ConceptNodeId {
@@ -97,12 +130,35 @@ pub trait AnchorStore {
     /// AnchorPlan uygula. Tüm yeni node/edge'ler Candidate (INV-C5).
     fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, Self::Error>;
 
-    /// INV-C3: Candidate → Accepted. `OperatorAcceptance` gerekir (Faz 8 operator).
+    /// INV-C3: Candidate → Accepted. `OperatorAcceptance` gerekir.
+    ///
+    /// **Legacy/trusted-test path (Faz 8a scope out):** Bu metod in-crate testler ve
+    /// `seed_trusted` bootstrap için var; `DecisionRecord` ledger yazMAZ. INV-C13
+    /// ("no decision without record") kapsamı *reviewed operator decision path*'tir
+    /// (`apply_decision`); bu legacy path trusted boundary exception olarak kabul edilir.
+    /// Operator console (Faz 8b) bu legacy yolu deprecated edecek.
     fn promote_to_accepted(
         &mut self,
         node_id: &ConceptNodeId,
         _cap: &OperatorAcceptance,
     ) -> Result<(), Self::Error>;
+
+    /// INV-C12/C13 (Faz 8a): Reviewed promotion/reject + ledger append atomik.
+    /// `DecisionApplication` opaque (private ctor, Deserialize YOK) — tek üretici
+    /// `OperatorReviewSession`. Store uygulama + `DecisionRecord` üretimi +
+    /// append'in tek işlemde yapılmasından sorumludur (`seq`, `prior_status`,
+    /// `new_status`, `at` store/apply anına ait).
+    ///
+    /// INV-C13 kapsamı: bu metod *reviewed operator decision path*'tir. `promote_to_accepted`
+    /// (legacy/trusted-test) ve `seed_trusted` (bootstrap) bu invariantın kapsam dışındadır.
+    fn apply_decision(
+        &mut self,
+        application: crate::anchoring::review::DecisionApplication,
+    ) -> Result<crate::anchoring::review::DecisionRecord, Self::Error>;
+
+    /// INV-C13: Append-only decision ledger — sorgulanabilir. v1 InMemory;
+    /// graph backend Faz 8b+ transaction garantisi ister.
+    fn decision_ledger(&self) -> Vec<crate::anchoring::review::DecisionRecord>;
 
     /// INV-C8: canonical exact match (canon gate için).
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
@@ -130,6 +186,11 @@ pub trait AnchorStore {
 /// - `restore_trusted_snapshot`: trusted restore (Faz 3, INV-C3 persistence boundary).
 pub struct InMemoryAnchorStore {
     graph: ConceptGraph,
+    /// INV-C13 (Faz 8a): append-only decision ledger. `apply_decision` atomik olarak
+    /// promotion + append yapar; ikisi ayrılamaz. v1 InMemory.
+    decision_ledger: Vec<crate::anchoring::review::DecisionRecord>,
+    /// Ledger sequence counter — atomik kayıt üretimi için.
+    decision_seq: u64,
 }
 
 impl std::fmt::Debug for InMemoryAnchorStore {
@@ -137,6 +198,7 @@ impl std::fmt::Debug for InMemoryAnchorStore {
         f.debug_struct("InMemoryAnchorStore")
             .field("node_count", &self.graph.node_count())
             .field("edge_count", &self.graph.edge_count())
+            .field("decision_ledger_len", &self.decision_ledger.len())
             .finish()
     }
 }
@@ -151,6 +213,8 @@ impl InMemoryAnchorStore {
     pub fn new() -> Self {
         Self {
             graph: ConceptGraph::new(),
+            decision_ledger: Vec::new(),
+            decision_seq: 0,
         }
     }
 
@@ -192,6 +256,12 @@ impl InMemoryAnchorStore {
     /// Graph referansı (read-only — gate/extractor için). Trait dışı özel accessor.
     pub fn graph(&self) -> &ConceptGraph {
         &self.graph
+    }
+
+    /// Test-only graph mut accessor (TOCTOU testleri için — node canonical değiştirme).
+    #[cfg(test)]
+    pub(crate) fn graph_mut(&mut self) -> &mut ConceptGraph {
+        &mut self.graph
     }
 
     // Faz 3 backward-compat inherent wrapper'lar — downstream crate'ler `use AnchorStore`
@@ -314,6 +384,87 @@ impl AnchorStore for InMemoryAnchorStore {
         _cap: &OperatorAcceptance,
     ) -> Result<(), Self::Error> {
         self.promote_to_accepted_inner(node_id, _cap)
+    }
+
+    /// INV-C12/C13 (Faz 8a): reviewed promotion/reject + ledger append atomik.
+    /// `seq`, `prior_status`, `new_status`, `at` burada üretilir — session değil.
+    fn apply_decision(
+        &mut self,
+        application: crate::anchoring::review::DecisionApplication,
+    ) -> Result<crate::anchoring::review::DecisionRecord, Self::Error> {
+        use crate::anchoring::review::{DecisionKind, DecisionRecord};
+
+        let id = application.candidate_id();
+        let decision = application.decision();
+
+        // Defense-in-depth (Review 1 tasarım gözlemi): basis.candidate_id ile
+        // application.candidate_id eşleşmeli. Session bu kontrolü yapar ama apply_decision
+        // da yapmalı — NotPromotableFrom için aynı defense-in-depth argümanı.
+        // **Kontrol sırası:** id-mismatch ÖNCE, sonra NotPromotableFrom.
+        let basis = application.basis();
+        if basis.candidate_id() != id {
+            return Err(StoreError::BasisCandidateMismatch {
+                basis: basis.candidate_id().clone(),
+                application: id.clone(),
+            });
+        }
+
+        // Node'u bul + prior_status + NotPromotable kontrolü.
+        let node = self
+            .graph
+            .node_mut(id)
+            .ok_or_else(|| StoreError::NodeNotFound(id.clone()))?;
+        let prior_status = node.decision_status;
+
+        // NotPromotable: Accepted/Deprecated/Rejected'dan accept/reject geçersiz.
+        // (Diriltme ayrı mekanizma — v1 dışı.)
+        match (prior_status, decision) {
+            (DecisionStatus::Accepted, _) => {
+                return Err(StoreError::NotPromotableFrom(prior_status));
+            }
+            (DecisionStatus::Deprecated, _) => {
+                return Err(StoreError::NotPromotableFrom(prior_status));
+            }
+            (DecisionStatus::Rejected, _) => {
+                return Err(StoreError::NotPromotableFrom(prior_status));
+            }
+            _ => {}
+        }
+
+        // Status geçişini uygula.
+        let new_status = match decision {
+            DecisionKind::Accept => DecisionStatus::Accepted,
+            DecisionKind::Reject => DecisionStatus::Rejected,
+        };
+        node.decision_status = new_status;
+
+        // INV-C13: DecisionRecord üret + ledger'a atomik append.
+        self.decision_seq += 1;
+        let seq = self.decision_seq;
+        let basis = application.basis();
+        // basis_fingerprint: PresentedBasis seçili alanlarının (canonical + node_digest +
+        // candidate_id) FNV-based deterministic fingerprint'i. Audit-security hash DEĞİL
+        // (v1'de harici crate yok); cryptographic için ileri sürüm sha2 crate.
+        let basis_fp = basis_fingerprint(basis);
+        let record = DecisionRecord {
+            seq,
+            session_id: application.session_id().clone(),
+            operator: application.operator().clone(),
+            candidate_id: id.clone(),
+            node_digest_serde: basis.node_digest().get(),
+            decision,
+            reason: application.reason().clone(),
+            basis_fingerprint: basis_fp,
+            prior_status,
+            new_status,
+            at: application.decided_at(),
+        };
+        self.decision_ledger.push(record.clone());
+        Ok(record)
+    }
+
+    fn decision_ledger(&self) -> Vec<crate::anchoring::review::DecisionRecord> {
+        self.decision_ledger.clone()
     }
 
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error> {

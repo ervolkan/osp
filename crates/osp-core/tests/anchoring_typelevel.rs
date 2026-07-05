@@ -44,4 +44,12 @@ fn type_level_invariants_compile_fail() {
     // Faz 5.1 — INV-P3 (cross-family hint type-level)
     t.compile_fail("tests/compile_fail/cP3_cross_family_hint_literal.rs");
     t.compile_fail("tests/compile_fail/cP3_cross_family_hint_deserialize.rs");
+
+    // Faz 8a — INV-C12 (PresentedBasis: literal + Deserialize engelli)
+    t.compile_fail("tests/compile_fail/c12_presented_basis_literal.rs");
+    t.compile_fail("tests/compile_fail/c12_presented_basis_deserialize.rs");
+
+    // Faz 8a — INV-C13 (DecisionApplication: literal + Deserialize engelli)
+    t.compile_fail("tests/compile_fail/c13_decision_application_literal.rs");
+    t.compile_fail("tests/compile_fail/c13_decision_application_deserialize.rs");
 }

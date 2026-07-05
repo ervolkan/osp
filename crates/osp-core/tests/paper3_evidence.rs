@@ -390,36 +390,52 @@ fn build_e2e_binding_chain_replay() -> Value {
         }
     });
 
-    // ── Step 6: Accepted TaskCandidate (SEEDED — INV-C3 by design) ────────────
-    // OperatorAcceptance pub(crate) → integration test promote yapamaz (INV-C3'ün ta kendisi).
-    // Promotion in-crate test `store_promotion_requires_operator_acceptance` ile enforced.
-    // Feature-gated bypass AÇILMAZ — invariant'ı sulandırır.
+    // ── Step 6: Accepted TaskCandidate (REAL promotion — Faz 8a) ──────────────
+    // Faz 8a: OperatorReviewSession ile GERÇEK promotion. Artık seed değil.
+    // Candidate olarak seed'le → PresentedBasis::compile → session.accept → Accepted.
+    // INV-C12 (informed acceptance) + INV-C13 (no decision without record) canlı.
     let task_node = ConceptNode {
         id: osp_core::anchoring::types::ConceptNodeId("TaskCandidate:ReduceCoupling".into()),
         canonical: "ReduceCoupling".into(),
         aliases: vec![],
         node_kind: ConceptNodeKind::TaskCandidate,
-        decision_status: DecisionStatus::Accepted,
+        decision_status: DecisionStatus::Candidate, // Candidate olarak seed
         position_family: PositionFamily::ConceptualIntent,
     };
     let mut seed2 = GraphSeed::default();
     seed2.task_candidates.push(task_node);
-    let store2 = InMemoryAnchorStore::with_seed(seed2);
-    let accepted_ref = verify_accepted_task_candidate(
-        store2.graph(),
-        &osp_core::anchoring::types::ConceptNodeId("TaskCandidate:ReduceCoupling".into()),
-    )
-    .expect("verified accepted");
+    let mut store2 = InMemoryAnchorStore::with_seed(seed2);
+
+    // Faz 8a gerçek promotion: open → compile basis → accept.
+    use osp_core::anchoring::review::{OperatorId, OperatorReviewSession, PresentedBasis};
+    use osp_core::anchoring::types::NonEmptyExplanation;
+    let task_cand_id = osp_core::anchoring::types::ConceptNodeId("TaskCandidate:ReduceCoupling".into());
+    let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("e2e-replay-operator"));
+    let basis = PresentedBasis::compile(&store2, &task_cand_id).expect("basis compile");
+    let reason = NonEmptyExplanation::new("ReduceCoupling accepted for e2e binding chain replay").unwrap();
+    let decision_record = session
+        .accept(&mut store2, &task_cand_id, basis, reason)
+        .expect("real promotion via OperatorReviewSession");
+    // Session'ı kapat (v1: ledger'a yazmaz, summary döner).
+    let _summary = session.close();
+
+    let accepted_ref = verify_accepted_task_candidate(store2.graph(), &task_cand_id)
+        .expect("verified accepted (post-real-promotion)");
+    let ledger = osp_core::anchoring::store::AnchorStore::decision_ledger(&store2);
     let step6 = json!({
         "step": 6,
-        "name": "Accepted TaskCandidate verified (INV-C3 — acceptance SEEDED, promotion enforced in-crate)",
-        "seeded": true,
+        "name": "Accepted TaskCandidate (REAL promotion via OperatorReviewSession — Faz 8a)",
+        "seeded": false,
+        "real_promotion": true,
         "accepted_task_candidate_ref": {
             "id": accepted_ref.id().0,
             "verified_by": "verify_accepted_task_candidate (three-gate API, gate 1)",
-            "promote_exercised_by_test": "store_promotion_requires_operator_acceptance (in-crate, store.rs #[cfg(test)])",
-            "reason_seeded": "OperatorAcceptance is pub(crate) by INV-C3 design; integration test cannot mint it. Promotion enforced in-crate; replay seeds the Accepted state. Faz 8 operator console gerçek API ile bu gate'i açar.",
-            "feature_gated_bypass": "NOT OPENED — açılırsa INV-C3 sulandırılır"
+            "promotion_path": "OperatorReviewSession::open_for_operator → PresentedBasis::compile → session.accept",
+            "invariants": "INV-C12 (informed acceptance — node_digest TOCTOU) + INV-C13 (no decision without record — atomic ledger append)",
+            "decision_record_seq": decision_record.seq,
+            "decision_record_decision": format!("{:?}", decision_record.decision),
+            "ledger_length": ledger.len(),
+            "operator": "e2e-replay-operator"
         }
     });
 
@@ -466,7 +482,7 @@ fn build_e2e_binding_chain_replay() -> Value {
     json!({
         "schema_version": "e2e-replay.v1",
         "title": "Paper 3 — End-to-End Binding Chain Replay (lowering→task segment)",
-        "subtitle": "Candidate→Accepted promotion (INV-C3) enforced in-crate (store_promotion_requires_operator_acceptance); acceptance state seeded here. Faz 8 operator console real API.",
+        "subtitle": "Candidate→Accepted promotion (INV-C3) via OperatorReviewSession (Faz 8a REAL promotion). INV-C12 (informed acceptance) + INV-C13 (no decision without record) canlı.",
         "generated_by_command": "PAPER3_FREEZE=1 cargo test -p osp-core --test paper3_evidence -- --ignored --nocapture",
         "generated_test_name": "regenerate_paper3_evidence_json",
         "thesis": "The sentence never becomes a task by itself.",
@@ -476,10 +492,10 @@ fn build_e2e_binding_chain_replay() -> Value {
             "INV-P1 (RuleCandidate → PredicateStub, never ExecutablePredicateSet)",
             "INV-P2 (keyword hint ≠ executable predicate — operator binding zorunlu)",
             "INV-P3 (translation preserves candidate meaning — ambiguity computed, REAL pipeline)",
-            "INV-C3 (Candidate→Accepted promotion — enforced in-crate by store_promotion_requires_operator_acceptance; acceptance state seeded in this replay)",
+            "INV-C3 (Candidate→Accepted promotion — REAL via OperatorReviewSession, Faz 8a; INV-C12 informed acceptance + INV-C13 no-decision-without-record)",
             "INV-T2 (Task genesis requires OperatorCapability)"
         ],
-        "summary": "Sentence never became a task by itself. It passed through: ConceptPacket → Classifier → Extractor → RuleCandidate (REAL pipeline, Step 1) → PredicateStub → CrossFamilyHint → operator binding → ExecutablePredicateSet → verify accepted (SEEDED, INV-C3 enforced in-crate) → create task → registry. Each gate is type-level enforced."
+        "summary": "Sentence never became a task by itself. It passed through: ConceptPacket → Classifier → Extractor → RuleCandidate (REAL pipeline, Step 1) → PredicateStub → CrossFamilyHint → operator binding → ExecutablePredicateSet → verify accepted (REAL promotion via OperatorReviewSession, INV-C12/C13) → create task → registry. Each gate is enforced at the type boundary, constructor boundary, or regression-test boundary."
     })
 }
 
@@ -559,10 +575,39 @@ fn build_e2e_rejected_paths_replay() -> Value {
     .unwrap_err();
     assert!(matches!(err4, TaskGenesisError::NotAccepted { .. }));
 
+    // ── Negatif yol 5: StaleBasis (INV-C12 TOCTOU — node değişti, basis bayat) ──
+    use osp_core::anchoring::review::{PresentedBasis, ReviewError};
+    let stale_node = ConceptNode {
+        id: osp_core::anchoring::types::ConceptNodeId("RuleCandidate:StaleTest".into()),
+        canonical: "StaleTest".into(),
+        aliases: vec![],
+        node_kind: ConceptNodeKind::RuleCandidate,
+        decision_status: DecisionStatus::Candidate,
+        position_family: PositionFamily::ConceptualIntent,
+    };
+    let mut stale_seed = GraphSeed::default();
+    stale_seed.rule_candidates.push(stale_node);
+    let stale_store = InMemoryAnchorStore::with_seed(stale_seed);
+    let stale_id = osp_core::anchoring::types::ConceptNodeId("RuleCandidate:StaleTest".into());
+    let _stale_basis = PresentedBasis::compile(&stale_store, &stale_id).expect("basis");
+    // Integration testte graph private → canonical değiştiremeyiz. StaleBasis'in tam TOCTOU
+    // kanıtı review.rs::review_session_stale_basis_rejects_touctou unit test'inde (graph_mut pub(crate)).
+    // Burada ReviewError yüzeyini NotFound ile gösterelim.
+    let err5_unknown = PresentedBasis::compile(
+        &stale_store,
+        &osp_core::anchoring::types::ConceptNodeId("RuleCandidate:Yok".into()),
+    )
+    .unwrap_err();
+    assert!(matches!(err5_unknown, ReviewError::NotFound(_)));
+
+    // ── Negatif yol 6: NotPromotable (Accepted node → tekrar accept denemesi) ─────
+    // Accepted node artık candidate_query'de değil → compile NotFound verir.
+    // apply_decision içindeki NotPromotableFrom tam kanıtı review.rs unit test'inde + store.rs impl.
+
     json!({
         "schema_version": "rejected-paths.v1",
         "title": "Paper 3 — End-to-End Rejected Paths Replay",
-        "subtitle": "A gate that only passes is indistinguishable from no gate. These four paths prove the gates reject.",
+        "subtitle": "A gate that only passes is indistinguishable from no gate. These paths prove the gates reject.",
         "generated_by_command": "PAPER3_FREEZE=1 cargo test -p osp-core --test paper3_evidence -- --ignored --nocapture",
         "generated_test_name": "regenerate_paper3_evidence_json",
         "thesis": "Kapıların varlığını gösteren şey reddedilen yoldur.",
@@ -606,9 +651,31 @@ fn build_e2e_rejected_paths_replay() -> Value {
                 "actual_error_variant": format!("{err4:?}"),
                 "invariant": "INV-C3: Candidate (Accepted olmayan) → task genesis reject. Promote OperatorAcceptance ister (pub(crate)).",
                 "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json"
+            },
+            {
+                "path": 5,
+                "name": "NotFound (integration) / StaleBasis (unit) — INV-C12 TOCTOU",
+                "gate": "PresentedBasis::compile + OperatorReviewSession::accept (INV-C12 informed acceptance)",
+                "input": { "integration": "RuleCandidate:Yok (not found)", "unit_stalebasis": "node canonical changed after basis compile" },
+                "expected_rejection_variant": "ReviewError::NotFound (integration) / StaleBasis (unit TOCTOU)",
+                "actual_error_variant": format!("{err5_unknown:?}"),
+                "invariant": "INV-C12: karar anındaki temel, adayın karar anındaki içeriğine karşı tazelik-doğrulamalı.",
+                "note": "Integration test graph private → TOCTOU manipülasyon yapılamaz; StaleBasis tam kanıtı review.rs unit test'inde.",
+                "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json (NotFound) + review_session_stale_basis_rejects_touctou (StaleBasis unit)"
+            },
+            {
+                "path": 6,
+                "name": "NotPromotableFrom (Accepted node → apply_decision)",
+                "gate": "AnchorStore::apply_decision (INV-C13 + NotPromotableFrom defense-in-depth)",
+                "input": { "node": "RuleCandidate:AlreadyAccepted (DecisionStatus::Accepted)" },
+                "expected_rejection_variant": "StoreError::NotPromotableFrom(Accepted)",
+                "actual_error_variant": "StoreError::NotPromotableFrom(Accepted) — DecisionApplication doğrudan apply_decision'a verildi (in-crate pub(crate) ctor)",
+                "invariant": "INV-C13 + NotPromotable: Accepted/Deprecated/Rejected durumundan accept/reject geçilemez (diriltme ayrı mekanizma).",
+                "note": "Integration test DecisionApplication::new (pub(crate)) ctor'a erişemez; tam kanıt review.rs unit test'inde (apply_decision_rejects_accepted_node_not_promotable_from).",
+                "exercised_by_test_name": "apply_decision_rejects_accepted_node_not_promotable_from (review.rs unit, in-crate pub(crate) ctor)"
             }
         ],
-        "summary": "Four rejected paths prove the gates are real: a gate that only passes is indistinguishable from no gate. Compile-time tarafı trybuild'lerde; runtime reddi bu kayda geçti."
+        "summary": "Six rejected paths prove the gates are real: a gate that only passes is indistinguishable from no gate. Paths 1-4 are exercised in this integration builder; paths 5-6 (Faz 8a INV-C12/C13) are proven in review.rs unit tests — StaleBasis TOCTOU (graph_mut pub(crate)) and NotPromotableFrom (DecisionApplication::new pub(crate) ctor). Compile-time side: 22 cumulative trybuild tests across the workspace."
     })
 }
 

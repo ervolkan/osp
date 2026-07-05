@@ -4,7 +4,7 @@
     "INV-P1 (RuleCandidate → PredicateStub, never ExecutablePredicateSet)",
     "INV-P2 (keyword hint ≠ executable predicate — operator binding zorunlu)",
     "INV-P3 (translation preserves candidate meaning — ambiguity computed, REAL pipeline)",
-    "INV-C3 (Candidate→Accepted promotion — enforced in-crate by store_promotion_requires_operator_acceptance; acceptance state seeded in this replay)",
+    "INV-C3 (Candidate→Accepted promotion — REAL via OperatorReviewSession, Faz 8a; INV-C12 informed acceptance + INV-C13 no-decision-without-record)",
     "INV-T2 (Task genesis requires OperatorCapability)"
   ],
   "generated_by_command": "PAPER3_FREEZE=1 cargo test -p osp-core --test paper3_evidence -- --ignored --nocapture",
@@ -97,14 +97,18 @@
     },
     {
       "accepted_task_candidate_ref": {
-        "feature_gated_bypass": "NOT OPENED — açılırsa INV-C3 sulandırılır",
+        "decision_record_decision": "Accept",
+        "decision_record_seq": 1,
         "id": "TaskCandidate:ReduceCoupling",
-        "promote_exercised_by_test": "store_promotion_requires_operator_acceptance (in-crate, store.rs #[cfg(test)])",
-        "reason_seeded": "OperatorAcceptance is pub(crate) by INV-C3 design; integration test cannot mint it. Promotion enforced in-crate; replay seeds the Accepted state. Faz 8 operator console gerçek API ile bu gate'i açar.",
+        "invariants": "INV-C12 (informed acceptance — node_digest TOCTOU) + INV-C13 (no decision without record — atomic ledger append)",
+        "ledger_length": 1,
+        "operator": "e2e-replay-operator",
+        "promotion_path": "OperatorReviewSession::open_for_operator → PresentedBasis::compile → session.accept",
         "verified_by": "verify_accepted_task_candidate (three-gate API, gate 1)"
       },
-      "name": "Accepted TaskCandidate verified (INV-C3 — acceptance SEEDED, promotion enforced in-crate)",
-      "seeded": true,
+      "name": "Accepted TaskCandidate (REAL promotion via OperatorReviewSession — Faz 8a)",
+      "real_promotion": true,
+      "seeded": false,
       "step": 6
     },
     {
@@ -135,8 +139,8 @@
       "step": 8
     }
   ],
-  "subtitle": "Candidate→Accepted promotion (INV-C3) enforced in-crate (store_promotion_requires_operator_acceptance); acceptance state seeded here. Faz 8 operator console real API.",
-  "summary": "Sentence never became a task by itself. It passed through: ConceptPacket → Classifier → Extractor → RuleCandidate (REAL pipeline, Step 1) → PredicateStub → CrossFamilyHint → operator binding → ExecutablePredicateSet → verify accepted (SEEDED, INV-C3 enforced in-crate) → create task → registry. Each gate is type-level enforced.",
+  "subtitle": "Candidate→Accepted promotion (INV-C3) via OperatorReviewSession (Faz 8a REAL promotion). INV-C12 (informed acceptance) + INV-C13 (no decision without record) canlı.",
+  "summary": "Sentence never became a task by itself. It passed through: ConceptPacket → Classifier → Extractor → RuleCandidate (REAL pipeline, Step 1) → PredicateStub → CrossFamilyHint → operator binding → ExecutablePredicateSet → verify accepted (REAL promotion via OperatorReviewSession, INV-C12/C13) → create task → registry. Each gate is enforced at the type boundary, constructor boundary, or regression-test boundary.",
   "thesis": "The sentence never becomes a task by itself.",
   "title": "Paper 3 — End-to-End Binding Chain Replay (lowering→task segment)"
 }
