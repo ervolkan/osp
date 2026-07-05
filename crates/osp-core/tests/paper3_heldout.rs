@@ -237,9 +237,10 @@ fn run_held_out_case(case: &HeldOutCase) -> Value {
         "invariants": ["INV-P3", "INV-P1"],
         "expected_pipeline_behavior": {
             "rule_signal": rule_signal,
-            "rule_marker_matched": if case.sentence.to_lowercase().contains("must not") { "must not (RULE_MARKERS)" }
+            "rule_marker_expected": if case.sentence.to_lowercase().contains("must not") { "must not (RULE_MARKERS)" }
                 else if case.sentence.to_lowercase().contains("malı") { "malı (RULE_MARKERS)" }
                 else { "unknown" },
+            "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
             "packet_type": packet_type_str,
             "produced_canonical": case.expected_canonical,
             "derives_rule": true

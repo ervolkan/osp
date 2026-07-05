@@ -13,7 +13,8 @@
         "derives_rule": true,
         "packet_type": "Requirement",
         "produced_canonical": "ModüllerArasıBağımlılık",
-        "rule_marker_matched": "malı (RULE_MARKERS)",
+        "rule_marker_expected": "malı (RULE_MARKERS)",
+        "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
         "rule_signal": true
       },
       "held_out_or_regression_reason": "Held-out sette sıfır Türkçe; RQ2 (iki dilli lowering) totoloji-olmayan kanıt. TR alias chain (bağımlılık → bagiml → Coupling) + TR rule marker (malı).",
@@ -38,7 +39,8 @@
         "derives_rule": true,
         "packet_type": "Requirement",
         "produced_canonical": "TheCouplingsIn",
-        "rule_marker_matched": "must not (RULE_MARKERS)",
+        "rule_marker_expected": "must not (RULE_MARKERS)",
+        "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
         "rule_signal": true
       },
       "held_out_or_regression_reason": "Semantik false-positive: 'couplings' fiziksel boru, yazılım metric değil. Matcher Coupling hint üretir (YANLIŞ).",
@@ -63,7 +65,8 @@
         "derives_rule": true,
         "packet_type": "Requirement",
         "produced_canonical": "CouplingRuleMust",
-        "rule_marker_matched": "must not (RULE_MARKERS)",
+        "rule_marker_expected": "must not (RULE_MARKERS)",
+        "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
         "rule_signal": true
       },
       "held_out_or_regression_reason": "Negasyon vakası: 'must not' rule marker + coupling axis, ama anlam NEGATİF (rule devre dışı). Coarse classifier negasyon yakalayamaz.",
@@ -88,7 +91,8 @@
         "derives_rule": true,
         "packet_type": "Requirement",
         "produced_canonical": "CouplingAndCohesion",
-        "rule_marker_matched": "must not (RULE_MARKERS)",
+        "rule_marker_expected": "must not (RULE_MARKERS)",
+        "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
         "rule_signal": true
       },
       "held_out_or_regression_reason": "MultipleCandidates: canonical hem coupling hem cohesion → ambiguity Multiple. A6 negatif yol #2 (AxisNotInCandidates) ile ortak.",
@@ -113,7 +117,8 @@
         "derives_rule": true,
         "packet_type": "Requirement",
         "produced_canonical": "WitnessCountMust",
-        "rule_marker_matched": "must not (RULE_MARKERS)",
+        "rule_marker_expected": "must not (RULE_MARKERS)",
+        "rule_marker_provenance": "test-side heuristic (classifier does not expose which marker matched; Faz 6 calibration)",
         "rule_signal": true
       },
       "held_out_or_regression_reason": "REGRESSION-ANCHORED (held_out DEĞİL): PR36 bare-witness testinin pipeline tekrarı. canonical WitnessCountMust → bare witness var, witnessdepth yok → NoAxisCandidate.",

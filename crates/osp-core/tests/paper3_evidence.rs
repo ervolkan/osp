@@ -575,7 +575,7 @@ fn build_e2e_rejected_paths_replay() -> Value {
                 "expected_rejection_variant": "BindingError::AxisMismatch",
                 "actual_error_variant": format!("{err1:?}"),
                 "invariant": "INV-P2: stub SingleCandidate(Coupling) → Cohesion binding reject",
-                "exercised_by_test_name": "build_e2e_rejected_paths_replay"
+                "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json"
             },
             {
                 "path": 2,
@@ -585,7 +585,7 @@ fn build_e2e_rejected_paths_replay() -> Value {
                 "expected_rejection_variant": "BindingError::AxisNotInCandidates",
                 "actual_error_variant": format!("{err2:?}"),
                 "invariant": "INV-P2/INV-P3: MultipleCandidates aday dışı axis reject (PR36 sıkılaştırma)",
-                "exercised_by_test_name": "build_e2e_rejected_paths_replay"
+                "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json"
             },
             {
                 "path": 3,
@@ -595,7 +595,7 @@ fn build_e2e_rejected_paths_replay() -> Value {
                 "expected_rejection_variant": "BindingError::TemplateNotSuggested",
                 "actual_error_variant": format!("{err3:?}"),
                 "invariant": "INV-P2: template önermeyen stub bind edilemez",
-                "exercised_by_test_name": "build_e2e_rejected_paths_replay"
+                "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json"
             },
             {
                 "path": 4,
@@ -605,7 +605,7 @@ fn build_e2e_rejected_paths_replay() -> Value {
                 "expected_rejection_variant": "TaskGenesisError::NotAccepted",
                 "actual_error_variant": format!("{err4:?}"),
                 "invariant": "INV-C3: Candidate (Accepted olmayan) → task genesis reject. Promote OperatorAcceptance ister (pub(crate)).",
-                "exercised_by_test_name": "build_e2e_rejected_paths_replay"
+                "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json"
             }
         ],
         "summary": "Four rejected paths prove the gates are real: a gate that only passes is indistinguishable from no gate. Compile-time tarafı trybuild'lerde; runtime reddi bu kayda geçti."

@@ -4,7 +4,7 @@
   "rejected_paths": [
     {
       "actual_error_variant": "AxisMismatch { stub_axis: Coupling, binding_axis: Cohesion }",
-      "exercised_by_test_name": "build_e2e_rejected_paths_replay",
+      "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json",
       "expected_rejection_variant": "BindingError::AxisMismatch",
       "gate": "bind_metric_threshold (INV-P2)",
       "input": {
@@ -17,7 +17,7 @@
     },
     {
       "actual_error_variant": "AxisNotInCandidates { candidates: [Coupling, Cohesion], binding_axis: Instability }",
-      "exercised_by_test_name": "build_e2e_rejected_paths_replay",
+      "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json",
       "expected_rejection_variant": "BindingError::AxisNotInCandidates",
       "gate": "bind_metric_threshold (INV-P2)",
       "input": {
@@ -33,7 +33,7 @@
     },
     {
       "actual_error_variant": "TemplateNotSuggested",
-      "exercised_by_test_name": "build_e2e_rejected_paths_replay",
+      "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json",
       "expected_rejection_variant": "BindingError::TemplateNotSuggested",
       "gate": "bind_metric_threshold (INV-P2)",
       "input": {
@@ -46,7 +46,7 @@
     },
     {
       "actual_error_variant": "NotAccepted { node_id: ConceptNodeId(\"TaskCandidate:StillCandidate\") }",
-      "exercised_by_test_name": "build_e2e_rejected_paths_replay",
+      "exercised_by_test_name": "e2e_rejected_paths_snapshot_matches_frozen_json",
       "expected_rejection_variant": "TaskGenesisError::NotAccepted",
       "gate": "verify_accepted_task_candidate (INV-C3, three-gate API gate 1)",
       "input": {

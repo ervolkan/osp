@@ -12,7 +12,7 @@
 | Branch | `docs/paper3-draft` |
 | Frozen date | 2026-07-05 |
 | Rust toolchain | `rustc 1.95.0 (59807616e 2026-04-14)` |
-| osp-core tests | 450+ (Paper 1/2/3 birleşik; paper3_evidence + paper3_heldout eklendi) |
+| osp-core tests | 447 (Paper 1/2/3 birleşik; paper3_evidence + paper3_heldout dahil) |
 | Paper 3 trybuild (type-level) | 11 Paper 3'e özgü (kümülatif 18 bağlam) — `tests/anchoring_typelevel.rs` |
 | Golden fixtures | 13 (`anchoring.fixture.v1`) |
 | Held-out fixtures | 5 (4 held_out + 1 regression_anchored) |
@@ -33,8 +33,8 @@
 | Dosya | sha256 |
 |---|---|
 | `e2e-binding-chain-replay.json` | `9890bdc48f0904a4b206b5a7c70b3892726a71912f50787cdf2f7ca123ecb396` |
-| `e2e-rejected-paths-replay.json` | `5df6a272598277944abeb8fe4d4bfc9c9611ebbc51b273e596c460a1971278e1` |
-| `held-out-adversarial-fixtures.json` | `1b704ff49873f6ce9e2a782b784ab1bef2da1a69d30ec852d1ecb64c4d85f710` |
+| `e2e-rejected-paths-replay.json` | `f7bbd11ef2d786d80d0de9a4a38927fc582d7ff3317325bc44da4d103c48594d` |
+| `held-out-adversarial-fixtures.json` | `12babf65966e89d99d4d98460369695a3a54a4e52f2deceacbbb40d43fad7a41` |
 
 ## Üretim komutları
 
