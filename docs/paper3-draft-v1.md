@@ -69,7 +69,7 @@ Nothing in this sentence is executable. It carries no metric identifier, no thre
 
 At no point did the sentence become a task by proximity; only type-enforced gates moved it forward. The sentence's wording influenced exactly one step (Step 4, translation), and even there it produced a candidate, not a commitment. And every transition that created authority or executability — acceptance, binding, task genesis — required a token the sentence could not supply; the remaining transitions (pipeline run, candidate isolation, lowering, registry) moved the sentence through state without granting it any.
 
-> **Evidence.** The full eight-step chain — including the real Step 1 pipeline trace, the cross-checked canonical, the deterministic task ID, and the registry resolution — is reproduced in `e2e-binding-chain-replay.json` (Appendix B; integrity recorded in `run-metadata.json`). The chain's *rejected* counterpaths are reproduced in `e2e-rejected-paths-replay.json` (Section 7.5).
+> **Evidence.** The full eight-step chain — including the real Step 1 pipeline trace, the cross-checked canonical, the deterministic task ID, and the registry resolution — is reproduced in `e2e-binding-chain-replay.json` [18] (Appendix B; integrity recorded in `run-metadata.json`). The chain's *rejected* counterpaths are reproduced in `e2e-rejected-paths-replay.json` [18] (Section 7.5).
 
 ## 3. Genesis Ontology
 
@@ -194,19 +194,19 @@ Twenty-two cumulative compile-fail tests across the workspace exercise represent
 
 ### 7.2 Golden fixture conformance (stratum 2)
 
-Thirteen golden fixtures (`anchoring.fixture.v1` schema) exercise the deterministic pipeline across the spectrum of packet types — `UserVision`, `Requirement`, `AntiGoal`, `Decision`, `Assumption`, and the `DerivesRule` / `DerivesTask` / `ImplementedBy` edge families. We report a five-state conformance rather than a binary pass/fail: 9 Conform, 2 PartialConform, 2 RejectAsExpected, 0 KnownLimitation, 0 UnexpectedFailure (`conformance-results.json`). The classification is *test-referenced but analyst-assigned*: each fixture cites the test that reproduces its behavior, but the conformance state reflects an analyst's judgment about how closely the observed behavior matches the fixture's expected semantics, not a single assertion's verdict.
+Thirteen golden fixtures (`anchoring.fixture.v1` schema) exercise the deterministic pipeline across the spectrum of packet types — `UserVision`, `Requirement`, `AntiGoal`, `Decision`, `Assumption`, and the `DerivesRule` / `DerivesTask` / `ImplementedBy` edge families. We report a five-state conformance rather than a binary pass/fail: 9 Conform, 2 PartialConform, 2 RejectAsExpected, 0 KnownLimitation, 0 UnexpectedFailure (`conformance-results.json` [18]). The classification is *test-referenced but analyst-assigned*: each fixture cites the test that reproduces its behavior, but the conformance state reflects an analyst's judgment about how closely the observed behavior matches the fixture's expected semantics, not a single assertion's verdict.
 
 ### 7.3 Held-out adversarial (stratum 3)
 
-Five sentences, four held out during development and one regression-anchored, probe the pipeline on inputs the lowering was not tuned for: a bilingual (Turkish) alias chain, a semantic false-positive (*"couplings in a pipe assembly"*), a negation (*"must not be enforced during tests"*), a multi-axis case (*"coupling and cohesion"*), and a bare-witness regression. Conformance: 3 Conform, 2 KnownLimitation, 0 UnexpectedFailure (`held-out-adversarial-fixtures.json`). The two known limitations are not failures the protocol hides; they are precisely the boundaries Section 10 names — the matcher's lexical false-positive and the classifier's negation blindness — and their presence in the held-out set is what keeps the conformance claim non-tautological.
+Five sentences, four held out during development and one regression-anchored, probe the pipeline on inputs the lowering was not tuned for: a bilingual (Turkish) alias chain, a semantic false-positive (*"couplings in a pipe assembly"*), a negation (*"must not be enforced during tests"*), a multi-axis case (*"coupling and cohesion"*), and a bare-witness regression. Conformance: 3 Conform, 2 KnownLimitation, 0 UnexpectedFailure (`held-out-adversarial-fixtures.json` [18]). The two known limitations are not failures the protocol hides; they are precisely the boundaries Section 10 names — the matcher's lexical false-positive and the classifier's negation blindness — and their presence in the held-out set is what keeps the conformance claim non-tautological.
 
 ### 7.4 End-to-End Binding-Chain Replay (stratum 4)
 
-A single frozen replay (`e2e-binding-chain-replay.json`) walks the sentence *"Coupling must not exceed module threshold."* through all eight steps of the binding chain, from the deterministic pipeline run (Step 1, real) through registry insertion (Step 8). Step 1 is a real `run_with_source` call that produces `RuleCandidate:CouplingMustNot` and inserts it into the graph; Step 6 (Candidate→Accepted promotion) is a real `OperatorReviewSession` promotion under INV-C12/C13, rather than a seeded state. The replay is the chain's positive existence proof, and its Step 6 is now the chain's most disciplined surface (§9.5).
+A single frozen replay (`e2e-binding-chain-replay.json` [18]) walks the sentence *"Coupling must not exceed module threshold."* through all eight steps of the binding chain, from the deterministic pipeline run (Step 1, real) through registry insertion (Step 8). Step 1 is a real `run_with_source` call that produces `RuleCandidate:CouplingMustNot` and inserts it into the graph; Step 6 (Candidate→Accepted promotion) is a real `OperatorReviewSession` promotion under INV-C12/C13, rather than a seeded state. The replay is the chain's positive existence proof, and its Step 6 is now the chain's most disciplined surface (§9.5).
 
 ### 7.5 End-to-End Rejected Paths Replay (stratum 5)
 
-Six frozen rejected-path records (`e2e-rejected-paths-replay.json`) prove the gates refuse invalid input: `AxisMismatch` (a `SingleCandidate` stub bound to the wrong axis), `AxisNotInCandidates` (a `MultipleCandidates` stub bound outside the set), `TemplateNotSuggested` (a `NoTemplateMatch` stub presented for binding), `NotAccepted` (a still-`Candidate` node presented to `verify_accepted_task_candidate`), `StaleBasis`/`NotFound` (review-session basis freshness and lookup boundary), and `NotPromotableFrom` (already Accepted/Rejected nodes cannot be decided again through the reviewed path). A gate that only passes is indistinguishable from no gate. A structural property of the test design reinforces this: the rejected-path assertions live *inside* the JSON builder, so every normal CI snapshot run re-exercises the rejections. If a gate were ever weakened to let an invalid input through, the builder would produce a different artifact, the snapshot comparison would fail, and the regression would surface before merge.
+Six frozen rejected-path records (`e2e-rejected-paths-replay.json` [18]) prove the gates refuse invalid input: `AxisMismatch` (a `SingleCandidate` stub bound to the wrong axis), `AxisNotInCandidates` (a `MultipleCandidates` stub bound outside the set), `TemplateNotSuggested` (a `NoTemplateMatch` stub presented for binding), `NotAccepted` (a still-`Candidate` node presented to `verify_accepted_task_candidate`), `StaleBasis`/`NotFound` (review-session basis freshness and lookup boundary), and `NotPromotableFrom` (already Accepted/Rejected nodes cannot be decided again through the reviewed path). A gate that only passes is indistinguishable from no gate. A structural property of the test design reinforces this: the rejected-path assertions live *inside* the JSON builder, so every normal CI snapshot run re-exercises the rejections. If a gate were ever weakened to let an invalid input through, the builder would produce a different artifact, the snapshot comparison would fail, and the regression would surface before merge.
 
 ### 7.6 What this does not evaluate
 
@@ -318,7 +318,7 @@ The table is pinned by the `preflight_canonical_and_rule_signal_for_paper3_evide
 
 ## Appendix B: End-to-End Binding-Chain Replay
 
-The frozen artifact `e2e-binding-chain-replay.json` reproduces the full eight-step chain walked in Section 2: sentence → `RuleCandidate` (real pipeline run) → `PredicateStub` → `CrossFamilyHint` → operator binding → `ExecutablePredicateSet` → verify accepted (real promotion via the review-session API under INV-C12/C13) → create task → registry insertion. The artifact is a deterministic snapshot: the same source produces the same JSON byte-for-byte, and its integrity hash is recorded in `run-metadata.json`.
+The frozen artifact `e2e-binding-chain-replay.json` [18] reproduces the full eight-step chain walked in Section 2: sentence → `RuleCandidate` (real pipeline run) → `PredicateStub` → `CrossFamilyHint` → operator binding → `ExecutablePredicateSet` → verify accepted (real promotion via the review-session API under INV-C12/C13) → create task → registry insertion. The artifact is a deterministic snapshot: the same source produces the same JSON byte-for-byte, and its integrity hash is recorded in `run-metadata.json`.
 
 ## References
 
@@ -346,12 +346,14 @@ The frozen artifact `e2e-binding-chain-replay.json` reproduces the full eight-st
 
 [12] N. Shinn, F. Cassano, A. Gopinath, et al. "Reflexion: Language Agents with Verbal Reinforcement Learning." In *NeurIPS*, 2023.
 
-[13] V. Er. "Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing." OSP Paper 1, v2.6 (companion manuscript, forthcoming).
+[13] V. Er. "Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing." OSP Paper 1, v2.6. Zenodo, 2026. doi:10.5281/zenodo.21206545
 
-[14] V. Er. "Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates." OSP Paper 2, v1.2 (companion manuscript, forthcoming).
+[14] V. Er. "Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates." OSP Paper 2, v1.2. Zenodo, 2026. doi:10.5281/zenodo.21207704
 
 [15] R. Freeman and F. Pfenning. "Refinement Types for ML." In *Proceedings of the ACM SIGPLAN Conference on Programming Language Design and Implementation (PLDI)*, 1991.
 
 [16] W3C OWL Working Group. "OWL 2 Web Ontology Language Primer (Second Edition)." W3C Recommendation, 2012.
 
 [17] N. Medvidovic and R. N. Taylor. "A Classification and Comparison Framework for Software Architecture Description Languages." *IEEE Transactions on Software Engineering* 26(1), 2000.
+
+[18] V. Er. OSP Paper 3 — Evidence Pack (Frozen Verification Snapshots). Zenodo, 2026. doi:10.5281/zenodo.21207762
