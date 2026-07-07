@@ -215,6 +215,11 @@ pub trait AnchorStore {
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// INV-C3: mainline knowledge — sadece Accepted (currently effective).
+    ///
+    /// **Deterministik sunum sırası:** node'lar ascending `ConceptNodeId` sırasında döner.
+    /// Bu kabul kronolojisi DEĞİL — presentation order'dır. Tüm `AnchorStore`
+    /// implementasyonları bu sıralamayı korumak zorundadır (agent-facing context
+    /// tekrarlanabilirliği — aynı graph farklı backend/ekleme sırasında aynı projeksiyon).
     fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// INV-C14 (Faz 8b): Acceptance-provenance projection — kabul provenance'ını
@@ -223,6 +228,10 @@ pub trait AnchorStore {
     /// **Bu chronological replay DEĞİLDİR.** Mevcut snapshot'ta kabul provenance'ını
     /// koruyan node'ları döndürür; "t anında mainline neydi" veya kabul sırasını vermez.
     /// Temporal replay decision/event ledger ister.
+    ///
+    /// **Deterministik sunum sırası:** `mainline_query` ile aynı — node'lar ascending
+    /// `ConceptNodeId` sırasında döner. Tüm `AnchorStore` implementasyonları bu sıralamayı
+    /// korumak zorundadır.
     fn mainline_history(&self) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// Candidate lane — işlem bekleyen.
@@ -1343,12 +1352,14 @@ mod tests {
         );
     }
 
-    /// `mainline_history` deterministik ID sıralaması — ters insert'ten bağımsız.
+    /// `mainline_history` deterministik ID sıralaması — seed sırasından bağımsız.
     /// NOT: bu sunum sırasıdır, kabul kronolojisi DEĞİL.
     #[test]
     fn mainline_history_is_deterministically_ordered() {
         let mk = node_with_status;
-        // Ters sırayla insert (Z, A) — çıktı sıralı olmalı (A, Z).
+        // Node'ları ascending-olmayan sırada seed et (Z, A). ConceptGraph HashMap
+        // kullandığı için iteration sırası insertion'u takip etmez; query sonucu her
+        // durumda ID-ascending olmalı (trait sözleşmesi).
         let mut seed = GraphSeed::default();
         seed.rule_candidates
             .push(mk("RuleCandidate:Zeta", DecisionStatus::Accepted));
@@ -1374,13 +1385,15 @@ mod tests {
         );
     }
 
-    /// `mainline_query` deterministik ID sıralaması — ters insert'ten bağımsız.
+    /// `mainline_query` deterministik ID sıralaması — seed sırasından bağımsız.
     /// `mainline_history` ile aynı sunum sırası (agent-facing context tekrarlanabilirliği).
     /// Sadece Accepted node'lar (INV-C3 current mainline); SupersededAccepted hariç.
     #[test]
     fn mainline_query_is_deterministically_ordered() {
         let mk = node_with_status;
-        // Ters sırayla insert (Z, A) — çıktı sıralı olmalı (A, Z).
+        // Node'ları ascending-olmayan sırada seed et (Z, A). ConceptGraph HashMap
+        // kullandığı için iteration sırası insertion'u takip etmez; query sonucu her
+        // durumda ID-ascending olmalı (trait sözleşmesi).
         let mut seed = GraphSeed::default();
         seed.rule_candidates
             .push(mk("RuleCandidate:Zeta", DecisionStatus::Accepted));
