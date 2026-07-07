@@ -1757,7 +1757,7 @@ mod tests {
 
     /// Audit sequence exhaustion: audit_seq = u64::MAX → AuditSequenceExhausted.
     /// Audit sequence exhaustion: audit_seq = u64::MAX → AuditSequenceExhausted.
-    /// Review PR #49: full store-state unchanged (node/edge counts, both ledgers, audit_seq).
+    /// Full graph, both ledgers, and audit_seq remain unchanged.
     #[test]
     fn audit_sequence_exhaustion_leaves_state_unchanged() {
         let mut store = store_with_two_accepted("RuleCandidate:Old", "RuleCandidate:New");
