@@ -64,6 +64,13 @@ arXiv 1 hafta ertelendi (Faz 8b tamamlansın diye).
   successor-edge invariant'ı zorlar. **Status-set-edilip-edge-unutulan yol açılmasın.**
 - **Halef kaderi (kayıt):** successor reject/deprecate edilirse superseded node'un kaderi ne?
   PR #49-50 tasarım alanı — kapıyı burada tamamen kapatıp orada duvar delme.
+- **Successor cardinalite test (review PR #48 ileri not):** makale INV-C14 paragrafı successor
+  invariant'ını ilk kez kardinaliteyle telaffuz ediyor — *"every SupersededAccepted node has
+  **exactly one** successor"*. Bu, PR #49'un tasarım sözleşmesi oldu. #49 planlanırken şu
+  senaryoların `exactly_one` kardinalitesiyle tutarlılığı açıkça test edilmeli:
+  - Halef zinciri: A→B→C (A'yı B supersede, B'yi C supersede — A ve B ikisi de SupersededAccepted)
+  - Tek düğümü birden fazla kararın supersede etmesi (izinli mi, değil mi? `exactly_one` önlüyor mu?)
+  - Döngü/çift yönlü supersede (A→B ve B→A)
 
 ### PR #50 — `SupersedeSession` + gate ctor
 - Faz 8a `OperatorReviewSession` desenine paralel. Token içeride harcanır.
@@ -96,6 +103,19 @@ Altı turda yakalananlar (sıra ile):
 4. enum sona eklenmeli + deterministic sıralama + enum helper'ları merkezileştir
 5. task_bridge helper kullanmalı + merge-base CI-dayanıklılık
 6. task_bridge regresyon testi + `#[should_panic(expected=...)]` + run-metadata doğruluk
+
+### Fail-closed parser'ın gizli keşfi (review takdiri)
+
+`status_from_str`'in `_ => Candidate` catch-all'ı yalnız typo'ları değil, fixture'lardaki
+`"Observed"` token'ını da yutuyormuş — davranış oradaydı ama **niyet görünmezdi**. Fail-closed
+düzeltme bu bağımlılığı ortaya çıkardı ve doğru işlendi: açık `"Observed" => Candidate` kolu +
+tasarım referansı (`paper3-design.md:769` — Observed bir DecisionStatus değil, MetricSource
+provenance'ı) + bu kararı sabitleyen ayrı test (`status_from_str_observed_maps_to_candidate_by_design`).
+
+**Ders:** *fail-open kod, niyeti görünmez kılar; fail-closed, gizli bağımlılıkları açığa çıkarır.*
+Bu, propagation dersinin canlı kanıtı — küçük bir parser düzeltmesi bile tasarım dokümanındaki
+bir kararı (Observed = ayrı lane) kodda görünür kıldı. PR #48'in plan aşamasında öngöremediğimiz
+en değerli çıktı bu oldu.
 
 ## Önemli dosyalar (güncel)
 

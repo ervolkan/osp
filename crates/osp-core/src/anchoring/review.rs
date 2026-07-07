@@ -852,6 +852,13 @@ mod tests {
     fn apply_decision_rejects_superseded_accepted_not_promotable() {
         use crate::anchoring::store::{AnchorStore, InMemoryAnchorStore, StoreError};
         // SupersededAccepted node seed'le (PR #48'de henüz üretici yok — doğrudan statü set).
+        //
+        // NOTE (review PR #48): bu testin geçerliliği `node_digest`'in `decision_status`'u
+        // DIŞLAMASINA dayanır — bkz. `node_digest_excludes_decision_status` (yukarıda). Basis,
+        // candidate-seed'li ikinci store'dan derlenir (candidate digest == superseded digest,
+        // çünkü digest canonical/aliases/kind/family'den gelir, status'tan değil). Bu yüzden
+        // StaleBasis tetiklenmeden NotPromotableFrom dalına ulaşılır. İleride biri digest'e
+        // status eklerse bu test kırılır — o test neden kırıldığını buradan okusun.
         let node = ConceptNode {
             id: ConceptNodeId("RuleCandidate:Superseded".into()),
             canonical: "Superseded".into(),

@@ -36,7 +36,7 @@ Paper 3           ✅ v1.1 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.1 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **719 test, 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **730 test, 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -81,6 +81,7 @@ için draft deposit bekliyor. **719 test, 0 development marker, 367 kelime abstr
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
 - **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)
 - **INV-C13** (no reviewed operator decision without record): Accepted/Rejected geçişi DecisionRecord ile atomik
+- **INV-C14** (acceptance-provenance projection, runtime-asserted — Faz 8b PR #48): `mainline_query ⊆ mainline_history`, SupersededAccepted current projection'da değil, history'de
 - **INV-P1** (predicate lowering): RuleCandidate → PredicateStub, never ExecutablePredicateSet
 - **INV-P2** (binding): keyword hint ≠ executable predicate — operator binding zorunlu
 - **INV-P3** (translation): ambiguity-preserving — translation proposes candidate meaning, binding creates commitment
