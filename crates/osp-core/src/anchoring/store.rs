@@ -12,9 +12,9 @@
 //! ile (INV-C12/C13 denetimli `apply_decision`).
 
 use crate::anchoring::types::{
-    AnchorPlan, ConceptEdge, ConceptGraph, ConceptNode, ConceptNodeId, GraphSeed,
+    AnchorPlan, ConceptEdge, ConceptGraph, ConceptNode, ConceptNodeId, ConceptNodeKind, GraphSeed,
 };
-use crate::anchoring::DecisionStatus;
+use crate::anchoring::{DecisionStatus, PositionFamily};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // OperatorAcceptance — INV-C3 capability token (compile-time gate)
@@ -66,6 +66,51 @@ pub enum StoreError {
     },
     #[error("snapshot version uyumsuz: expected={expected}, found={found}")]
     InvalidSnapshotVersion { expected: u32, found: u32 },
+    // ─── Faz 8b (PR #49): apply_supersede defense-in-depth ────────────────────
+    #[error("supersede basis endpoint mismatch: basis=({basis_superseded}, {basis_successor}), application=({app_superseded}, {app_successor})")]
+    SupersedeBasisMismatch {
+        basis_superseded: ConceptNodeId,
+        basis_successor: ConceptNodeId,
+        app_superseded: ConceptNodeId,
+        app_successor: ConceptNodeId,
+    },
+    // u64 digest payload (NodeDigest Serialize-only → Deserialize yok; StoreError Deserialize gerektirir)
+    #[error(
+        "stale superseded basis: expected_digest={expected_digest}, found_digest={found_digest}"
+    )]
+    StaleSupersededBasis {
+        expected_digest: u64,
+        found_digest: u64,
+    },
+    #[error(
+        "stale successor basis: expected_digest={expected_digest}, found_digest={found_digest}"
+    )]
+    StaleSuccessorBasis {
+        expected_digest: u64,
+        found_digest: u64,
+    },
+    #[error("node already superseded (committed incoming Supersedes edge exists): {0}")]
+    AlreadySuperseded(ConceptNodeId),
+    #[error("node {0:?} supersede edilemez (sadece Accepted)")]
+    NotSupersedeableFrom(DecisionStatus),
+    #[error("successor node {0:?} Accepted değil")]
+    SuccessorNotAccepted(DecisionStatus),
+    #[error("self-supersede yasak: {0}")]
+    SelfSupersede(ConceptNodeId),
+    #[error("incompatible supersede endpoints: superseded=(kind={superseded_kind:?}, family={superseded_family:?}), successor=(kind={successor_kind:?}, family={successor_family:?})")]
+    IncompatibleSupersedeEndpoints {
+        superseded_kind: ConceptNodeKind,
+        successor_kind: ConceptNodeKind,
+        superseded_family: PositionFamily,
+        successor_family: PositionFamily,
+    },
+    #[error("supersede cycle: {superseded} →* {successor} yol mevcut")]
+    SupersedeCycle {
+        superseded: ConceptNodeId,
+        successor: ConceptNodeId,
+    },
+    #[error("audit sequence exhausted (u64 overflow)")]
+    AuditSequenceExhausted,
 }
 
 /// `PresentedBasis`'in deterministic fingerprint'i → `[u8; 32]`.
@@ -152,6 +197,19 @@ pub trait AnchorStore {
     /// graph backend Faz 8b+ transaction garantisi ister.
     fn decision_ledger(&self) -> Vec<crate::anchoring::review::DecisionRecord>;
 
+    /// INV-C15 (Faz 8b): Atomic supersession transition. Status (Accepted→SupersededAccepted)
+    /// + successor edge (successor→superseded, `Supersedes`) tek işlemde. `SupersedeApplication`
+    /// opaque (private fields, pub(crate) ctor, no Deserialize) — tek üretici PR #50
+    /// `SupersedeSession`. Store: seq/prior_status/new_status/edge record üretiminden sorumludur.
+    fn apply_supersede(
+        &mut self,
+        application: crate::anchoring::review::SupersedeApplication,
+    ) -> Result<crate::anchoring::review::SupersedeRecord, Self::Error>;
+
+    /// INV-C15: Append-only supersede ledger — sorgulanabilir. `decision_ledger` ile
+    /// global `audit_seq` paylaşır (cross-ledger total order).
+    fn supersede_ledger(&self) -> Vec<crate::anchoring::review::SupersedeRecord>;
+
     /// INV-C8: canonical exact match (canon gate için).
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
 
@@ -179,19 +237,24 @@ pub trait AnchorStore {
 
 /// In-memory concept anchoring store. `ConceptGraph` sarmalar.
 ///
-/// # INV-C3 / INV-C5 disiplini
-/// - `apply_plan`: tüm yeni node/edge'ler **Candidate** yazılır (INV-C5).
+/// # INV-C3 / INV-C5 / INV-C15 disiplini
+/// - `apply_plan`: tüm yeni node/edge'ler **Candidate** yazılır (INV-C5) — tek untrusted write path.
 /// - `mainline_query`: sadece **Accepted** filtre (INV-C3 — Candidate mainline değil).
-/// - `apply_decision`: `OperatorReviewSession` ile INV-C12/C13 denetimli promotion
-///   (Faz 8a; legacy `promote_to_accepted` Faz 8c'de kaldırıldı).
+/// - `apply_decision`: `OperatorReviewSession` ile INV-C12/C13 denetimli promotion (Faz 8a).
+/// - `apply_supersede`: INV-C15 atomik supersession (Faz 8b) — trusted-boundary exception
+///   (Accepted edge + SupersededAccepted status yazar; C5 "only untrusted write path" kapsamı dışında).
 /// - `restore_trusted_snapshot`: trusted restore (Faz 3, INV-C3 persistence boundary).
 pub struct InMemoryAnchorStore {
     graph: ConceptGraph,
     /// INV-C13 (Faz 8a): append-only decision ledger. `apply_decision` atomik olarak
     /// promotion + append yapar; ikisi ayrılamaz. v1 InMemory.
     decision_ledger: Vec<crate::anchoring::review::DecisionRecord>,
-    /// Ledger sequence counter — atomik kayıt üretimi için.
-    decision_seq: u64,
+    /// INV-C15 (Faz 8b): append-only supersede ledger. `apply_supersede` atomik olarak
+    /// status + edge + append yapar. `audit_seq` decision ile paylaşımlı (cross-ledger total order).
+    supersede_ledger: Vec<crate::anchoring::review::SupersedeRecord>,
+    /// Global audit sequence counter — `decision_ledger` ve `supersede_ledger` paylaşımlı.
+    /// Cross-ledger total order (chronological replay için initial snapshot + event stream de gerekir).
+    audit_seq: u64,
 }
 
 impl std::fmt::Debug for InMemoryAnchorStore {
@@ -200,6 +263,8 @@ impl std::fmt::Debug for InMemoryAnchorStore {
             .field("node_count", &self.graph.node_count())
             .field("edge_count", &self.graph.edge_count())
             .field("decision_ledger_len", &self.decision_ledger.len())
+            .field("supersede_ledger_len", &self.supersede_ledger.len())
+            .field("audit_seq", &self.audit_seq)
             .finish()
     }
 }
@@ -215,7 +280,8 @@ impl InMemoryAnchorStore {
         Self {
             graph: ConceptGraph::new(),
             decision_ledger: Vec::new(),
-            decision_seq: 0,
+            supersede_ledger: Vec::new(),
+            audit_seq: 0,
         }
     }
 
@@ -286,11 +352,73 @@ impl InMemoryAnchorStore {
     pub fn candidate_query(&self) -> Result<Vec<ConceptNode>, StoreError> {
         <Self as AnchorStore>::candidate_query(self)
     }
+    pub fn apply_decision(
+        &mut self,
+        application: crate::anchoring::review::DecisionApplication,
+    ) -> Result<crate::anchoring::review::DecisionRecord, StoreError> {
+        <Self as AnchorStore>::apply_decision(self, application)
+    }
+    pub fn apply_supersede(
+        &mut self,
+        application: crate::anchoring::review::SupersedeApplication,
+    ) -> Result<crate::anchoring::review::SupersedeRecord, StoreError> {
+        <Self as AnchorStore>::apply_supersede(self, application)
+    }
+    pub fn supersede_ledger(&self) -> Vec<crate::anchoring::review::SupersedeRecord> {
+        <Self as AnchorStore>::supersede_ledger(self)
+    }
+    pub fn decision_ledger(&self) -> Vec<crate::anchoring::review::DecisionRecord> {
+        <Self as AnchorStore>::decision_ledger(self)
+    }
     pub fn node_count(&self) -> Result<usize, StoreError> {
         <Self as AnchorStore>::node_count(self)
     }
     pub fn edge_count(&self) -> Result<usize, StoreError> {
         <Self as AnchorStore>::edge_count(self)
+    }
+
+    /// `from`'dan outgoing *committed* (Accepted) Supersedes edge'lerini DFS ile takip
+    /// edip `to`'ya ulaşılırsa true. Cycle check: apply_supersede'de `from=superseded,
+    /// to=successor` — yani superseded'ın lineage'inde successor zaten var mı?
+    /// Production API dizisiyle unreachable (her Supersedes hedefi atomik SupersededAccepted
+    /// olur); seeded/deserialized adversarial graph savunması.
+    fn is_reachable_via_committed_supersedes(
+        &self,
+        from: &ConceptNodeId,
+        to: &ConceptNodeId,
+    ) -> bool {
+        use crate::anchoring::ConceptEdgeKind;
+        use std::collections::HashSet;
+        let mut visited: HashSet<ConceptNodeId> = HashSet::new();
+        let mut stack = vec![from.clone()];
+        while let Some(current) = stack.pop() {
+            if &current == to {
+                return true;
+            }
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            for e in self.graph.edges() {
+                if e.kind == ConceptEdgeKind::Supersedes
+                    && e.decision_status == DecisionStatus::Accepted
+                    && &e.from == &current
+                {
+                    stack.push(e.to.clone());
+                }
+            }
+        }
+        false
+    }
+
+    /// Test-only: audit_seq'i zorla set et (overflow exhaustion test için).
+    #[cfg(test)]
+    pub(crate) fn set_audit_seq_for_tests(&mut self, seq: u64) {
+        self.audit_seq = seq;
+    }
+    /// Test-only: audit_seq oku.
+    #[cfg(test)]
+    pub(crate) fn audit_seq_for_tests(&self) -> u64 {
+        self.audit_seq
     }
 
     // Inherent apply_plan (trait'in arkasında kullanılan gerçek implementasyon)
@@ -410,11 +538,23 @@ impl AnchorStore for InMemoryAnchorStore {
             DecisionKind::Accept => DecisionStatus::Accepted,
             DecisionKind::Reject => DecisionStatus::Rejected,
         };
+
+        // INV-C13/INV-C15 atomiklik: audit_seq overflow'ı mutation ÖNCESİ checked_add ile
+        // doğrula (Review PR #49 tur 3). u64 += 1 debug/test build'inde overflow panic
+        // ederse status mutation sonrası panic = atomiklik kırılırdı.
+        let next_seq = self
+            .audit_seq
+            .checked_add(1)
+            .ok_or(StoreError::AuditSequenceExhausted)?;
+
+        // All fallible domain validation is complete. The following mutations contain
+        // no expected Result-returning failure path. (Rust panic/OOM transaction rollback
+        // is out of scope — INV-C13/C15 guarantee graph/ledger/seq unchanged on returned Err.)
         node.decision_status = new_status;
+        self.audit_seq = next_seq;
+        let seq = next_seq;
 
         // INV-C13: DecisionRecord üret + ledger'a atomik append.
-        self.decision_seq += 1;
-        let seq = self.decision_seq;
         let basis = application.basis();
         // basis_fingerprint: PresentedBasis seçili alanlarının (canonical + node_digest +
         // candidate_id) FNV-based deterministic fingerprint'i. Audit-security hash DEĞİL
@@ -439,6 +579,191 @@ impl AnchorStore for InMemoryAnchorStore {
 
     fn decision_ledger(&self) -> Vec<crate::anchoring::review::DecisionRecord> {
         self.decision_ledger.clone()
+    }
+
+    fn supersede_ledger(&self) -> Vec<crate::anchoring::review::SupersedeRecord> {
+        self.supersede_ledger.clone()
+    }
+
+    /// INV-C15 (Faz 8b): Atomic supersession transition.
+    ///
+    /// Edge yönü (tasarım doc §8.3): `successor --Supersedes--> superseded`.
+    /// Cardinalite: incoming — `superseded`'e gelen *committed* (Accepted) Supersedes
+    /// edge sayısı == 1. Candidate proposal edge'ler (apply_plan yazar) sayılmaz;
+    /// consolidation (C→A ve C→B) serbest (outgoing sınırı yok).
+    ///
+    /// Deterministic error precedence (tests may rely on it):
+    ///   1. basis endpoint mismatch (SupersedeBasisMismatch)
+    ///   2. node existence (NodeNotFound)
+    ///   3. superseded digest freshness (StaleSupersededBasis)
+    ///   4. successor digest freshness (StaleSuccessorBasis)
+    ///   5. existing committed incoming edge (AlreadySuperseded)
+    ///   6. superseded status (NotSupersedeableFrom)
+    ///   7. successor status (SuccessorNotAccepted)
+    ///   8. self-supersede (SelfSupersede)
+    ///   9. endpoint compatibility (IncompatibleSupersedeEndpoints) — coarse structural
+    ///  10. cycle (SupersedeCycle)
+    ///  11. audit_seq availability (AuditSequenceExhausted)
+    ///  12. mutation (status + edge + ledger)
+    fn apply_supersede(
+        &mut self,
+        application: crate::anchoring::review::SupersedeApplication,
+    ) -> Result<crate::anchoring::review::SupersedeRecord, Self::Error> {
+        use crate::anchoring::review::{supersede_basis_fingerprint, SupersedeRecord};
+        use crate::anchoring::ConceptEdgeKind;
+
+        let superseded_id = application.superseded().clone();
+        let successor_id = application.successor().clone();
+        let basis = application.basis();
+
+        // (1) Basis endpoint mismatch — defense-in-depth (session da kontrol eder).
+        if basis.superseded_id() != &superseded_id || basis.successor_id() != &successor_id {
+            return Err(StoreError::SupersedeBasisMismatch {
+                basis_superseded: basis.superseded_id().clone(),
+                basis_successor: basis.successor_id().clone(),
+                app_superseded: superseded_id.clone(),
+                app_successor: successor_id.clone(),
+            });
+        }
+
+        // (2) Node existence + (3)(4) digest freshness + validation verilerini kopyala
+        // (borrow-safe: immutable borrow kapat, node_mut için) — Review PR #49 tur 2.
+        let (
+            sup_status,
+            suc_status,
+            sup_kind,
+            suc_kind,
+            sup_family,
+            suc_family,
+            cur_sup_digest,
+            cur_suc_digest,
+        ) = {
+            let sup_node = self
+                .graph
+                .node(&superseded_id)
+                .ok_or_else(|| StoreError::NodeNotFound(superseded_id.clone()))?;
+            let suc_node = self
+                .graph
+                .node(&successor_id)
+                .ok_or_else(|| StoreError::NodeNotFound(successor_id.clone()))?;
+            (
+                sup_node.decision_status,
+                suc_node.decision_status,
+                sup_node.node_kind,
+                suc_node.node_kind,
+                sup_node.position_family,
+                suc_node.position_family,
+                crate::anchoring::review::node_digest(sup_node),
+                crate::anchoring::review::node_digest(suc_node),
+            )
+        };
+
+        // (3) Superseded digest freshness — u64 payload (NodeDigest Serialize-only).
+        if basis.superseded_digest() != cur_sup_digest {
+            return Err(StoreError::StaleSupersededBasis {
+                expected_digest: basis.superseded_digest().get(),
+                found_digest: cur_sup_digest.get(),
+            });
+        }
+        // (4) Successor digest freshness — successor da karar anında taze olmalı.
+        if basis.successor_digest() != cur_suc_digest {
+            return Err(StoreError::StaleSuccessorBasis {
+                expected_digest: basis.successor_digest().get(),
+                found_digest: cur_suc_digest.get(),
+            });
+        }
+
+        // (5) INV-C15 committed incoming edge — Accepted only (Candidate proposal'lar sayılmaz).
+        let already_superseded = self.graph.edges().any(|e| {
+            e.kind == ConceptEdgeKind::Supersedes
+                && e.decision_status == DecisionStatus::Accepted
+                && &e.to == &superseded_id
+        });
+        if already_superseded {
+            return Err(StoreError::AlreadySuperseded(superseded_id.clone()));
+        }
+
+        // (6) Superseded status — Accepted olmalı.
+        if sup_status != DecisionStatus::Accepted {
+            return Err(StoreError::NotSupersedeableFrom(sup_status));
+        }
+        // (7) Successor status — Accepted olmalı (creation-time).
+        if suc_status != DecisionStatus::Accepted {
+            return Err(StoreError::SuccessorNotAccepted(suc_status));
+        }
+        // (8) Self-supersede.
+        if superseded_id == successor_id {
+            return Err(StoreError::SelfSupersede(superseded_id.clone()));
+        }
+        // (9) Endpoint compatibility — coarse structural (same kind + family).
+        // Semantic replacement judgment operator-reviewed basis'te; lineage/scope key future work.
+        if sup_kind != suc_kind || sup_family != suc_family {
+            return Err(StoreError::IncompatibleSupersedeEndpoints {
+                superseded_kind: sup_kind,
+                successor_kind: suc_kind,
+                superseded_family: sup_family,
+                successor_family: suc_family,
+            });
+        }
+        // (10) Cycle: superseded →* successor committed Supersedes yolu var mı?
+        // Production API dizisiyle unreachable (her Supersedes hedefi atomik SupersededAccepted
+        // olur); seeded/deserialized adversarial graph savunması.
+        if self.is_reachable_via_committed_supersedes(&superseded_id, &successor_id) {
+            return Err(StoreError::SupersedeCycle {
+                superseded: superseded_id.clone(),
+                successor: successor_id.clone(),
+            });
+        }
+
+        // (11) audit_seq overflow — mutation öncesi checked_add (Review PR #49 tur 3).
+        let next_seq = self
+            .audit_seq
+            .checked_add(1)
+            .ok_or(StoreError::AuditSequenceExhausted)?;
+
+        // --- All fallible domain validation complete. No expected Result-returning
+        // failure path below. (Rust panic/OOM transaction rollback out of scope;
+        // INV-C15 guarantees graph/ledger/seq unchanged on returned Err.) ---
+        let prior_status = DecisionStatus::Accepted;
+        let new_status = DecisionStatus::SupersededAccepted;
+
+        // (12a) Status transition.
+        self.graph
+            .node_mut(&superseded_id)
+            .expect("validated node exists")
+            .decision_status = new_status;
+
+        // (12b) Successor edge: successor → superseded (Accepted/committed, high-stake INV-C7).
+        // Candidate proposal edge silinmez — historical proposal provenance olarak kalır (PR #50).
+        let edge = ConceptEdge {
+            from: successor_id.clone(),
+            to: superseded_id.clone(),
+            kind: ConceptEdgeKind::Supersedes,
+            decision_status: DecisionStatus::Accepted,
+            explanation: Some(application.reason().clone()),
+        };
+        self.graph.insert_edge(edge);
+
+        // (12c) SupersedeRecord + ledger append (atomic — global audit_seq).
+        self.audit_seq = next_seq;
+        let basis_fp = supersede_basis_fingerprint(basis);
+        let record = SupersedeRecord {
+            seq: next_seq,
+            session_id: application.session_id().clone(),
+            operator: application.operator().clone(),
+            superseded: superseded_id.clone(),
+            successor: successor_id.clone(),
+            authority_level: application.authority_level(),
+            reason: application.reason().clone(),
+            superseded_digest_serde: basis.superseded_digest().get(),
+            successor_digest_serde: basis.successor_digest().get(),
+            basis_fingerprint: basis_fp,
+            prior_status,
+            new_status,
+            at: application.decided_at(),
+        };
+        self.supersede_ledger.push(record.clone());
+        Ok(record)
     }
 
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error> {

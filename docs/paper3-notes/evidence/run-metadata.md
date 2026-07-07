@@ -28,19 +28,20 @@
 > `ef022a9`, evidence generation commit olarak kaydedilir. Doğrula:
 > `git log -1 --format=%H -- docs/paper3-notes/evidence/e2e-binding-chain-replay.json`
 
-## Current protocol metadata (INV-C14 sonrası — evrilir)
+## Current protocol metadata (INV-C15 sonrası — evrilir)
 
-İki eksen: **kapsam** (genesis / lowering / projection) × **enforcement** (type-level / runtime-asserted).
+İki eksen: **kapsam** (genesis / lowering / projection / transition) × **enforcement** (type-level / runtime-asserted).
 
 | Parameter | Value |
 |---|---|
-| Current Paper-3-specific invariants | **14** |
+| Current Paper-3-specific invariants | **15** |
 | ↳ type-enforced genesis (INV-C1..C8, C12, C13) | 10 |
 | ↳ type-enforced lowering/translation (INV-P1..P3) | 3 |
 | ↳ runtime projection invariant (INV-C14, Faz 8b PR #48) | 1 |
+| ↳ runtime atomic transition invariant (INV-C15, Faz 8b PR #49) | 1 |
 | **Toplam type-enforced** (genesis + lowering) | **13** |
-| **Toplam runtime-asserted** | **1** (C14) |
-| Compile-fail test count (unchanged) | 22 (INV-C14 runtime-asserted, type-level DEĞİL) |
+| **Toplam runtime-asserted** | **2** (C14 projection + C15 transition) |
+| Compile-fail test count | 24 (INV-C14/C15 runtime-asserted; 2 yeni supersede opacity trybuild C13-paralel boundary korur) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |
 
 > **Taksonomi notu (Review PR #48):** P1-P3 lowering invariant'ları da type-enforced'dur
@@ -51,7 +52,7 @@
 
 | Stratum | Amaç | Kanıt | Test |
 |---|---|---|---|
-| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-P1..P3 compile-time (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant (22 cumulative compile-fail) | `tests/anchoring_typelevel.rs` |
+| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-P1..P3 + supersede opacity (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant + 2 supersede opacity boundary (24 cumulative compile-fail) | `tests/anchoring_typelevel.rs` |
 | **(2) Golden fixture conformance** | 13 fixture pipeline davranışı | `anchoring_mvp.rs` + `anchoring_fixtures.rs` | `cargo test -p osp-core --test anchoring_mvp` |
 | **(3) Held-out adversarial** | 5 cümle totoloji-olmayan RQ1 | `held-out-adversarial-fixtures.json` | `paper3_heldout.rs` |
 | **(4) E2E binding chain replay** | Uçtan uca zincir; Step 6 REAL promotion (Faz 8a) | `e2e-binding-chain-replay.json` | `paper3_evidence.rs` |

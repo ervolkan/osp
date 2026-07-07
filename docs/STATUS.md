@@ -36,7 +36,7 @@ Paper 3           ✅ v1.1 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.1 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **730 test, 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **752 test, 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -69,20 +69,21 @@ için draft deposit bekliyor. **730 test, 0 development marker, 367 kelime abstr
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
 | **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
-| **Faz 8b** | 🚧 PR48 | Başladı — `DecisionStatus::SupersededAccepted` + `mainline_history()` (INV-C14). Sırada: PR #49 `apply_supersede`, PR #50 `SupersedeSession`, PR #51 CLI `osp review` |
+| **Faz 8b** | 🚧 PR49 | PR #48 ✅ (varyant + INV-C14). PR #49: `SupersedeApplication` + `apply_supersede` (INV-C15 atomic). Sırada: PR #50 `SupersedeSession`, PR #51 CLI `osp review` |
 | Faz 8c | ✅ PR47 | promote_to_accepted kaldırma (legacy path migrate) |
 
-### Invariant'lar (14 Paper 3'e özgü + INV-T2 boundary)
+### Invariant'lar (15 Paper 3'e özgü + INV-T2 boundary)
 
-> INV-C14 (Faz 8b PR #48) eklendi: acceptance-provenance projection.
-> 10 type-enforced genesis + 3 type-enforced lowering/translation (P1-P3) + 1 runtime projection (C14) = 14.
-> Toplam type-enforced = 13 (10 genesis + 3 lowering); INV-C14 tek runtime-asserted invariant.
-> Compile-fail count 22'de sabit (C14 runtime-asserted, type-level değil).
+> INV-C14 (PR #48) + INV-C15 (PR #49) eklendi.
+> 10 type-enforced genesis + 3 type-enforced lowering/translation (P1-P3) + 2 runtime (C14 projection + C15 transition) = 15.
+> Toplam type-enforced = 13 (10 genesis + 3 lowering); 2 runtime-asserted (C14, C15).
+> Compile-fail count 24 (2 supersede opacity trybuild eklendi; C14/C15 runtime-asserted).
 
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
 - **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)
 - **INV-C13** (no reviewed operator decision without record): Accepted/Rejected geçişi DecisionRecord ile atomik
 - **INV-C14** (acceptance-provenance projection, runtime-asserted — Faz 8b PR #48): `mainline_query ⊆ mainline_history`, SupersededAccepted current projection'da değil, history'de
+- **INV-C15** (atomic supersession transition, runtime-asserted — Faz 8b PR #49): `apply_supersede` Accepted→SupersededAccepted + successor edge atomik; incoming committed cardinality; lane-sensitive Supersedes
 - **INV-P1** (predicate lowering): RuleCandidate → PredicateStub, never ExecutablePredicateSet
 - **INV-P2** (binding): keyword hint ≠ executable predicate — operator binding zorunlu
 - **INV-P3** (translation): ambiguity-preserving — translation proposes candidate meaning, binding creates commitment
@@ -181,7 +182,7 @@ cargo test --workspace --exclude osp-desktop
 - osp-cli: smoke
 - osp-mcp: 8 unit + 7 INV-T1 integration
 - osp-spike: ~32
-- Toplam: 730 test, hepsi yeşil (`RUSTFLAGS="-D warnings"` temiz)
+- Toplam: 752 test, hepsi yeşil (`RUSTFLAGS="-D warnings"` temiz)
 
 ## Önemli Commit'ler
 

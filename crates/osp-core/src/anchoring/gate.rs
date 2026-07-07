@@ -88,7 +88,12 @@ pub struct SupersedeAuthority {
 
 /// Authority seviyesi (§6.2 hiyerarşi) — public, ama yeni `SupersedeAuthority`
 /// üretmek için kullanılamaz (sadece `SupersedeAuthority::level()` ile okunur).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Faz 8b (PR #49): serde derive eklendi — `SupersedeRecord` audit için `authority_level`
+/// taşır. Güvenlik açığı yok: level informational'dır, `SupersedeAuthority` capability'si
+/// değil (capability hala private-field + `pub(crate)` ctor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum SupersedeAuthorityLevel {
     /// §6.2 seviye 1 — her şeyi supersede edebilir.
     Operator,

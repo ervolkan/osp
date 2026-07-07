@@ -519,7 +519,10 @@ pub enum ConceptEdgeKind {
     ImplementedBy,           // TaskCandidate → CodeEntity (high stake)
     EvidencedBy,             // CodeEntity → Evidence (high stake)
     Contradicts,             // ConceptPacket → Decision (high stake)
-    Supersedes,              // ConceptPacket → Decision (high stake, capability-gated §6.4)
+    Supersedes,              // Faz 8b lane-sensitive (PR #49):
+                             //   Candidate: ConceptPacket→Decision proposal (apply_plan, INV-C4 gate)
+                             //   Accepted:  successor→superseded committed lineage (apply_supersede, INV-C15)
+                             // Cardinality/cycle SADECE Accepted lane.
     RelatedTo,               // Concept ↔ Concept (düşük stake)
     AntiGoalOf,              // Concept → Concept (high stake)
     DependsOnDecision,       // ConceptPacket → Decision (düşük stake)
@@ -542,7 +545,10 @@ Rule --CONSTRAINS--> CodeEntity
 Task --EXPECTED_IMPLEMENTATION--> CodeEntity
 CodeEntity --EVIDENCED_BY--> TestResult
 ConceptPacket --CONTRADICTS--> Decision
-ConceptPacket --SUPERSEDES--> OldDecision  (capability-gated)
+ConceptPacket --SUPERSEDES--> OldDecision  (capability-gated, Candidate proposal — INV-C4 gate)
+# Faz 8b committed lineage (apply_supersede, INV-C15):
+#   successor --Supersedes[Accepted]--> superseded
+#   inverse reading: superseded --SupersededBy--> successor
 ConceptPacket --HAS_POSITION--> PositionSnapshot
 ```
 
@@ -630,7 +636,7 @@ Aşağıdaki 8 invariant Paper 3'ün omurgasıdır. **Durum: proposal** — impl
 
 **Tanım:** Accepted kararları sadece yeterli epistemik yetkiye sahip kaynak (`SupersedeAuthority`: Operator, ExplicitUser, WitnessedArchitectDecision) geçersiz kılabilir. Düşük yetkili kaynaklar (agent, raw embedding) sadece `CONTRADICTS?` önerir.
 
-**Yapısal garanti:** `SUPERSEDES` edge'i `SupersedeAuthority` capability'si gerektirir; agent kaynağı bu capability'ye sahip değildir.
+**Yapısal garanti:** `SUPERSEDES` edge'i `SupersedeAuthority` capability'si gerektirir; agent kaynağı bu capability'ye sahip değildir. İki katman: (1) **gate** (extraction/planning) — `AnchorGate` `SupersedeAuthority` olmadan Candidate `Supersedes` proposal'ı reject eder; (2) **store** (Faz 8b PR #49) — `apply_supersede` committed `Supersedes` edge + `SupersededAccepted` status atomik üretir (INV-C15), `SupersedeApplication` opaque (authority `pub(crate)` ctor ister; production issuer PR #50 `SupersedeSession`).
 
 **İhlal örneği:** AgentHypothesis `SUPERSEDES` ile AcceptedDecision'ı geçersiz kılar → zayıf epistemik yetki güçlüyü ezer, §6 hiyerarşi ihlal.
 

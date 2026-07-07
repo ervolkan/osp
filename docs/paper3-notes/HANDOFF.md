@@ -1,20 +1,21 @@
-# Paper 3 — Handoff Notu (Faz 8b sürecinde)
+# Paper 3 — Handoff Notu (Faz 8b sürecinde — PR #49 tamam)
 
-> **Tarih:** 2026-07-07 (PR #48 implementasyonu sırasında güncellendi)
-> **Dal:** `faz8b-superseded-status` (PR #48 branch)
-> **Base:** `main` (`bee082b`, Faz 8c merged)
-> **Durum:** Faz 8b başladı — PR #48 (`DecisionStatus::SupersededAccepted` + `mainline_history()` + INV-C14) implementasyonda.
+> **Tarih:** 2026-07-07 (PR #49 implementasyonu sırasında güncellendi)
+> **Dal:** `faz8b-apply-supersede` (PR #49 branch)
+> **Base:** `main` (`a392191`, PR #48 merged)
+> **Durum:** Faz 8b ilerliyor — PR #48 (varyant + INV-C14) ✅ merged, PR #49 (`apply_supersede` + INV-C15) implementasyonda, PR #50 (`SupersedeSession`) sırada.
 
 ---
 
 ## Nerede duruyoruz
 
 Paper 3 (Concept Anchoring / Genesis Layer) **v1.1 public manuscript** + Faz 8a (OperatorReviewSession) +
-Faz 8c (legacy promote kaldırma) tamam. **Faz 8b (supersede vocabulary)** PR #48 ile başladı:
-`SupersededAccepted` varyantı, `mainline_history()` kapısı, INV-C14 (acceptance-provenance projection).
+Faz 8c (legacy promote kaldırma) + PR #48 (varyant + INV-C14) tamam. **PR #49** Faz 8b'nin üretici
+yolunu ekler: `SupersedeApplication` + `apply_supersede` (INV-C15 atomic transition). PR #50
+(`SupersedeSession` + production authority issuer) sırada.
 
-**730 test, 0 regression** (PR #48 öncesi 718 + 12 yeni test). Zenodo DOI'leri canlı (P1/P2/P3/pack).
-arXiv 1 hafta ertelendi (Faz 8b tamamlansın diye).
+**752 test, 0 regression** (PR #48 sonrası 730 + 22 yeni test). 24 trybuild (2 opacity eklendi).
+Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv ertelendi (Faz 8b tamamlansın diye).
 
 ## PR #48 — ne yapıldı (bu oturumda)
 
@@ -52,31 +53,44 @@ arXiv 1 hafta ertelendi (Faz 8b tamamlansın diye).
   baseline `481690d`) +
   current protocol (14, INV-C14 sonrası envanter).
 
+## PR #49 — ne yapıldı (bu oturumda)
+
+### Kod
+- **`SupersedeApplication`** — opaque (private fields + `pub(crate)` ctor + no Deserialize).
+  Authority parametre ister ama `Copy` → *"issuance-gated, not linearly consumed"*. Production
+  issuer PR #50.
+- **`PresentedSupersedeBasis`** — iki-endpoint'li basis (çift digest: superseded + successor),
+  `mainline_query`'den derlenir. TOCTOU: her iki node da karar anında taze.
+- **`SupersedeRecord`** + global **`audit_seq`** (decision ile paylaşımlı → cross-ledger total order).
+  Ayrı `supersede_ledger`.
+- **`apply_supersede`** — INV-C15 atomic transition. 12-step deterministic precedence:
+  basis mismatch → NodeNotFound → stale digests → committed incoming → status → self →
+  compat → cycle → audit_seq → mutation. `checked_add` overflow hardening.
+- **Lane-sensitive `Supersedes`** — Candidate proposal (apply_plan) vs Accepted committed lineage
+  (apply_supersede). Cardinality/cycle SADECE Accepted lane. Consolidation serbest (outgoing sınır yok).
+- **Edge yönü:** `successor --Supersedes--> superseded` (tasarım doc §8.3, C4 gate semantiği).
+  Inverse reading: `superseded --SupersededBy--> successor`.
+- **`StoreError`** 11 yeni varyant + `SupersedeError` (compile error evreni).
+- **`supersede_basis_fingerprint`** — 4 bağımsız FNV-1a lane (256-bit), length-prefixed framing.
+
+### Testler (22 yeni, 752 total, 0 failed)
+- Mutlu yol + A→B→C zincir + consolidation + projection
+- Error-path matrisi (12 varyant) + malformed factory (NodeNotFound/SelfSupersede için private basis)
+- audit_seq exhaustion + cross-ledger monotonic seq
+- Fingerprint stabil + direction-sensitive
+- serde round-trip + 2 opacity trybuild (C13-paralel boundary)
+
 ## Sıradaki PR'lar (Faz 8b devam)
 
-### PR #49 — `SupersedeApplication` + `apply_supersede` (en büyük)
-- **Üretici yol:** SupersededAccepted'ı *üreten* kod. Şu an varyant var, üretici yok.
-- **Atomiklik sözü (kritik):** `apply_supersede(old, successor)` statü geçişi + successor edge'i
-  **tek işlemde** kurar. INV-C15 (atomik supersede transition):
-  - precondition: `old.status == Accepted`, `successor` geçerli, `old != successor`
-  - postcondition: `old.status == SupersededAccepted ∧ exactly_one(old --SupersededBy--> successor)`
-  - `old ∉ mainline_query ∧ old ∈ mainline_history`
-- **Geçici zorlanmayan invariant (PR #48 → #49 arası):** varyant representable (public construction/
-  deserialization), ama hiçbir production store-transition API üretmez. PR #49 graph-level
-  successor-edge invariant'ı zorlar. **Status-set-edilip-edge-unutulan yol açılmasın.**
+### PR #50 — `SupersedeSession` + production authority issuer
+- Faz 8a `OperatorReviewSession` desenine paralel. `SupersedeApplication`'ı içeride üretir.
+- **Production `issue_for_supersede_session` ctor** (gate.rs'deki `#[cfg(test)]` issuer'lar
+  production'a taşınır; `SupersedeAuthority` hala Copy → "issuance-gated, not consumed").
+- **Candidate proposal kaderi (Review PR #49 tur 2):** pipeline `Supersedes` Candidate proposal
+  üretir → session inceler → apply. Proposal edge silinmez mi, promote mu edilir, askıda mı kalır?
+  PR #50 tasarım sorusu. apply_supersede committed edge ekler, matching Candidate edge'e dokunmaz.
 - **Halef kaderi (kayıt):** successor reject/deprecate edilirse superseded node'un kaderi ne?
-  PR #49-50 tasarım alanı — kapıyı burada tamamen kapatıp orada duvar delme.
-- **Successor cardinalite test (review PR #48 ileri not):** makale INV-C14 paragrafı successor
-  invariant'ını ilk kez kardinaliteyle telaffuz ediyor — *"every SupersededAccepted node has
-  **exactly one** successor"*. Bu, PR #49'un tasarım sözleşmesi oldu. #49 planlanırken şu
-  senaryoların `exactly_one` kardinalitesiyle tutarlılığı açıkça test edilmeli:
-  - Halef zinciri: A→B→C (A'yı B supersede, B'yi C supersede — A ve B ikisi de SupersededAccepted)
-  - Tek düğümü birden fazla kararın supersede etmesi (izinli mi, değil mi? `exactly_one` önlüyor mu?)
-  - Döngü/çift yönlü supersede (A→B ve B→A)
-
-### PR #50 — `SupersedeSession` + gate ctor
-- Faz 8a `OperatorReviewSession` desenine paralel. Token içeride harcanır.
-- `SupersedeAuthority` capability (INV-C4 gate, zaten var) ile entegre.
+  PR #50-51 tasarım alanı.
 
 ### PR #51 — CLI `osp review` + desktop Cockpit
 - Operator-console surface. `OperatorReviewSession` + `SupersedeSession` interactive loop.
@@ -125,11 +139,12 @@ en değerli çıktı bu oldu.
 
 | Dosya | Açıklama |
 |---|---|
-| `docs/papers/paper3-concept-anchoring.md` | Paper 3 v1.1 + INV-C14 (14 Paper-3 invariant) |
-| `docs/paper3-notes/evidence/run-metadata.md` | İki başlık: frozen snapshot (gen commit `ef022a9`, baseline `481690d`) + current protocol (14) |
+| `docs/papers/paper3-concept-anchoring.md` | Paper 3 v1.1 + INV-C14/C15 (15 Paper-3 invariant) |
+| `docs/paper3-notes/evidence/run-metadata.md` | İki başlık: frozen snapshot (gen commit `ef022a9`, baseline `481690d`) + current protocol (15) |
 | `crates/osp-core/src/anchoring/mod.rs` | `DecisionStatus` enum + helper'lar (`is_current_mainline`, `preserves_accepted_provenance`) |
-| `crates/osp-core/src/anchoring/store.rs` | `mainline_history()` + helper-refactor + NotPromotableFrom kol |
-| `crates/osp-core/src/anchoring/review.rs` | `apply_decision_rejects_superseded_accepted_not_promotable` testi |
+| `crates/osp-core/src/anchoring/store.rs` | `mainline_history()` + `apply_supersede` (INV-C15) + `audit_seq` (global) + cycle helper + 11 StoreError varyant |
+| `crates/osp-core/src/anchoring/review.rs` | `SupersedeApplication` + `PresentedSupersedeBasis` + `SupersedeRecord` + `supersede_basis_fingerprint` (4-lane) + 22 test |
+| `crates/osp-core/src/anchoring/gate.rs` | `SupersedeAuthorityLevel` serde derive (audit) |
 | `crates/osp-core/src/anchoring/scorer.rs` | 5. kol (SupersededAccepted = 0.4) |
 | `crates/osp-core/src/task_bridge.rs` | `is_current_mainline()` helper + regresyon testi |
 | `crates/osp-core/tests/anchoring_mvp.rs` | `status_from_str` fail-closed + parser testleri |
@@ -145,6 +160,6 @@ en değerli çıktı bu oldu.
 
 ## Commit durumu
 
-🚧 **PR #48 branch'te (`faz8b-superseded-status`), henüz push edilmedi.**
-- main: `bee082b` (PR #47 Faz 8c merged)
-- PR #48: kod + test + dokü tamam, doğrulama sonrası push.
+🚧 **PR #49 branch'te (`faz8b-apply-supersede`), henüz push edilmedi.**
+- main: `a392191` (PR #48 merged — varyant + INV-C14)
+- PR #49: kod + test + dokü tamam, doğrulama sonrası push.

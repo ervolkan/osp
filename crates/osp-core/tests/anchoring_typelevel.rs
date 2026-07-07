@@ -52,4 +52,9 @@ fn type_level_invariants_compile_fail() {
     // Faz 8a — INV-C13 (DecisionApplication: literal + Deserialize engelli)
     t.compile_fail("tests/compile_fail/c13_decision_application_literal.rs");
     t.compile_fail("tests/compile_fail/c13_decision_application_deserialize.rs");
+
+    // Faz 8b (PR #49) — SupersedeApplication opacity boundary (C13-paralel; C15 runtime
+    // semantiğini değil construction boundary'yi korur).
+    t.compile_fail("tests/compile_fail/supersede_application_opacity_literal.rs");
+    t.compile_fail("tests/compile_fail/supersede_application_opacity_deserialize.rs");
 }
