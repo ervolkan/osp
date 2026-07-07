@@ -215,6 +215,11 @@ pub trait AnchorStore {
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// INV-C3: mainline knowledge — sadece Accepted (currently effective).
+    ///
+    /// **Deterministik sunum sırası:** node'lar ascending `ConceptNodeId` sırasında döner.
+    /// Bu kabul kronolojisi DEĞİL — presentation order'dır. Tüm `AnchorStore`
+    /// implementasyonları bu sıralamayı korumak zorundadır (agent-facing context
+    /// tekrarlanabilirliği — aynı graph farklı backend/ekleme sırasında aynı projeksiyon).
     fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// INV-C14 (Faz 8b): Acceptance-provenance projection — kabul provenance'ını
@@ -223,6 +228,10 @@ pub trait AnchorStore {
     /// **Bu chronological replay DEĞİLDİR.** Mevcut snapshot'ta kabul provenance'ını
     /// koruyan node'ları döndürür; "t anında mainline neydi" veya kabul sırasını vermez.
     /// Temporal replay decision/event ledger ister.
+    ///
+    /// **Deterministik sunum sırası:** `mainline_query` ile aynı — node'lar ascending
+    /// `ConceptNodeId` sırasında döner. Tüm `AnchorStore` implementasyonları bu sıralamayı
+    /// korumak zorundadır.
     fn mainline_history(&self) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// Candidate lane — işlem bekleyen.
@@ -780,12 +789,16 @@ impl AnchorStore for InMemoryAnchorStore {
     }
 
     fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error> {
-        Ok(self
+        let mut nodes: Vec<ConceptNode> = self
             .graph
             .nodes_iter()
             .filter(|n| n.decision_status.is_current_mainline())
             .cloned()
-            .collect())
+            .collect();
+        // Deterministic presentation order — `mainline_history` ile aynı desen.
+        // Agent-facing context tekrarlanabilirliği: graph ekleme sırasına değil ID'ye bağlı.
+        nodes.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        Ok(nodes)
     }
 
     fn mainline_history(&self) -> Result<Vec<ConceptNode>, Self::Error> {
@@ -1339,12 +1352,14 @@ mod tests {
         );
     }
 
-    /// `mainline_history` deterministik ID sıralaması — ters insert'ten bağımsız.
+    /// `mainline_history` deterministik ID sıralaması — seed sırasından bağımsız.
     /// NOT: bu sunum sırasıdır, kabul kronolojisi DEĞİL.
     #[test]
     fn mainline_history_is_deterministically_ordered() {
         let mk = node_with_status;
-        // Ters sırayla insert (Z, A) — çıktı sıralı olmalı (A, Z).
+        // Node'ları ascending-olmayan sırada seed et (Z, A). ConceptGraph HashMap
+        // kullandığı için iteration sırası insertion'u takip etmez; query sonucu her
+        // durumda ID-ascending olmalı (trait sözleşmesi).
         let mut seed = GraphSeed::default();
         seed.rule_candidates
             .push(mk("RuleCandidate:Zeta", DecisionStatus::Accepted));
@@ -1362,6 +1377,38 @@ mod tests {
             .collect();
         assert_eq!(
             history,
+            vec![
+                "RuleCandidate:Alpha".to_string(),
+                "RuleCandidate:Zeta".to_string()
+            ],
+            "deterministic ID-ascending order regardless of insertion order"
+        );
+    }
+
+    /// `mainline_query` deterministik ID sıralaması — seed sırasından bağımsız.
+    /// `mainline_history` ile aynı sunum sırası (agent-facing context tekrarlanabilirliği).
+    /// Sadece Accepted node'lar (INV-C3 current mainline); SupersededAccepted hariç.
+    #[test]
+    fn mainline_query_is_deterministically_ordered() {
+        let mk = node_with_status;
+        // Node'ları ascending-olmayan sırada seed et (Z, A). ConceptGraph HashMap
+        // kullandığı için iteration sırası insertion'u takip etmez; query sonucu her
+        // durumda ID-ascending olmalı (trait sözleşmesi).
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Zeta", DecisionStatus::Accepted));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Alpha", DecisionStatus::Accepted));
+        let store = InMemoryAnchorStore::with_seed(seed);
+
+        let current: Vec<String> = store
+            .mainline_query()
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.0)
+            .collect();
+        assert_eq!(
+            current,
             vec![
                 "RuleCandidate:Alpha".to_string(),
                 "RuleCandidate:Zeta".to_string()
