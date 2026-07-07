@@ -46,8 +46,8 @@ Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv ertelendi (Faz 8b tamamlansın diy
 
 ### Dokü
 - Makale (`paper3-concept-anchoring.md`): INV-C14 propagation — **genesis** type-enforced sayısı
-  **10'da kaldı** (toplam type-enforced 13: 10 genesis + 3 lowering); C14 tek runtime-asserted.
-  C14 ayrı paragrafta. C4 satırı gelecek kipinde successor invariant.
+  **10'da kaldı** (toplam type-enforced 13: 10 genesis + 3 lowering); C14 (projection) + C15 (transition)
+  runtime-asserted. Toplam 15. C14/C15 ayrı paragraflarda. C4 satırı şimdiki zaman (apply_supersede kuruldu).
 - Roadmap (`paper3-design.md`): enum (5 varyant), lane model (mutual-exclusion cümlesi).
 - `run-metadata.md`: **iki başlık** — frozen snapshot (evidence generation commit `ef022a9`,
   baseline `481690d`) +
@@ -112,7 +112,9 @@ ayrımına geçilmeli (`DecisionOutcome + LifecycleStatus`) ve `preserves_accept
 > "genesis type-enforced 10" ile "Paper-3 total type-enforced 13" ayrımı korunmazsa, lowering
 > invariant'ları taksonomide kaybolur; frozen koşu ile current envanter karışır.
 > **Evidence-first disiplini:** kanıt neyi kanıtladıysa metni onu söylemeli.
-> **Mekanik PR checklist maddesi:** `grep -rn "type-enforced" docs/` — tüm yüzeyleri tek seferde yakalar.
+> **Mekanik PR checklist maddeleri:** `grep -rn "type-enforced" docs/` +
+> `grep -rn '"22 "\|22 cumulative\|22 compile-fail' docs/` (compile-fail count propagation) —
+> tüm yüzeyleri tek seferde yakalar.
 
 Altı turda yakalananlar (sıra ile):
 1. mainline_query dar kalmalı (geçmiş ayrı kapı)
@@ -143,7 +145,7 @@ en değerli çıktı bu oldu.
 | `docs/paper3-notes/evidence/run-metadata.md` | İki başlık: frozen snapshot (gen commit `ef022a9`, baseline `481690d`) + current protocol (15) |
 | `crates/osp-core/src/anchoring/mod.rs` | `DecisionStatus` enum + helper'lar (`is_current_mainline`, `preserves_accepted_provenance`) |
 | `crates/osp-core/src/anchoring/store.rs` | `mainline_history()` + `apply_supersede` (INV-C15) + `audit_seq` (global) + cycle helper + 11 StoreError varyant |
-| `crates/osp-core/src/anchoring/review.rs` | `SupersedeApplication` + `PresentedSupersedeBasis` + `SupersedeRecord` + `supersede_basis_fingerprint` (4-lane) + 22 test |
+| `crates/osp-core/src/anchoring/review.rs` | `SupersedeApplication` + `PresentedSupersedeBasis` + `SupersedeRecord` + `supersede_basis_fingerprint` (4-lane) + 21 unit test (mutlu yol + error-path matrisi + zincir + consolidation + fingerprint) |
 | `crates/osp-core/src/anchoring/gate.rs` | `SupersedeAuthorityLevel` serde derive (audit) |
 | `crates/osp-core/src/anchoring/scorer.rs` | 5. kol (SupersededAccepted = 0.4) |
 | `crates/osp-core/src/task_bridge.rs` | `is_current_mainline()` helper + regresyon testi |

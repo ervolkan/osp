@@ -44,9 +44,9 @@
 | Compile-fail test count | 24 (INV-C14/C15 runtime-asserted; 2 yeni supersede opacity trybuild C13-paralel boundary korur) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |
 
-> **Taksonomi notu (Review PR #48):** P1-P3 lowering invariant'ları da type-enforced'dur
+> **Taksonomi notu (Review PR #48/#49):** P1-P3 lowering invariant'ları da type-enforced'dur
 > (trybuild katmanında, strata tablosu (1) ile tutarlı). "13 type-enforced = 10 genesis + 3 lowering";
-> INV-C14 tek runtime-asserted invariant. Toplam 14.
+> INV-C14 (projection) ve INV-C15 (transition) runtime-asserted. Toplam 15 = 13 type-enforced + 2 runtime.
 
 ## Evidence strata (5 katman)
 

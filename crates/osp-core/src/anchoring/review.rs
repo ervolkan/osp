@@ -536,7 +536,9 @@ use crate::anchoring::gate::{SupersedeAuthority, SupersedeAuthorityLevel};
 /// successor'un içeriği de karar anında taze olmalı — status kontrolü bunu yakalamaz).
 ///
 /// Serialize-only (Deserialize YOK — `PresentedBasis` serde boundary deseni).
-/// Yeniden apply edilememeli; tek üretim yolu `compile`.
+/// Yeniden apply edilememeli; tek *production* üretim yolu `compile`. In-module cfg(test)
+/// literal (`app_with_basis_for_tests`) sahte basis senaryoları için kullanılır (NodeNotFound /
+/// SelfSupersede gibi defense-in-depth dallarını exercise etmek).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PresentedSupersedeBasis {
     superseded_id: ConceptNodeId,
@@ -1191,6 +1193,30 @@ mod tests {
         )
     }
 
+    /// INV-C15 "On Err unchanged" kanıtı: error-path testleri için tam store-state snapshot.
+    /// ConceptGraph (PartialEq) + audit_seq + iki ledger uzunluğu + edge sayısı.
+    /// Review PR #49: her error path mutation öncesi ve sonrası aynı snapshot olmalı.
+    fn snapshot_store(store: &InMemoryAnchorStore) -> (usize, usize, usize, usize, u64) {
+        (
+            store.graph().node_count(), // node sayısı
+            store.graph().edge_count(), // edge sayısı (Candidate + committed)
+            store.decision_ledger().len(),
+            store.supersede_ledger().len(),
+            store.audit_seq_for_tests(),
+        )
+    }
+
+    /// "On Err unchanged" assertion: apply_supersede hatadan sonra store değişmemeli.
+    /// (ConceptGraph PartialEq + audit_seq + ledger uzunlukları; Review PR #49 tur 5.)
+    fn assert_store_unchanged_by_supersede_error(
+        before: (usize, usize, usize, usize, u64),
+        store: &InMemoryAnchorStore,
+        ctx: &str,
+    ) {
+        let after = snapshot_store(store);
+        assert_eq!(after, before, "{ctx}: store unchanged after error");
+    }
+
     /// Test-only malformed factory: basis private alanlarına doğrudan erişim.
     /// NodeNotFound / SelfSupersede gibi defense-in-depth dallarını exercise etmek için
     /// (basis compile bunları reddeder, bu yüzden private alanlara doğrudan erişim).
@@ -1440,11 +1466,13 @@ mod tests {
         });
 
         let app = supersede_app(&store, &a, &c);
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::AlreadySuperseded(_)),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "AlreadySuperseded");
     }
 
     /// Candidate Supersedes edge (apply_plan proposal) cardinality'ye katılmaz — gerçek
@@ -1542,11 +1570,13 @@ mod tests {
         // TOCTOU: superseded canonical'ını değiştir.
         store.graph_mut().node_mut(&old).unwrap().canonical = "ChangedAfterBasis".into();
 
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::StaleSupersededBasis { .. }),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "StaleSupersededBasis");
     }
 
     /// Stale successor basis: successor canonical'ını değiştir → StaleSuccessorBasis.
@@ -1559,11 +1589,13 @@ mod tests {
 
         store.graph_mut().node_mut(&new).unwrap().canonical = "ChangedSuccessor".into();
 
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::StaleSuccessorBasis { .. }),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "StaleSuccessorBasis");
     }
 
     /// Non-accepted superseded: superseded'ı Candidate yap → NotSupersedeableFrom.
@@ -1577,6 +1609,7 @@ mod tests {
 
         store.graph_mut().node_mut(&old).unwrap().decision_status = DecisionStatus::Candidate;
 
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(
@@ -1585,6 +1618,7 @@ mod tests {
             ),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "NotSupersedeableFrom");
     }
 
     /// Non-accepted successor: successor'ı Candidate yap → SuccessorNotAccepted.
@@ -1597,6 +1631,7 @@ mod tests {
 
         store.graph_mut().node_mut(&new).unwrap().decision_status = DecisionStatus::Candidate;
 
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(
@@ -1605,6 +1640,7 @@ mod tests {
             ),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "SuccessorNotAccepted");
     }
 
     /// Self-supersede: app superseded == successor → SelfSupersede. Malformed factory
@@ -1617,8 +1653,10 @@ mod tests {
         let a_digest = node_digest(a_node);
         // Basis A→A (uyumlu), app de A→A — self-supersede, ama precedence basis mismatch'i geçer.
         let app = app_with_basis_for_tests(a.clone(), a.clone(), a_digest, a_digest);
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(matches!(err, StoreError::SelfSupersede(_)), "got {err:?}");
+        assert_store_unchanged_by_supersede_error(before, &store, "SelfSupersede");
     }
 
     /// Missing superseded node: app id graph'ta yok → NodeNotFound. Malformed factory
@@ -1631,8 +1669,10 @@ mod tests {
         // Basis ghost→new (uyumlu), app ghost→new — ghost graph'ta yok → NodeNotFound.
         let new_digest = node_digest(store.graph().node(&new).unwrap());
         let app = app_with_basis_for_tests(ghost, new, new_digest, new_digest);
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(matches!(err, StoreError::NodeNotFound(_)), "got {err:?}");
+        assert_store_unchanged_by_supersede_error(before, &store, "NodeNotFound(superseded)");
     }
 
     /// Missing successor node → NodeNotFound.
@@ -1644,8 +1684,10 @@ mod tests {
         let old_digest = node_digest(store.graph().node(&old).unwrap());
         // Basis old→ghost (uyumlu), app old→ghost — ghost graph'ta yok → NodeNotFound.
         let app = app_with_basis_for_tests(old, ghost, old_digest, old_digest);
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(matches!(err, StoreError::NodeNotFound(_)), "got {err:?}");
+        assert_store_unchanged_by_supersede_error(before, &store, "NodeNotFound(successor)");
     }
 
     /// Basis endpoint mismatch: basis Old→New, app New→Old → SupersedeBasisMismatch.
@@ -1666,15 +1708,19 @@ mod tests {
             OperatorId::new("t"),
             SystemTime::now(),
         );
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::SupersedeBasisMismatch { .. }),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "SupersedeBasisMismatch");
     }
 
-    /// Cycle: B→A committed edge seed'le, A→B denenir → SupersedeCycle.
-    /// (Production API unreachable; seeded adversarial graph savunması)
+    /// Cycle: B→A committed edge seed'le, sonra B→A denenir (superseded=B, successor=A).
+    /// Cycle check: superseded(B) →* successor(A)? B→A zaten var → cycle!
+    /// (Production API dizisiyle unreachable — her Supersedes hedefi atomik SupersededAccepted
+    /// olur; seeded/deserialized adversarial graph savunması.)
     #[test]
     fn supersede_cycle_rejected() {
         let mut store = store_with_two_accepted("RuleCandidate:A", "RuleCandidate:B");
@@ -1688,20 +1734,20 @@ mod tests {
             decision_status: DecisionStatus::Accepted,
             explanation: Some(NonEmptyExplanation::new("seeded B→A").unwrap()),
         });
-        // A→B denenir: superseded=A, successor=B. A→*B yolu: A'dan outgoing yok ama
-        // B→A var. Cycle check: superseded(A)→*successor(B)? A'dan outgoing yok → false.
-        // Aslında bu cycle DEĞİL. Cycle için: B→A kuruldu, B→A eklemek değil,
-        // A→B eklemek ama B→A zaten var. superseded=B, successor=A: B→*A? B→A var → cycle!
+        // B→A denenir (superseded=B, successor=A): B→*A yolu zaten var → cycle.
         let app = supersede_app(&store, &b, &a);
+        let before = snapshot_store(&store);
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::SupersedeCycle { .. }),
             "got {err:?}"
         );
+        assert_store_unchanged_by_supersede_error(before, &store, "SupersedeCycle");
     }
 
     /// Audit sequence exhaustion: audit_seq = u64::MAX → AuditSequenceExhausted.
-    /// Graph/ledger/seq unchanged.
+    /// Audit sequence exhaustion: audit_seq = u64::MAX → AuditSequenceExhausted.
+    /// Review PR #49: full store-state unchanged (node/edge counts, both ledgers, audit_seq).
     #[test]
     fn audit_sequence_exhaustion_leaves_state_unchanged() {
         let mut store = store_with_two_accepted("RuleCandidate:Old", "RuleCandidate:New");
@@ -1709,22 +1755,16 @@ mod tests {
         let new = ConceptNodeId("RuleCandidate:New".into());
         store.set_audit_seq_for_tests(u64::MAX);
 
-        let ledger_before = store.supersede_ledger().len();
-        let old_status_before = store.graph().node(&old).unwrap().decision_status;
         let app = supersede_app(&store, &old, &new);
+        let before = snapshot_store(&store);
 
         let err = store.apply_supersede(app).unwrap_err();
         assert!(
             matches!(err, StoreError::AuditSequenceExhausted),
             "got {err:?}"
         );
-        // Unchanged.
-        assert_eq!(store.supersede_ledger().len(), ledger_before);
-        assert_eq!(
-            store.graph().node(&old).unwrap().decision_status,
-            old_status_before
-        );
-        assert_eq!(store.audit_seq_for_tests(), u64::MAX, "audit_seq unchanged");
+        // Full store-state unchanged (Review PR #49: node/edge counts + both ledgers + audit_seq).
+        assert_store_unchanged_by_supersede_error(before, &store, "AuditSequenceExhausted");
     }
 
     /// Decision ve supersede record'lar paylaşımlı monotonik audit_seq paylaşır.
@@ -1823,6 +1863,35 @@ mod tests {
         let err = PresentedSupersedeBasis::compile(&store, &a, &a).unwrap_err();
         assert!(
             matches!(err, SupersedeError::SelfSupersede(_)),
+            "got {err:?}"
+        );
+    }
+
+    /// Compile: superseded mainline'da değilse (Candidate) → SupersededNotCurrent.
+    /// (PR #50 SupersedeSession'ın giriş kapısı test kapsamı — Review PR #49 tur 5.)
+    #[test]
+    fn presented_supersede_basis_rejects_non_accepted_superseded_at_compile() {
+        let mut store = store_with_two_accepted("RuleCandidate:Old", "RuleCandidate:New");
+        let old = ConceptNodeId("RuleCandidate:Old".into());
+        let new = ConceptNodeId("RuleCandidate:New".into());
+        store.graph_mut().node_mut(&old).unwrap().decision_status = DecisionStatus::Candidate;
+        let err = PresentedSupersedeBasis::compile(&store, &old, &new).unwrap_err();
+        assert!(
+            matches!(err, SupersedeError::SupersededNotCurrent(_)),
+            "got {err:?}"
+        );
+    }
+
+    /// Compile: successor mainline'da değilse (Candidate) → SuccessorNotCurrent.
+    #[test]
+    fn presented_supersede_basis_rejects_non_accepted_successor_at_compile() {
+        let mut store = store_with_two_accepted("RuleCandidate:Old", "RuleCandidate:New");
+        let old = ConceptNodeId("RuleCandidate:Old".into());
+        let new = ConceptNodeId("RuleCandidate:New".into());
+        store.graph_mut().node_mut(&new).unwrap().decision_status = DecisionStatus::Candidate;
+        let err = PresentedSupersedeBasis::compile(&store, &old, &new).unwrap_err();
+        assert!(
+            matches!(err, SupersedeError::SuccessorNotCurrent(_)),
             "got {err:?}"
         );
     }
