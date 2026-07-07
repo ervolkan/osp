@@ -6,9 +6,10 @@
 //!
 //! INV-C3: `OperatorAcceptance` capability token — `_private: ()` + `pub(crate) issue`.
 //! Downstream crate'ler (osp-cli/mcp/osp-kuzu) ve integration test'ler üretemez.
-//! Faz 8'de gerçek operator console bu gate'i açar.
+//! Faz 8'de gerçek operator console bu gate'i açer.
 //!
-//! INV-C5: `apply_plan` her zaman Candidate yazar. `promote_to_accepted` operator ister.
+//! INV-C5: `apply_plan` her zaman Candidate yazar. Promotion `OperatorReviewSession`
+//! ile (INV-C12/C13 denetimli `apply_decision`).
 
 use crate::anchoring::types::{
     AnchorPlan, ConceptEdge, ConceptGraph, ConceptNode, ConceptNodeId, GraphSeed,
@@ -113,8 +114,8 @@ impl std::fmt::Display for ConceptNodeId {
 ///
 /// # INV-C3/C8 persistence boundary (Faz 3 ana invariant)
 /// - `apply_plan`: Candidate-only write (INV-C5).
-/// - `promote_to_accepted`: `OperatorAcceptance` gerekir (osp-kuzu üretemez; Faz 8
-///   AnchorService osp-core'da token ile çağırır).
+/// - `apply_decision`: `OperatorReviewSession` ile INV-C12/C13 denetimli promotion
+///   (Faz 8a; legacy `promote_to_accepted` Faz 8c'de kaldırıldı).
 /// - `seed_trusted`: trusted bootstrap/restore (Accepted node yükleyebilir —
 ///   trusted boundary, normal mutation değil).
 ///
@@ -132,29 +133,14 @@ pub trait AnchorStore {
 
     /// INV-C3: Candidate → Accepted. `OperatorAcceptance` gerekir.
     ///
-    /// **Legacy/trusted-test path (Faz 8a scope out):** Bu metod in-crate testler ve
-    /// `seed_trusted` bootstrap için var; `DecisionRecord` ledger yazMAZ. INV-C13
-    /// ("no reviewed operator decision without record") kapsamı *reviewed operator
-    /// decision path*'tir (`apply_decision`); bu legacy path trusted boundary exception
-    /// olarak kabul edilir. Backends should keep this path only for trusted bootstrap/test
-    /// compatibility until Phase 8c migration.
-    #[deprecated(
-        note = "use OperatorReviewSession for reviewed promotion; this legacy/trusted-test path writes no ledger record and is outside INV-C13 scope; planned for Phase 8c removal"
-    )]
-    fn promote_to_accepted(
-        &mut self,
-        node_id: &ConceptNodeId,
-        _cap: &OperatorAcceptance,
-    ) -> Result<(), Self::Error>;
-
     /// INV-C12/C13 (Faz 8a): Reviewed promotion/reject + ledger append atomik.
     /// `DecisionApplication` opaque (private ctor, Deserialize YOK) — tek üretici
     /// `OperatorReviewSession`. Store uygulama + `DecisionRecord` üretimi +
     /// append'in tek işlemde yapılmasından sorumludur (`seq`, `prior_status`,
     /// `new_status`, `at` store/apply anına ait).
     ///
-    /// INV-C13 kapsamı: bu metod *reviewed operator decision path*'tir. `promote_to_accepted`
-    /// (legacy/trusted-test) ve `seed_trusted` (bootstrap) bu invariantın kapsam dışındadır.
+    /// INV-C13 kapsamı: bu metod *reviewed operator decision path*'tir.
+    /// `seed_trusted` (bootstrap) bu invariantın kapsam dışındadır.
     fn apply_decision(
         &mut self,
         application: crate::anchoring::review::DecisionApplication,
@@ -186,7 +172,8 @@ pub trait AnchorStore {
 /// # INV-C3 / INV-C5 disiplini
 /// - `apply_plan`: tüm yeni node/edge'ler **Candidate** yazılır (INV-C5).
 /// - `mainline_query`: sadece **Accepted** filtre (INV-C3 — Candidate mainline değil).
-/// - `promote_to_accepted`: `OperatorAcceptance` gerekir (INV-C3 kapı).
+/// - `apply_decision`: `OperatorReviewSession` ile INV-C12/C13 denetimli promotion
+///   (Faz 8a; legacy `promote_to_accepted` Faz 8c'de kaldırıldı).
 /// - `restore_trusted_snapshot`: trusted restore (Faz 3, INV-C3 persistence boundary).
 pub struct InMemoryAnchorStore {
     graph: ConceptGraph,
@@ -274,17 +261,6 @@ impl InMemoryAnchorStore {
     pub fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, StoreError> {
         <Self as AnchorStore>::apply_plan(self, plan)
     }
-    #[deprecated(
-        note = "use OperatorReviewSession for reviewed promotion; this legacy/trusted-test path writes no ledger record and is outside INV-C13 scope; planned for Phase 8c removal"
-    )]
-    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
-    pub fn promote_to_accepted(
-        &mut self,
-        node_id: &ConceptNodeId,
-        cap: &OperatorAcceptance,
-    ) -> Result<(), StoreError> {
-        <Self as AnchorStore>::promote_to_accepted(self, node_id, cap)
-    }
     pub fn seed_trusted(&mut self, seed: &GraphSeed) -> Result<(), StoreError> {
         <Self as AnchorStore>::seed_trusted(self, seed)
     }
@@ -342,24 +318,6 @@ impl InMemoryAnchorStore {
             new_edges,
         }
     }
-
-    // Inherent promote (trait'in arkasında)
-    fn promote_to_accepted_inner(
-        &mut self,
-        node_id: &ConceptNodeId,
-        _cap: &OperatorAcceptance,
-    ) -> Result<(), StoreError> {
-        let node = self
-            .graph
-            .node_mut(node_id)
-            .ok_or_else(|| StoreError::NodeNotFound(node_id.clone()))?;
-
-        if matches!(node.decision_status, DecisionStatus::Accepted) {
-            return Err(StoreError::AlreadyAccepted(node_id.clone()));
-        }
-        node.decision_status = DecisionStatus::Accepted;
-        Ok(())
-    }
 }
 
 impl AnchorStore for InMemoryAnchorStore {
@@ -384,15 +342,6 @@ impl AnchorStore for InMemoryAnchorStore {
 
     fn apply_plan(&mut self, plan: &AnchorPlan) -> Result<ApplyResult, Self::Error> {
         Ok(self.apply_plan_inner(plan))
-    }
-
-    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
-    fn promote_to_accepted(
-        &mut self,
-        node_id: &ConceptNodeId,
-        _cap: &OperatorAcceptance,
-    ) -> Result<(), Self::Error> {
-        self.promote_to_accepted_inner(node_id, _cap)
     }
 
     /// INV-C12/C13 (Faz 8a): reviewed promotion/reject + ledger append atomik.
@@ -614,8 +563,12 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
-    fn store_promotion_requires_operator_acceptance() {
+    fn store_promotion_via_review_session_moves_to_mainline() {
+        // Faz 8c: promote_to_accepted legacy path kaldırıldı.
+        // Promotion artık OperatorReviewSession + apply_decision ile (INV-C12/C13).
+        use crate::anchoring::review::{OperatorId, OperatorReviewSession, PresentedBasis};
+        use crate::anchoring::types::NonEmptyExplanation;
+
         let mut store = InMemoryAnchorStore::new();
         store
             .apply_plan(&make_plan(vec![candidate(
@@ -624,26 +577,26 @@ mod tests {
             )]))
             .unwrap();
 
-        // INV-C3: promotion OperatorAcceptance ile
-        let cap = OperatorAcceptance::issue_for_tests();
         let node_id = ConceptNodeId("Concept:Payment".into());
-        store.promote_to_accepted(&node_id, &cap).unwrap();
+        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let basis = PresentedBasis::compile(&store, &node_id).expect("basis compile");
+        let reason = NonEmptyExplanation::from_validated("test promotion".into());
+        session
+            .accept(&mut store, &node_id, basis, reason)
+            .expect("accept");
 
-        // Artık mainline'da
+        // Artık mainline'da (INV-C3 — Candidate→Accepted promotion)
         assert_eq!(store.mainline_query().unwrap().len(), 1);
         assert_eq!(store.candidate_query().unwrap().len(), 0);
+        // INV-C13: ledger'a kayıt düştü
+        assert_eq!(store.decision_ledger().len(), 1);
     }
 
-    #[test]
-    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
-    fn promotion_rejects_unknown_node() {
-        let mut store = InMemoryAnchorStore::new();
-        let cap = OperatorAcceptance::issue_for_tests();
-        let err = store
-            .promote_to_accepted(&ConceptNodeId("Concept:Yok".into()), &cap)
-            .unwrap_err();
-        assert!(matches!(err, StoreError::NodeNotFound(_)));
-    }
+    // Faz 8c: 'apply_decision_rejects_unknown_node' testi kaldırıldı.
+    // Bilinmeyen node ve NotPromotableFrom yolları review.rs'te zaten thorough test ediliyor:
+    //   - review_session_not_found_rejects_unknown_candidate
+    //   - review_session_not_promotable_rejects_accepted_node
+    //   - apply_decision_rejects_accepted_node_not_promotable_from
 
     #[test]
     fn seed_loads_graph_state() {
@@ -763,17 +716,16 @@ mod tests {
     // ── Faz 5a (T6, Patch 4/5): TaskCandidate promote — INV-T2 boundary ───────
 
     #[test]
-    #[allow(deprecated)] // intentional legacy/trusted-test path; migrate to OperatorReviewSession in Phase 8b
     fn promote_task_candidate_does_not_create_trajectory_task() {
+        // Faz 8c: promote_to_accepted kaldırıldı; OperatorReviewSession kullanılır.
         // Patch 4/5: Accepted TaskCandidate ≠ trajectory::Task.
         // PR33a anchoring içinde kalır — trajectory genesis'e (OperatorCapability,
         // INV-T2) dokunmaz. Bu test promote sonrası node'un hala TaskCandidate
         // olduğunu + status Accepted olduğunu doğrular. trajectory::Task yaratımı
         // PR33b'ye (operator console / bridge).
-        //
-        // "Accepted TaskCandidate = accepted project intention"
-        // "trajectory::Task = executable navigator task"
-        // Bunlar farklı ontolojik seviyeler — PR33a ikisini karıştırmaz.
+        use crate::anchoring::review::{OperatorId, OperatorReviewSession, PresentedBasis};
+        use crate::anchoring::types::NonEmptyExplanation;
+
         let task_node = ConceptNode {
             id: ConceptNodeId("TaskCandidate:AuthServiceRefactor".into()),
             canonical: "AuthServiceRefactor".into(),
@@ -787,12 +739,13 @@ mod tests {
             ..Default::default()
         });
 
-        // Mevcut promote_to_accepted kullanılır (Patch 5 — yeni method yok).
-        store
-            .promote_to_accepted(
-                &ConceptNodeId("TaskCandidate:AuthServiceRefactor".into()),
-                &OperatorAcceptance::issue_for_tests(),
-            )
+        // Faz 8c: OperatorReviewSession ile promote (INV-C12/C13).
+        let node_id = ConceptNodeId("TaskCandidate:AuthServiceRefactor".into());
+        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let basis = PresentedBasis::compile(&store, &node_id).expect("basis compile");
+        let reason = NonEmptyExplanation::from_validated("task candidate promote".into());
+        session
+            .accept(&mut store, &node_id, basis, reason)
             .expect("TaskCandidate promote");
 
         // Node hala TaskCandidate (kind değişmez), status Accepted.

@@ -1147,8 +1147,8 @@ impl EvidenceVector {
 /// [`crate::anchoring::store::InMemoryAnchorStore`] (TCB içi) `pub(crate)`
 /// metodlarla erişir. External crate `graph.nodes.get_mut(...).decision_status = Accepted`
 /// yazamaz (compile error). Bu, INV-C3 "candidate isolation"ın yapısal garantisidir:
-/// `Accepted` status sadece [`crate::anchoring::store::InMemoryAnchorStore::promote_to_accepted`]
-/// (`OperatorAcceptance` ile) üzerinden yazılabilir.
+/// `Accepted` status sadece [`crate::anchoring::review::OperatorReviewSession::accept`]
+/// üzerinden (`apply_decision` ile, INV-C12/C13 denetimli) yazılabilir.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConceptGraph {
     nodes: std::collections::HashMap<ConceptNodeId, ConceptNode>,
