@@ -187,6 +187,10 @@ impl AnchorScorer {
         }
     }
 
+    /// Scores **current anchoring relevance** (operational impact), NOT epistemic
+    /// confidence. `SupersededAccepted` < `Candidate` (no longer an active decision)
+    /// but > `Deprecated` (preserves accepted provenance, replacement-lineage
+    /// semantics). The real successor relation is not guaranteed until PR #49.
     fn decision_status_score(
         &self,
         target_id: &crate::anchoring::types::ConceptNodeId,
@@ -196,6 +200,7 @@ impl AnchorScorer {
             Some(n) => match n.decision_status {
                 crate::anchoring::DecisionStatus::Accepted => 1.0,
                 crate::anchoring::DecisionStatus::Candidate => 0.5,
+                crate::anchoring::DecisionStatus::SupersededAccepted => 0.4,
                 crate::anchoring::DecisionStatus::Deprecated => 0.2,
                 crate::anchoring::DecisionStatus::Rejected => 0.0,
             },
@@ -406,6 +411,47 @@ mod tests {
         assert_eq!(
             ac.score.code_evidence_score, 0.85,
             "Not 5: scorer evidence_strength() skalarını kullanır"
+        );
+    }
+
+    /// Faz 8b: SupersededAccepted skoru Deprecated'tan büyük, Candidate'tan küçük.
+    /// Skor ekseni = current anchoring relevance (operasyonel etki), epistemik güven değil.
+    /// Superseded kapanmış karar (Candidate'tan düşük) ama provenance korur (Deprecated'tan yüksek).
+    #[test]
+    fn superseded_score_is_between_deprecated_and_candidate() {
+        use crate::anchoring::store::InMemoryAnchorStore;
+        use crate::anchoring::types::GraphSeed;
+
+        let mk = |id: &str, status: DecisionStatus| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: status,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Sup", DecisionStatus::SupersededAccepted));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Dep", DecisionStatus::Deprecated));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Cand", DecisionStatus::Candidate));
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let graph = store.graph();
+        let s = AnchorScorer::new();
+
+        let sup = s.decision_status_score(&ConceptNodeId("RuleCandidate:Sup".into()), graph);
+        let dep = s.decision_status_score(&ConceptNodeId("RuleCandidate:Dep".into()), graph);
+        let cand = s.decision_status_score(&ConceptNodeId("RuleCandidate:Cand".into()), graph);
+
+        // Exact value (float literal — assert_eq güvenli).
+        assert_eq!(sup, 0.4, "SupersededAccepted score = 0.4");
+        // Ordering: Deprecated < Superseded < Candidate.
+        assert!(dep < sup, "Deprecated ({dep}) < SupersededAccepted ({sup})");
+        assert!(
+            sup < cand,
+            "SupersededAccepted ({sup}) < Candidate ({cand})"
         );
     }
 }

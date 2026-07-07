@@ -69,10 +69,14 @@ için draft deposit bekliyor. **719 test, 0 development marker, 367 kelime abstr
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
 | **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
-| Faz 8b | Planlandı | SupersedeSession + ReopenSession + CLI `osp review` + desktop Cockpit |
-| Faz 8c | Planlandı | promote_to_accepted kaldırma (legacy path migrate) |
+| **Faz 8b** | 🚧 PR48 | Başladı — `DecisionStatus::SupersededAccepted` + `mainline_history()` (INV-C14). Sırada: PR #49 `apply_supersede`, PR #50 `SupersedeSession`, PR #51 CLI `osp review` |
+| Faz 8c | ✅ PR47 | promote_to_accepted kaldırma (legacy path migrate) |
 
-### Invariant'lar (13 Paper 3'e özgü + INV-T2 boundary)
+### Invariant'lar (14 Paper 3'e özgü + INV-T2 boundary)
+
+> INV-C14 (Faz 8b PR #48) eklendi: acceptance-provenance projection. 10 type-enforced +
+> 1 runtime projection (C14) + 3 lowering (P1-P3) = 14. Compile-fail count 22'de sabit
+> (C14 runtime-asserted, type-level değil).
 
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
 - **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)

@@ -135,6 +135,12 @@ pub enum PositionFamily {
 }
 
 /// AnchorResolver tarafından üretilen her adayın epistemik durumu (§5.4, INV-C3/INV-C5).
+///
+/// `SupersededAccepted` (Faz 8b) is a terminal acceptance-lane status: a node that was
+/// accepted and later replaced by a newer accepted decision. It retains accepted provenance
+/// without current effectiveness. The successor-edge invariant will be established atomically
+/// by the supersede application path (planned, PR #49); until then, no production store-transition
+/// API produces this status (public construction and deserialization can represent it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum DecisionStatus {
@@ -142,6 +148,31 @@ pub enum DecisionStatus {
     Accepted,
     Deprecated,
     Rejected,
+    /// Faz 8b: accepted provenance retained, current effectiveness removed. Distinct from
+    /// `Deprecated` (never-accepted retirement under Model A). Produced by PR #49's
+    /// `apply_supersede`; visible in `mainline_history`, excluded from `mainline_query`.
+    SupersededAccepted,
+}
+
+impl DecisionStatus {
+    /// INV-C3: currently effective mainline (Accepted only).
+    ///
+    /// The agent-facing mainline projection filters on this predicate; only nodes that are
+    /// *currently binding* qualify. `SupersededAccepted` is historical, not current.
+    pub const fn is_current_mainline(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+
+    /// INV-C14: statuses that preserve accepted-mainline provenance.
+    ///
+    /// Model A (normative): `Deprecated` is retirement *without* accepted provenance;
+    /// `SupersededAccepted` *retains* accepted provenance without current effectiveness.
+    /// The two are mutually exclusive terminal meanings. No `Accepted -> Deprecated`
+    /// transition is offered; if one is added, migrate to a lifecycle/outcome split and
+    /// revise this predicate.
+    pub const fn preserves_accepted_provenance(self) -> bool {
+        matches!(self, Self::Accepted | Self::SupersededAccepted)
+    }
 }
 
 /// İnsan/metin girdisinin ontolojik paket türü (§12 Q1).
@@ -228,4 +259,62 @@ pub enum ThresholdBand {
     Tentative,
     Weak,
     Unanchored,
+}
+
+#[cfg(test)]
+mod decision_status_tests {
+    use super::DecisionStatus;
+
+    /// INV-C3 + INV-C14 executable specification: 5 statü × 2 flag projeksiyon matrix'i.
+    /// Bu tablo, helper davranışını tek bakışta sabitler — yeni varyant eklenirse
+    /// ilk kırılan test budur ve Model A (Deprecated = provenance yok) buradan okunur.
+    #[test]
+    fn decision_status_projection_matrix_matches_inv_c3_and_c14() {
+        // (status, is_current_mainline, preserves_accepted_provenance)
+        let cases = [
+            (DecisionStatus::Candidate, false, false),
+            (DecisionStatus::Accepted, true, true),
+            (DecisionStatus::Deprecated, false, false),
+            (DecisionStatus::Rejected, false, false),
+            (DecisionStatus::SupersededAccepted, false, true),
+        ];
+        for (status, expected_current, expected_provenance) in cases {
+            assert_eq!(
+                status.is_current_mainline(),
+                expected_current,
+                "is_current_mainline mismatch for {status:?}"
+            );
+            assert_eq!(
+                status.preserves_accepted_provenance(),
+                expected_provenance,
+                "preserves_accepted_provenance mismatch for {status:?}"
+            );
+        }
+    }
+
+    /// Yeni varyant serde round-trip'i — `"SupersededAccepted"` ↔ enum.
+    #[test]
+    fn decision_status_superseded_accepted_serde_roundtrip() {
+        let json = serde_json::to_string(&DecisionStatus::SupersededAccepted).unwrap();
+        assert_eq!(json, "\"SupersededAccepted\"");
+        let back: DecisionStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, DecisionStatus::SupersededAccepted);
+    }
+
+    /// Geri uyumluluk: 4 eski token hala aynı varyanta deserialize olur.
+    /// Enum'a varyant eklemek token'ları bozmaz (serde isim-bazlı, sona eklenir).
+    #[test]
+    fn pre_superseded_status_tokens_remain_compatible() {
+        let cases = [
+            ("Candidate", DecisionStatus::Candidate),
+            ("Accepted", DecisionStatus::Accepted),
+            ("Deprecated", DecisionStatus::Deprecated),
+            ("Rejected", DecisionStatus::Rejected),
+        ];
+        for (token, expected) in cases {
+            let json = format!("\"{token}\"");
+            let actual: DecisionStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(actual, expected, "token mismatch for {token}");
+        }
+    }
 }

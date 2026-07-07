@@ -24,8 +24,8 @@
 //! Hiçbir kapı atlanamaz veya bypass edilemez.
 
 use crate::anchoring::types::{ConceptGraph, ConceptNodeId};
+use crate::anchoring::ConceptNodeKind;
 use crate::anchoring::ExecutablePredicateSet;
-use crate::anchoring::{ConceptNodeKind, DecisionStatus};
 use crate::trajectory::{OpKind, OperatorCapability, RuleRef, Task, TaskId, TaskStatus};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -99,7 +99,10 @@ pub fn verify_accepted_task_candidate(
             node_id: id.clone(),
         });
     }
-    if !matches!(node.decision_status, DecisionStatus::Accepted) {
+    // Consistent with INV-C3's principle: task genesis may originate only from
+    // currently effective accepted decisions. `SupersededAccepted` retains provenance
+    // (visible in `mainline_history`) but is not active, so it cannot seed tasks.
+    if !node.decision_status.is_current_mainline() {
         return Err(TaskGenesisError::NotAccepted {
             node_id: id.clone(),
         });
@@ -220,6 +223,7 @@ mod tests {
 
     use super::*;
     use crate::anchoring::types::{ConceptGraph, ConceptNode, ConceptNodeId};
+    use crate::anchoring::DecisionStatus;
 
     fn task_candidate(id: &str, status: DecisionStatus) -> ConceptNode {
         let canonical = id.split_once(':').map(|(_, n)| n).unwrap_or(id);
@@ -450,5 +454,27 @@ mod tests {
         assert_eq!(resolved.unwrap().id, task.id);
         // INV-T2: Task genesis yalnız capability ile — navigator şimdi çalıştırabilir.
         // (run_task mock LLM ayrı smoke/PR33c — burada registry-resolvable kanıtı yeter.)
+    }
+
+    /// Faz 8b (PR #48) regresyonu: SupersededAccepted bir TaskCandidate, task genesis'e
+    /// SEED OLAMAZ. `is_current_mainline()` helper'ı INV-C3 ilkesini uygular — task
+    /// genesis yalnız *currently effective* Accepted kararlarından kaynaklanır.
+    /// SupersededAccepted provenance taşır (`mainline_history`'de görünür) ama aktif
+    /// değildir → `Err(TaskGenesisError::NotAccepted)`.
+    ///
+    /// Bu test, ileride birinin `preserves_accepted_provenance()` helper'ını burada
+    /// yanlış kullanmasını (geçmiş provenansı aktif kabul gibi ele almasını) engeller.
+    #[test]
+    fn superseded_accepted_cannot_seed_task_genesis() {
+        let g = graph_with(vec![task_candidate(
+            "TaskCandidate:Superseded",
+            DecisionStatus::SupersededAccepted,
+        )]);
+        let id = ConceptNodeId("TaskCandidate:Superseded".into());
+        let result = verify_accepted_task_candidate(&g, &id);
+        assert!(
+            matches!(result, Err(TaskGenesisError::NotAccepted { .. })),
+            "SupersededAccepted task genesis'e seed olamaz — NotAccepted bekleniyordu, got {result:?}"
+        );
     }
 }

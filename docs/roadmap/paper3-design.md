@@ -284,14 +284,15 @@ Operator onayı olmadan ÜRETİLEMEZ (Accepted):
 Bu, Paper 2 INV-T8 ("AcceptAsProgress ≠ Mainline") lane disiplininin genesis katmanına genişletilmesidir:
 
 ```
-Candidate lane       → serbest üretim (AnchorResolver üretir)
-Review lane          → operator/mimar değerlendirmesi
-Accepted mainline    → proje gerçekliği (operator kabul etti)
-Deprecated lane      → eski bilgi (supersede edildi)
-Rejected lane        → negatif epistemik veri (çelişki/ret)
+Candidate lane          → serbest üretim (AnchorResolver üretir)
+Review lane             → operator/mimar değerlendirmesi (OperatorReviewSession)
+Accepted mainline       → güncel etkin gerçeklik (operator kabul etti)
+SupersededAccepted lane → Faz 8b: geçmiş kabul-gerçeği (daha yenisiyle değiştirildi, provenance korur)
+Deprecated lane         → manuel raflama (accepted provenance YOK — Model A)
+Rejected lane           → negatif epistemik veri (çelişki/ret)
 ```
 
-Candidate node'lar graph'ta *yaşar* (görünür, sorgulanabilir), ama **mainline knowledge** değildir. Bir Task sorgusu yaparken `decision_status: Accepted` filtresi konur; Candidate'ler dahil edilmez.
+Candidate node'lar graph'ta *yaşar* (görünür, sorgulanabilir), ama **mainline knowledge** değildir. Bir Task sorgusu yaparken `is_current_mainline()` filtresi (Accepted) konur; Candidate'ler dahil edilmez. Audit/replay için `preserves_accepted_provenance()` filtresi (Accepted + SupersededAccepted) kullanılır — bu, `mainline_history()` projeksiyonudur (INV-C14), chronological replay değil.
 
 ### 5.3 INV-C3: Candidate isolation
 
@@ -303,15 +304,20 @@ Bu, Paper 2 INV-T8'inin genesis karşılığıdır. INV-T8 "AcceptAsProgress mai
 
 ```rust
 pub enum DecisionStatus {
-    Candidate,       // AnchorResolver üretti, operator görmedi
-    InReview,        // operator değerlendiriyor
-    Accepted,        // operator kabul etti → mainline
-    Deprecated,      // supersede edildi
-    Rejected,        // çelişki veya ret
+    Candidate,           // AnchorResolver üretti, operator görmedi
+    Accepted,            // operator kabul etti → güncel etkin mainline
+    Deprecated,          // manuel raflama — accepted provenance YOK (Model A)
+    Rejected,            // çelişki veya ret
+    SupersededAccepted,  // Faz 8b: kabul edildi, daha yenisiyle değiştirildi
 }
 ```
 
-Her anchor edge ve türetilmiş node bu status'u taşır. Sorgular `Accepted` filtresi ile mainline knowledge'a, `Candidate` filtresi ile "işlem bekleyen" listesine erişir.
+**Karar notları:**
+- `InReview` PR #41 (Faz 8a tightening) ile kaldırıldı — operasyonel durum epistemik statüye ait değil; review, `OperatorReviewSession` session state'inde taşınır.
+- `SupersededAccepted` (Faz 8b) ve `Deprecated` **mutually exclusive terminal anlamlardır**: `Deprecated` = retirement *without* accepted provenance (Model A); `SupersededAccepted` = *retains* accepted provenance without current effectiveness. İlkinin halefi yoktur (manuel raflama), ikincisinin successor ilişkisi PR #49 `apply_supersede` ile atomik kurulacaktır.
+- `mainline_query()` yalnız `Accepted` döner (INV-C3 — güncel etkin gerçeklik); `mainline_history()` `Accepted + SupersededAccepted` döner (INV-C14 — kabul provenance projeksiyonu, chronological replay DEĞİL).
+
+Her anchor edge ve türetilmiş node bu status'u taşır. Sorgular `is_current_mainline()` (Accepted) filtresi ile güncel mainline knowledge'a, `preserves_accepted_provenance()` (Accepted + SupersededAccepted) filtresi ile kabul geçmişine erişir.
 
 ---
 

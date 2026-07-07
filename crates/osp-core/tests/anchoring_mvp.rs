@@ -185,12 +185,27 @@ fn load_all() -> Vec<AnchoringFixture> {
 // FixtureGiven → GraphSeed dönüşümü (test-side, runtime boundary)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// Fixture string → `DecisionStatus`.
+///
+/// **`"Observed"` eşlemesi:** tasarım kararına göre (`paper3-design.md:769`) `Observed`
+/// ayrı bir `DecisionStatus` variantı *değildir* — `MetricSource` provenance'ının
+/// anlamıdır. Observed bir node graph acceptance lane'inde `Candidate` kalır; observed-olma
+/// durumu `ObservedCodeEvidence` içinde taşınır. Bu yüzden fixture token `"Observed"`
+/// burada `Candidate`'a map'lenir (açık kol — niyet okunur), bilinmeyen diğer token'lar
+/// panic'ler (fail-closed: sessiz varsayılan yok).
 fn status_from_str(s: &str) -> DecisionStatus {
     match s {
+        "Candidate" => DecisionStatus::Candidate,
         "Accepted" => DecisionStatus::Accepted,
         "Deprecated" => DecisionStatus::Deprecated,
         "Rejected" => DecisionStatus::Rejected,
-        _ => DecisionStatus::Candidate,
+        "SupersededAccepted" => DecisionStatus::SupersededAccepted,
+        // Design decision: "Observed" is MetricSource provenance, NOT a DecisionStatus
+        // (paper3-design.md:769-771). Observed nodes stay Candidate in the graph;
+        // their observed-ness lives in ObservedCodeEvidence. Explicit arm keeps intent
+        // readable; the fallthrough is fail-closed.
+        "Observed" => DecisionStatus::Candidate,
+        other => panic!("unknown DecisionStatus token in fixture: {other}"),
     }
 }
 
@@ -650,5 +665,38 @@ fn anchor_mvp_fix_011_implemented_by_accepted_with_provider() {
     assert!(
         plan.requires_operator_review(),
         "fix_011: ImplementedBy high-stake → operator review"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Faz 8b (PR #48): status_from_str fail-closed parser tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn status_from_str_parses_superseded_accepted() {
+    assert_eq!(
+        status_from_str("SupersededAccepted"),
+        DecisionStatus::SupersededAccepted,
+        "yeni varyant token'ı doğru parse edilmeli"
+    );
+}
+
+#[test]
+#[should_panic(expected = "unknown DecisionStatus token in fixture")]
+fn status_from_str_rejects_unknown_token() {
+    // Typo örneği — fixture yazım hatası sessizce Candidate'a düşmemeli.
+    // (Eski catch-all `_ => Candidate` bu durumda yanlış statüyle yeşil test üretirdi.)
+    let _ = status_from_str("SupersededAccepetd"); // ← typo (ekstra 'e')
+}
+
+#[test]
+fn status_from_str_observed_maps_to_candidate_by_design() {
+    // paper3-design.md:769-771 tasarım kararı: "Observed" ayrı bir DecisionStatus
+    // variantı DEĞİLDİR — MetricSource provenance'ının anlamıdır. Graph acceptance
+    // lane'inde observed node'lar Candidate kalır. Bu açık kol kasıtlıdır.
+    assert_eq!(
+        status_from_str("Observed"),
+        DecisionStatus::Candidate,
+        "Observed = MetricSource provenance, graph'ta Candidate (paper3-design.md:769)"
     );
 }

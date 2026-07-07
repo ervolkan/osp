@@ -55,7 +55,9 @@ pub enum StoreError {
     AlreadyAccepted(ConceptNodeId),
     #[error("node Candidate değil: {0}")]
     NotCandidate(ConceptNodeId),
-    #[error("node {0:?} durumundan promote edilemez (Accepted/Deprecated/Rejected)")]
+    #[error(
+        "node {0:?} durumundan promote edilemez (Accepted/Deprecated/SupersededAccepted/Rejected)"
+    )]
     NotPromotableFrom(DecisionStatus),
     #[error("basis candidate mismatch: basis={basis}, application={application}")]
     BasisCandidateMismatch {
@@ -153,8 +155,16 @@ pub trait AnchorStore {
     /// INV-C8: canonical exact match (canon gate için).
     fn find_concepts_by_canonical(&self, name: &str) -> Result<Vec<ConceptNode>, Self::Error>;
 
-    /// INV-C3: mainline knowledge — sadece Accepted.
+    /// INV-C3: mainline knowledge — sadece Accepted (currently effective).
     fn mainline_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
+
+    /// INV-C14 (Faz 8b): Acceptance-provenance projection — kabul provenance'ını
+    /// koruyan node'lar (Accepted + SupersededAccepted).
+    ///
+    /// **Bu chronological replay DEĞİLDİR.** Mevcut snapshot'ta kabul provenance'ını
+    /// koruyan node'ları döndürür; "t anında mainline neydi" veya kabul sırasını vermez.
+    /// Temporal replay decision/event ledger ister.
+    fn mainline_history(&self) -> Result<Vec<ConceptNode>, Self::Error>;
 
     /// Candidate lane — işlem bekleyen.
     fn candidate_query(&self) -> Result<Vec<ConceptNode>, Self::Error>;
@@ -270,6 +280,9 @@ impl InMemoryAnchorStore {
     pub fn mainline_query(&self) -> Result<Vec<ConceptNode>, StoreError> {
         <Self as AnchorStore>::mainline_query(self)
     }
+    pub fn mainline_history(&self) -> Result<Vec<ConceptNode>, StoreError> {
+        <Self as AnchorStore>::mainline_history(self)
+    }
     pub fn candidate_query(&self) -> Result<Vec<ConceptNode>, StoreError> {
         <Self as AnchorStore>::candidate_query(self)
     }
@@ -374,13 +387,16 @@ impl AnchorStore for InMemoryAnchorStore {
             .ok_or_else(|| StoreError::NodeNotFound(id.clone()))?;
         let prior_status = node.decision_status;
 
-        // NotPromotable: Accepted/Deprecated/Rejected'dan accept/reject geçersiz.
-        // (Diriltme ayrı mekanizma — v1 dışı.)
+        // NotPromotable: Accepted/Deprecated/SupersededAccepted/Rejected'dan
+        // accept/reject geçersiz. (Diriltme ayrı mekanizma — v1 dışı.)
         match (prior_status, decision) {
             (DecisionStatus::Accepted, _) => {
                 return Err(StoreError::NotPromotableFrom(prior_status));
             }
             (DecisionStatus::Deprecated, _) => {
+                return Err(StoreError::NotPromotableFrom(prior_status));
+            }
+            (DecisionStatus::SupersededAccepted, _) => {
                 return Err(StoreError::NotPromotableFrom(prior_status));
             }
             (DecisionStatus::Rejected, _) => {
@@ -438,9 +454,21 @@ impl AnchorStore for InMemoryAnchorStore {
         Ok(self
             .graph
             .nodes_iter()
-            .filter(|n| matches!(n.decision_status, DecisionStatus::Accepted))
+            .filter(|n| n.decision_status.is_current_mainline())
             .cloned()
             .collect())
+    }
+
+    fn mainline_history(&self) -> Result<Vec<ConceptNode>, Self::Error> {
+        let mut nodes: Vec<ConceptNode> = self
+            .graph
+            .nodes_iter()
+            .filter(|n| n.decision_status.preserves_accepted_provenance())
+            .cloned()
+            .collect();
+        // Deterministic presentation order; NOT acceptance chronology.
+        nodes.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+        Ok(nodes)
     }
 
     fn candidate_query(&self) -> Result<Vec<ConceptNode>, Self::Error> {
@@ -492,7 +520,8 @@ mod tests {
     use crate::anchoring::types::{
         AnchorCandidate, AnchorScoreBreakdown, ConceptNodeKind, GraphSeed,
     };
-    use crate::anchoring::{AnchorDecisionKind, ConceptEdgeKind, ThresholdBand};
+    use crate::anchoring::{AnchorDecisionKind, ConceptEdgeKind, PositionFamily, ThresholdBand};
+    use std::collections::BTreeSet;
 
     fn make_plan(candidates: Vec<AnchorCandidate>) -> AnchorPlan {
         AnchorPlan {
@@ -578,7 +607,8 @@ mod tests {
             .unwrap();
 
         let node_id = ConceptNodeId("Concept:Payment".into());
-        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let mut session =
+            OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
         let basis = PresentedBasis::compile(&store, &node_id).expect("basis compile");
         let reason = NonEmptyExplanation::from_validated("test promotion".into());
         session
@@ -741,7 +771,8 @@ mod tests {
 
         // Faz 8c: OperatorReviewSession ile promote (INV-C12/C13).
         let node_id = ConceptNodeId("TaskCandidate:AuthServiceRefactor".into());
-        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let mut session =
+            OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
         let basis = PresentedBasis::compile(&store, &node_id).expect("basis compile");
         let reason = NonEmptyExplanation::from_validated("task candidate promote".into());
         session
@@ -871,7 +902,10 @@ mod tests {
             apply_result.new_nodes, 0,
             "reddedilmiş node zaten var → yeni node doğmuyor (duplicate önleniyor)"
         );
-        assert_eq!(apply_result.new_edges, 1, "ikinci DerivesRule edge ekleniyor");
+        assert_eq!(
+            apply_result.new_edges, 1,
+            "ikinci DerivesRule edge ekleniyor"
+        );
 
         // Status DEĞİŞMEDİ — hala Rejected.
         let node_after = store
@@ -889,4 +923,125 @@ mod tests {
         // it makes re-proposal visible as a collision with prior rejection (new edge to
         // rejected node, no status change)." Phase 8b ReopenSession normative reversal.
     }
+
+    // ─── Faz 8b (PR #48): mainline_history + INV-C14 tests ──────────────────────
+
+    /// Test yardımcı: belirli bir statüde bir node seed'le.
+    fn node_with_status(id: &str, status: DecisionStatus) -> ConceptNode {
+        ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: status,
+            position_family: PositionFamily::ConceptualIntent,
+        }
+    }
+
+    /// INV-C14 exact-set: `mainline_history` tam olarak {Accepted, SupersededAccepted}
+    /// döndürür. Candidate/Deprecated/Rejected hariç. BTreeSet ile ID karşılaştırması
+    /// — yanlışlıkla üçüncü statünün eklenmesi veya yanlış node gelmesi kaçmaz.
+    #[test]
+    fn mainline_history_contains_exactly_accepted_provenance_statuses() {
+        let mk = node_with_status;
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Cand", DecisionStatus::Candidate));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Acc", DecisionStatus::Accepted));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Dep", DecisionStatus::Deprecated));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Rej", DecisionStatus::Rejected));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Sup", DecisionStatus::SupersededAccepted));
+        let store = InMemoryAnchorStore::with_seed(seed);
+
+        let history_ids: BTreeSet<String> = store
+            .mainline_history()
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.0)
+            .collect();
+        let expected: BTreeSet<String> = [
+            "RuleCandidate:Acc".to_string(),
+            "RuleCandidate:Sup".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            history_ids, expected,
+            "history = exactly Accepted + SupersededAccepted"
+        );
+    }
+
+    /// INV-C14 subset yarısı: `mainline_query ⊆ mainline_history`.
+    /// ID setleri üzerinden — Vec sırasından bağımsız.
+    #[test]
+    fn mainline_query_is_subset_of_mainline_history() {
+        let mk = node_with_status;
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Acc", DecisionStatus::Accepted));
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Sup", DecisionStatus::SupersededAccepted));
+        let store = InMemoryAnchorStore::with_seed(seed);
+
+        let current_ids: BTreeSet<String> = store
+            .mainline_query()
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.0)
+            .collect();
+        let history_ids: BTreeSet<String> = store
+            .mainline_history()
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.0)
+            .collect();
+        assert!(
+            current_ids.is_subset(&history_ids),
+            "INV-C14: mainline_query must be a subset of mainline_history"
+        );
+        // SupersededAccepted current'da DEĞİL (intersection boş).
+        assert!(
+            !current_ids.contains("RuleCandidate:Sup"),
+            "INV-C14: SupersededAccepted excluded from current mainline"
+        );
+    }
+
+    /// `mainline_history` deterministik ID sıralaması — ters insert'ten bağımsız.
+    /// NOT: bu sunum sırasıdır, kabul kronolojisi DEĞİL.
+    #[test]
+    fn mainline_history_is_deterministically_ordered() {
+        let mk = node_with_status;
+        // Ters sırayla insert (Z, A) — çıktı sıralı olmalı (A, Z).
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates
+            .push(mk("RuleCandidate:Zeta", DecisionStatus::Accepted));
+        seed.rule_candidates.push(mk(
+            "RuleCandidate:Alpha",
+            DecisionStatus::SupersededAccepted,
+        ));
+        let store = InMemoryAnchorStore::with_seed(seed);
+
+        let history: Vec<String> = store
+            .mainline_history()
+            .unwrap()
+            .into_iter()
+            .map(|n| n.id.0)
+            .collect();
+        assert_eq!(
+            history,
+            vec![
+                "RuleCandidate:Alpha".to_string(),
+                "RuleCandidate:Zeta".to_string()
+            ],
+            "deterministic ID-ascending order regardless of insertion order"
+        );
+    }
+
+    // Not: apply_decision'ın SupersededAccepted terminal-statü defense-in-depth testi
+    // review.rs test bloğunda — orada SessionId constructor erişilebilir (aynı modül).
+    // (apply_decision_rejects_superseded_accepted_not_promotable)
 }

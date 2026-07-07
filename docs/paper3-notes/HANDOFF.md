@@ -1,111 +1,126 @@
-# Paper 3 — Handoff Notu (v1.1 public manuscript, Zenodo yolunda)
+# Paper 3 — Handoff Notu (Faz 8b sürecinde)
 
-> **Tarih:** 2026-07-05 (bu oturum sonunda güncellendi)
-> **Dal:** main (`52cc9c9`)
-> **Durum:** Paper 3 v1.1 public manuscript — arXiv editorial pass TAMAM. Zenodo → endorsement → arXiv sırası bekliyor.
+> **Tarih:** 2026-07-07 (PR #48 implementasyonu sırasında güncellendi)
+> **Dal:** `faz8b-superseded-status` (PR #48 branch)
+> **Base:** `main` (`bee082b`, Faz 8c merged)
+> **Durum:** Faz 8b başladı — PR #48 (`DecisionStatus::SupersededAccepted` + `mainline_history()` + INV-C14) implementasyonda.
 
 ---
 
 ## Nerede duruyoruz
 
-Paper 3 (Concept Anchoring / Genesis Layer) **v1.1 public manuscript** — first-complete draft +
-Faz 8a real promotion + threat/limitations tightening + arXiv editorial pass tamam. **719 test,
-0 development marker, 367 kelime abstract, 9042 kelime toplam.** Zenodo evidence pack hazır,
-DOI'ler için draft deposit bekliyor.
+Paper 3 (Concept Anchoring / Genesis Layer) **v1.1 public manuscript** + Faz 8a (OperatorReviewSession) +
+Faz 8c (legacy promote kaldırma) tamam. **Faz 8b (supersede vocabulary)** PR #48 ile başladı:
+`SupersededAccepted` varyantı, `mainline_history()` kapısı, INV-C14 (acceptance-provenance projection).
 
-## Bu oturumda yapılanlar (6 PR, #37-#42)
+**730 test, 0 regression** (PR #48 öncesi 718 + 12 yeni test). Zenodo DOI'leri canlı (P1/P2/P3/pack).
+arXiv 1 hafta ertelendi (Faz 8b tamamlansın diye).
 
-### PR #37 — Aşama 1 evidence freeze hardening (4 review turu)
-- §0 pre-flight canonical + marker tablosu (6 cümle gerçek pipeline koşusu)
-- A1 Step 1 gerçek pipeline (CouplingMustNot), A2 dürüst Adım 6 (INV-C3 seeded)
-- A4 volatile'lar JSON'dan çıktı, A5 snapshot-compare pattern
-- A6 4 negatif yol (AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted)
-- Held-out set (5 cümle), run-metadata, conformance (5-state, 18 cümle)
+## PR #48 — ne yapıldı (bu oturumda)
 
-### PR #38 — Aşama 3 kalp bölümler
-- Abstract (~350 kelime, 4-vuruş), §2 Motivating Example (8 adımlı walkthrough)
-- §5 Cross-Family Translation (3 maxim, iki enforcement gücü kapanışı)
-- 2 review turu: "honesty is contribution" kaldırıldı, "provably" → "controlled"
+### Kod
+- **`DecisionStatus::SupersededAccepted`** varyantı (sona eklendi, serde isim-bazlı).
+- **Enum helper'ları** (semantik tek yerde): `is_current_mainline()` (INV-C3, Accepted only) +
+  `preserves_accepted_provenance()` (INV-C14, Accepted + SupersededAccepted).
+- **`mainline_history()`** trait metodu — yeni kapı, acceptance-provenance projection
+  (chronological replay DEĞİL), deterministik ID sıralaması.
+- **`mainline_query` + `task_bridge`** helper'a refactor (behavior-preserving).
+- **`NotPromotableFrom`** açık kol (SupersededAccepted terminal).
+- **`scorer.rs`** 5. kol: SupersededAccepted = 0.4 (Deprecated 0.2 < 0.4 < Candidate 0.5).
+- **`status_from_str` fail-closed** — bilinmeyen token panic (eskiden sessizce Candidate'a düşüyordu).
 
-### PR #39 — Aşama 4 kalan bölümler (first-complete draft)
-- §1, §3 (INV-C1..C8 tablo), §4, §6 (three-gate API + D17 iki token), §7 (5 stratum)
-- §8 Related Work (6 alt-başlık), §9 (Discussion + §9.5 boundary to human world)
-- §10-§12, Appendix A-B, References [1]-[14]
+### Testler (12 yeni)
+- `decision_status_projection_matrix_matches_inv_c3_and_c14` (5×2 matrix — Model A'yı sabitler)
+- `mainline_history_contains_exactly_accepted_provenance_statuses` (BTreeSet exact-set)
+- `mainline_query_is_subset_of_mainline_history` (INV-C14 subset)
+- `mainline_history_is_deterministically_ordered`
+- `apply_decision_rejects_superseded_accepted_not_promotable` (review.rs, in-crate ctor)
+- `superseded_score_is_between_deprecated_and_candidate` (exact 0.4 + aralık)
+- `decision_status_superseded_accepted_serde_roundtrip`
+- `pre_superseded_status_tokens_remain_compatible` (4 eski token)
+- `status_from_str_parses_superseded_accepted`
+- `status_from_str_rejects_unknown_token` (typo → panic, `#[should_panic(expected=...)]`)
+- `status_from_str_observed_maps_to_candidate_by_design` (paper3-design.md:769 tasarım kararı)
+- `superseded_accepted_cannot_seed_task_genesis` (task_bridge regresyonu)
 
-### PR #40 — Faz 8a: OperatorReviewSession (INV-C12/C13)
-- **Protokolün eksik organı:** Candidate→Accepted gerçek promotion yolu
-- OperatorReviewSession (token pub(crate), session public), PresentedBasis (TOCTOU)
-- DecisionApplication (opaque), DecisionRecord (ledger, INV-C13 atomik)
-- 4 yeni trybuild, 14 unit test, Step 6 seed→real, rejected-paths 4→6
-- 2 review turu: claim-implementation divergence (9 düzeltme)
+### Dokü
+- Makale (`paper3-concept-anchoring.md`): INV-C14 propagation — type-enforced sayısı **10'da kaldı**,
+  C14 ayrı paragrafta (runtime-asserted). C4 satırı gelecek kipinde successor invariant.
+- Roadmap (`paper3-design.md`): enum (5 varyant), lane model (mutual-exclusion cümlesi).
+- `run-metadata.md`: **iki başlık** — frozen snapshot (13, commit `481690d`'nin gerçeği) +
+  current protocol (14, INV-C14 sonrası envanter).
 
-### PR #41 — Threat/limitations tightening (3 review turu)
-- promote_to_accepted #[deprecated], InReview sil, re-proposal characterization test
-- §9.5 INV-C11 "operator-surface bypass" (records vs prevents)
-- §3 C13 atomicity nitelemesi, C12 informed minimal, C4 supersede etiketi
-- §10 OperatorId attribution, §11 Future Work genişletme
-- §8 Related Work 3 komşu (refinement types, DL, ADL)
-- interaction-surfaces.md → docs/notes/ (DS1-DS3, strictly out-of-scope)
+## Sıradaki PR'lar (Faz 8b devam)
 
-### PR #42 — arXiv editorial pass (2 review turu)
-- Zenodo evidence pack (README + MANIFEST, sha256 + test mapping)
-- Development markers temiz (0 kaldı: Faz/Phase/PR/D-numarası)
-- INV sayımı 13 + T2 boundary (3 yüzeyde, "14" YOK)
-- Appendix B/§7.6 contradiction düzeldi (seeded→real, simulated→programmatic)
-- §8 "nine" + §8.7-8.9 cited ([15]-[17]), abstract 411→367
-- ORCID 0009-0001-3685-4820, editorial tekrarlar temiz
+### PR #49 — `SupersedeApplication` + `apply_supersede` (en büyük)
+- **Üretici yol:** SupersededAccepted'ı *üreten* kod. Şu an varyant var, üretici yok.
+- **Atomiklik sözü (kritik):** `apply_supersede(old, successor)` statü geçişi + successor edge'i
+  **tek işlemde** kurar. INV-C15 (atomik supersede transition):
+  - precondition: `old.status == Accepted`, `successor` geçerli, `old != successor`
+  - postcondition: `old.status == SupersededAccepted ∧ exactly_one(old --SupersededBy--> successor)`
+  - `old ∉ mainline_query ∧ old ∈ mainline_history`
+- **Geçici zorlanmayan invariant (PR #48 → #49 arası):** varyant representable (public construction/
+  deserialization), ama hiçbir production store-transition API üretmez. PR #49 graph-level
+  successor-edge invariant'ı zorlar. **Status-set-edilip-edge-unutulan yol açılmasın.**
+- **Halef kaderi (kayıt):** successor reject/deprecate edilirse superseded node'un kaderi ne?
+  PR #49-50 tasarım alanı — kapıyı burada tamamen kapatıp orada duvar delme.
 
-## Yeni oturumda yapılacaklar (sıra ile)
+### PR #50 — `SupersedeSession` + gate ctor
+- Faz 8a `OperatorReviewSession` desenine paralel. Token içeride harcanır.
+- `SupersedeAuthority` capability (INV-C4 gate, zaten var) ile entegre.
 
-### 1. Zenodo deposit (kullanıcı tarafı — manuel)
-- **Evidence pack:** `docs/paper3-notes/evidence-pack/` + 5 JSON kopyala → Zenodo draft → Reserve version DOI
-- **Paper 1 PDF:** pandoc/LaTeX → Zenodo draft → Reserve concept DOI
-- **Paper 2 PDF:** pandoc/LaTeX → Zenodo draft → Reserve concept DOI
-- 3 DOI'yi al → A5 References'a işle (yeni commit)
+### PR #51 — CLI `osp review` + desktop Cockpit
+- Operator-console surface. `OperatorReviewSession` + `SupersedeSession` interactive loop.
 
-### 2. Publish + DOI kesinleşmesi
-- 3 deposit'i publish et → DOI'ler kalıcı
+## Model A (normatif sözleşme)
 
-### 3. Endorsement e-postası → arXiv
-- Paper 3 PDF (pandoc/LaTeX) + 3 DOI ile endorsement iste
+`Deprecated` ve `SupersededAccepted` **mutually exclusive terminal anlamlardır**:
+- `Deprecated` = retirement *without* accepted provenance (halefsiz manuel raflama)
+- `SupersededAccepted` = *retains* accepted provenance without current effectiveness (halefli replacement)
 
-### 4. (Opsiyonel) Faz 8b
-- SupersedeSession + ReopenSession + CLI `osp review` + desktop Cockpit
+**No `Accepted → Deprecated` transition is offered.** Gelecekte eklenirse lifecycle/outcome
+ayrımına geçilmeli (`DecisionOutcome + LifecycleStatus`) ve `preserves_accepted_provenance` revize edilmeli.
 
-## Önemli dosyalar
+## 6 tur review'ün metodolojik dersi (HANDOFF'a işlendi)
+
+> **Çok-yüzeyli sayım propagation en riskli işlem sınıfıdır.** "Bir enum varyantı ekleyelim"
+> boyutundaki bir iş, dokunduğu her yüzeyi (tip, skor, sorgu semantiği, parser, invariant sayımı,
+> frozen kanıt sınırı, makale dili, downstream uyumluluk) bilinçli kararlara bağlamayı gerektirir.
+> Niteleyici taşımazsan "type-enforced 10" ile "runtime C14" çelişir; frozen koşu ile current
+> envanter karışır. **Evidence-first disiplini:** kanıt neyi kanıtladıysa metni onu söylemeli.
+
+Altı turda yakalananlar (sıra ile):
+1. mainline_query dar kalmalı (geçmiş ayrı kapı)
+2. `status_from_str` fail-open (bloklayıcı) + INV-C14 exact-set test
+3. type-enforced sayısı 10'da (C14 runtime) + run-metadata frozen/current ayrımı
+4. enum sona eklenmeli + deterministic sıralama + enum helper'ları merkezileştir
+5. task_bridge helper kullanmalı + merge-base CI-dayanıklılık
+6. task_bridge regresyon testi + `#[should_panic(expected=...)]` + run-metadata doğruluk
+
+## Önemli dosyalar (güncel)
 
 | Dosya | Açıklama |
 |---|---|
-| `docs/papers/paper3-concept-anchoring.md` | **Paper 3 v1.1 public manuscript** (9042 kelime, 0 marker) |
-| `docs/paper3-notes/evidence-pack/README.md` | Zenodo evidence pack açıklaması |
-| `docs/paper3-notes/evidence-pack/MANIFEST.json` | sha256 + test mapping (4 evidence dosya) |
-| `docs/paper3-notes/evidence/` | Frozen evidence JSON'lar + run-metadata |
-| `crates/osp-core/src/anchoring/review.rs` | OperatorReviewSession (Faz 8a) |
-| `crates/osp-core/tests/paper3_evidence.rs` | §0 pre-flight + e2e + rejected paths |
-| `crates/osp-core/tests/paper3_heldout.rs` | 5 held-out cümle |
-| `docs/notes/interaction-surfaces-design-document.md` | Out-of-scope brainstorm (DS1-DS3) |
-
-## Commit durumu
-
-✅ **Tüm PR'ler merge edildi (main `52cc9c9`).**
-- PR #37: Aşama 1 evidence freeze
-- PR #38: Aşama 3 kalp bölümler
-- PR #39: Aşama 4 first-complete
-- PR #40: Faz 8a OperatorReviewSession
-- PR #41: Threat tightening
-- PR #42: arXiv editorial pass
-
-## Review içgörüleri (bu oturumun metodolojik dersleri)
-
-- *"Test altına alınmayan invariant ihlal edilir"* — §9.4 + Appendix A
-- *"Claim, iddia ettiği şey olmalı"* — her PR'da claim-implementation divergence avı
-- *"Canonical-kesme tuzağı"* (3 tekrar) → §0 pre-flight ile yapısal imkânsız
-- *"Kanıtın başarısızlığı da kanıttır"* — held_002 semantik false-positive
-- *"Eksik organ bir UI değil, bir promotion yolu"* — Faz 8a OperatorReviewSession
-- *"Operator-surface bypass auditable and architecturally out-of-bound; cannot make untrusted deployment trustworthy by type alone"*
+| `docs/papers/paper3-concept-anchoring.md` | Paper 3 v1.1 + INV-C14 (14 Paper-3 invariant) |
+| `docs/paper3-notes/evidence/run-metadata.md` | İki başlık: frozen snapshot (13) + current protocol (14) |
+| `crates/osp-core/src/anchoring/mod.rs` | `DecisionStatus` enum + helper'lar (`is_current_mainline`, `preserves_accepted_provenance`) |
+| `crates/osp-core/src/anchoring/store.rs` | `mainline_history()` + helper-refactor + NotPromotableFrom kol |
+| `crates/osp-core/src/anchoring/review.rs` | `apply_decision_rejects_superseded_accepted_not_promotable` testi |
+| `crates/osp-core/src/anchoring/scorer.rs` | 5. kol (SupersededAccepted = 0.4) |
+| `crates/osp-core/src/task_bridge.rs` | `is_current_mainline()` helper + regresyon testi |
+| `crates/osp-core/tests/anchoring_mvp.rs` | `status_from_str` fail-closed + parser testleri |
 
 ## Kullanıcıya not
 
-`interaction-surfaces-design-document.md` artık `docs/notes/` altında commit'li (DS1-DS3,
-strictly out-of-scope). Bağlamı: 2 oturum önce yazılmış, INV-C11'in doğum yeri, D14-16 numara
-çakışması DS öneki ile çözüldü. Paper 3 claim setini değiştirmiyor.
+- **osp-desktop kırık** (PR #40 sonrası API drift: `compute_raw_from_delta` 4 argüman, `Claim`
+  `removed_edges`+`task_id` gerektiriyor). CI zaten hariç tutuyor (Tauri webkit bağımlılıkları).
+  Ayrı PR adayı — Faz 8b dışı.
+- **mainline_query deterministik sıralama** — küçük PR adayı (agent-facing context tekrarlanabilirliği).
+- **arXiv** 1 hafta ertelendi; Jimenez e-postası hazır (favorilerde, docs'ta değil).
+- **4 DOI canlı:** P1/P2/P3/pack tüm Zenodo'da.
+
+## Commit durumu
+
+🚧 **PR #48 branch'te (`faz8b-superseded-status`), henüz push edilmedi.**
+- main: `bee082b` (PR #47 Faz 8c merged)
+- PR #48: kod + test + dokü tamam, doğrulama sonrası push.

@@ -538,12 +538,15 @@ mod tests {
     fn review_session_accept_promotes_candidate_to_accepted() {
         // Faz 8a mutlu yol: open → compile basis → accept → Accepted + ledger record.
         let mut store = store_with_candidate("RuleCandidate:CouplingMustNot");
-        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let mut session =
+            OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
         let id = ConceptNodeId("RuleCandidate:CouplingMustNot".into());
 
         let basis = PresentedBasis::compile(&store, &id).expect("basis compile");
         let reason = NonEmptyExplanation::new("rule accepted by operator").unwrap();
-        let record = session.accept(&mut store, &id, basis, reason).expect("accept");
+        let record = session
+            .accept(&mut store, &id, basis, reason)
+            .expect("accept");
 
         assert_eq!(record.decision, DecisionKind::Accept);
         assert_eq!(record.prior_status, DecisionStatus::Candidate);
@@ -561,12 +564,15 @@ mod tests {
     fn review_session_reject_marks_candidate_rejected() {
         // Reject de reason + basis ister — reddedilen candidate negatif epistemik veri.
         let mut store = store_with_candidate("RuleCandidate:Bad");
-        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
+        let mut session =
+            OperatorReviewSession::open_for_operator(OperatorId::new("test-operator"));
         let id = ConceptNodeId("RuleCandidate:Bad".into());
 
         let basis = PresentedBasis::compile(&store, &id).expect("basis");
         let reason = NonEmptyExplanation::new("rule rejected — out of scope").unwrap();
-        let record = session.reject(&mut store, &id, basis, reason).expect("reject");
+        let record = session
+            .reject(&mut store, &id, basis, reason)
+            .expect("reject");
 
         assert_eq!(record.decision, DecisionKind::Reject);
         assert_eq!(record.new_status, DecisionStatus::Rejected);
@@ -718,11 +724,21 @@ mod tests {
 
         let ba = PresentedBasis::compile(&store, &id_a).unwrap();
         session
-            .accept(&mut store, &id_a, ba, NonEmptyExplanation::new("a").unwrap())
+            .accept(
+                &mut store,
+                &id_a,
+                ba,
+                NonEmptyExplanation::new("a").unwrap(),
+            )
             .unwrap();
         let bb = PresentedBasis::compile(&store, &id_b).unwrap();
         session
-            .reject(&mut store, &id_b, bb, NonEmptyExplanation::new("b").unwrap())
+            .reject(
+                &mut store,
+                &id_b,
+                bb,
+                NonEmptyExplanation::new("b").unwrap(),
+            )
             .unwrap();
 
         let ledger = store.decision_ledger();
@@ -757,10 +773,14 @@ mod tests {
         let basis = PresentedBasis::compile(&store, &id).unwrap();
 
         // Session ile gerçek promotion → Accepted.
-        let mut session =
-            OperatorReviewSession::open_for_operator(OperatorId::new("test"));
+        let mut session = OperatorReviewSession::open_for_operator(OperatorId::new("test"));
         session
-            .accept(&mut store, &id, basis.clone(), NonEmptyExplanation::new("first").unwrap())
+            .accept(
+                &mut store,
+                &id,
+                basis.clone(),
+                NonEmptyExplanation::new("first").unwrap(),
+            )
             .unwrap();
 
         // Artık node Accepted. apply_decision doğrudan çağrılırsa (in-crate ctor)
@@ -821,6 +841,63 @@ mod tests {
         assert!(
             matches!(err, StoreError::BasisCandidateMismatch { .. }),
             "BasisCandidateMismatch bekleniyordu (id-mismatch önce), got {err:?}"
+        );
+    }
+
+    /// Faz 8b (PR #48): SupersededAccepted node terminal statüdür — apply_decision
+    /// (in-crate ctor) ile accept/reject reddedilir: `NotPromotableFrom(SupersededAccepted)`.
+    /// `apply_decision_rejects_accepted_node_not_promotable` testine paralel — her terminal
+    /// statü için defense-in-depth. Diriltme/reinstate ayrı mekanizma (v1 dışı).
+    #[test]
+    fn apply_decision_rejects_superseded_accepted_not_promotable() {
+        use crate::anchoring::store::{AnchorStore, InMemoryAnchorStore, StoreError};
+        // SupersededAccepted node seed'le (PR #48'de henüz üretici yok — doğrudan statü set).
+        let node = ConceptNode {
+            id: ConceptNodeId("RuleCandidate:Superseded".into()),
+            canonical: "Superseded".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::SupersededAccepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(node);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        let id = ConceptNodeId("RuleCandidate:Superseded".into());
+
+        // Basis derive et — SupersededAccepted candidate_query'de olmadığı için compile
+        // NotFound verir. Bu yüzden basis'i candidate-seed'li ikinci store'dan derive ederiz:
+        // basis candidate_id == application candidate_id eşleşmesi yeterli (defense-in-depth
+        // id check), ardından apply_decision prior_status kontrolüne ulaşır.
+        let cand = ConceptNode {
+            id: id.clone(),
+            canonical: "Superseded".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Candidate,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed2 = GraphSeed::default();
+        seed2.rule_candidates.push(cand);
+        let basis_store = InMemoryAnchorStore::with_seed(seed2);
+        let basis = PresentedBasis::compile(&basis_store, &id).expect("basis from candidate seed");
+
+        let app = DecisionApplication::new(
+            id.clone(),
+            DecisionKind::Accept,
+            basis,
+            NonEmptyExplanation::new("should reject — superseded terminal").unwrap(),
+            SessionId("session:test".into()),
+            OperatorId::new("test"),
+            SystemTime::now(),
+        );
+        let err = AnchorStore::apply_decision(&mut store, app).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                StoreError::NotPromotableFrom(DecisionStatus::SupersededAccepted)
+            ),
+            "NotPromotableFrom(SupersededAccepted) bekleniyordu, got {err:?}"
         );
     }
 }
