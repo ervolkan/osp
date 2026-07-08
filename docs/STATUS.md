@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **812 workspace test (osp-desktop hariç, CLI osp review +48: 18 osp-core snapshot + 17 osp-cli unit + 11 osp-cli integration + 2 osp-mcp INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~825 workspace test (osp-desktop hariç, CLI osp review: osp-core 503→524 +21 snapshot/restore validator, osp-cli 20 unit + 18 integration, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -176,13 +176,13 @@ Paper 3 v1.3 public manuscript — Zenodo yolunda.
 ```
 cargo test --workspace --exclude osp-desktop
 ```
-- osp-core: 520 lib unit (502 + 18 AnchorStoreSnapshot) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 550; 24 type-level compile-fail (trybuild)
+- osp-core: 524 lib unit (503 + 21 AnchorStoreSnapshot/restore validator/transition consistency) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 554; 24 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 17 unit (store_io/repository/seed_file/review_session) + 11 integration (review_flow)
+- osp-cli: 20 unit (store_io/repository/seed_file/review_session) + 18 integration (review_flow)
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: 812 workspace test (osp-desktop hariç, CLI osp review +48)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
+- **Toplam: ~825 workspace test (osp-desktop hariç, CLI osp review)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

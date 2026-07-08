@@ -96,6 +96,8 @@ enum ReviewAction {
     Accept(commands::review::ReviewAcceptArgs),
     /// Candidate → Rejected.
     Reject(commands::review::ReviewRejectArgs),
+    /// Interactive wizard — custom store/operator ile (argümansız `osp review` default kullanır).
+    Session(commands::review::ReviewSessionArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -122,6 +124,7 @@ fn main() -> anyhow::Result<()> {
             Some(ReviewAction::Show(args)) => commands::review::run_review_show(args),
             Some(ReviewAction::Accept(args)) => commands::review::run_review_accept(args),
             Some(ReviewAction::Reject(args)) => commands::review::run_review_reject(args),
+            Some(ReviewAction::Session(args)) => commands::review::run_review_session(args),
         },
     }
 }

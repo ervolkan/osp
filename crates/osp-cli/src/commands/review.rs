@@ -94,14 +94,15 @@ pub fn run_review_list(args: ReviewListArgs) -> anyhow::Result<()> {
     let format = OutputFormat::from_str(&args.format);
     match output {
         crate::application::ReviewReadOutput::List { items, revision } => {
-            if items.is_empty() {
-                println!("No candidates awaiting review.");
-            } else if format == OutputFormat::Json {
+            // JSON her zaman üretilmeli (boş liste dahil) — otomasyon contract (Review 3.tur P2.1).
+            if format == OutputFormat::Json {
                 let json = serde_json::json!({
                     "items": items,
                     "revision": revision,
                 });
                 println!("{}", serde_json::to_string_pretty(&json)?);
+            } else if items.is_empty() {
+                println!("No candidates awaiting review.");
             } else {
                 println!("Candidates awaiting review ({}):", items.len());
                 for item in &items {
@@ -132,7 +133,12 @@ pub fn run_review_show(args: ReviewShowArgs) -> anyhow::Result<()> {
             }
             Some(details) => {
                 if format == OutputFormat::Json {
-                    println!("{}", serde_json::to_string_pretty(&details)?);
+                    // JSON: revision dahil (text ile aynı bilgi — Review 3.tur P2.1).
+                    let json = serde_json::json!({
+                        "node": details,
+                        "revision": revision,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&json)?);
                 } else {
                     println!("Node: {}", details.id);
                     println!("  Canonical: {}", details.canonical);

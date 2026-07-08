@@ -214,6 +214,23 @@ pub enum SnapshotError {
         superseded: String,
         count: u32,
     },
+    /// DecisionRecord transition kendi içinde çelişkili (Review 3.tur P1.2). Record Deserialize
+    /// desteklediği için prior_status/new_status sahte/çelişkili olabilir — "persistence does not
+    /// weaken epistemic gates" iddiası bunu reject eder.
+    #[error("decision record {seq} transition inconsistent: decision={decision:?}, prior_status={prior_status:?}, new_status={new_status:?}")]
+    DecisionRecordTransitionInconsistent {
+        seq: u64,
+        decision: crate::anchoring::review::DecisionKind,
+        prior_status: DecisionStatus,
+        new_status: DecisionStatus,
+    },
+    /// SupersedeRecord transition kendi içinde çelişkili (Review 3.tur P1.2).
+    #[error("supersede record {seq} transition inconsistent: prior_status={prior_status:?}, new_status={new_status:?}")]
+    SupersedeRecordTransitionInconsistent {
+        seq: u64,
+        prior_status: DecisionStatus,
+        new_status: DecisionStatus,
+    },
 }
 
 /// `PresentedBasis`'in deterministic fingerprint'i → `[u8; 32]`.
@@ -1139,6 +1156,28 @@ fn validate_snapshot(snapshot: &AnchorStoreSnapshot) -> Result<(), SnapshotError
                 status,
             });
         }
+        // (4b) Record transition kendi içinde tutarlı mı (Review 3.tur P1.2)? Record Deserialize
+        // desteklediği için prior_status/new_status sahte olabilir. Schema v1 sabit transitionlar:
+        //   Accept: Candidate → Accepted
+        //   Reject: Candidate → Rejected
+        let transition_ok = match r.decision {
+            DecisionKind::Accept => {
+                r.prior_status == DecisionStatus::Candidate
+                    && r.new_status == DecisionStatus::Accepted
+            }
+            DecisionKind::Reject => {
+                r.prior_status == DecisionStatus::Candidate
+                    && r.new_status == DecisionStatus::Rejected
+            }
+        };
+        if !transition_ok {
+            return Err(SnapshotError::DecisionRecordTransitionInconsistent {
+                seq: r.seq,
+                decision: r.decision,
+                prior_status: r.prior_status,
+                new_status: r.new_status,
+            });
+        }
         // (5) Aynı node en fazla 1 reviewed accept/reject record (reopen yok — schema v1).
         if let Some(&prev) = reviewed_nodes.get(&r.candidate_id.0) {
             return Err(SnapshotError::DuplicateReviewedRecord {
@@ -1179,6 +1218,17 @@ fn validate_snapshot(snapshot: &AnchorStoreSnapshot) -> Result<(), SnapshotError
                 seq: r.seq,
                 superseded_status: sup_status,
                 successor_status: suc_status,
+            });
+        }
+        // (3b) Record transition kendi içinde tutarlı mı (Review 3.tur P1.2)? Schema v1:
+        //   supersede: Accepted → SupersededAccepted
+        if r.prior_status != DecisionStatus::Accepted
+            || r.new_status != DecisionStatus::SupersededAccepted
+        {
+            return Err(SnapshotError::SupersedeRecordTransitionInconsistent {
+                seq: r.seq,
+                prior_status: r.prior_status,
+                new_status: r.new_status,
             });
         }
     }
@@ -2144,6 +2194,48 @@ mod tests {
         let err = InMemoryAnchorStore::restore_snapshot(exported).unwrap_err();
         assert!(
             matches!(err, SnapshotError::DecisionStatusInconsistent { .. }),
+            "got {err:?}"
+        );
+    }
+
+    /// DecisionRecord prior_status/new_status transition kendi içinde çelişkili → reject
+    /// (Review 3.tur P1.2). Record Deserialize destekli; sahte transition "persistence does
+    /// not weaken epistemic gates" iddiasını deler.
+    #[test]
+    fn snapshot_decision_record_inconsistent_transition_rejected() {
+        let mut store = snap_store_with_candidates(&["RuleCandidate:A"]);
+        snap_accept(&mut store, "RuleCandidate:A"); // record: Accept, Candidate→Accepted
+        let mut exported = store.export_snapshot();
+        // Record'un prior/new status'unu boz: decision=Accept ama prior=Rejected, new=Candidate.
+        exported.decision_records[0].prior_status = DecisionStatus::Rejected;
+        exported.decision_records[0].new_status = DecisionStatus::Candidate;
+        let err = InMemoryAnchorStore::restore_snapshot(exported).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SnapshotError::DecisionRecordTransitionInconsistent { seq: 1, .. }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// SupersedeRecord transition çelişkili → reject (Review 3.tur P1.2).
+    #[test]
+    fn snapshot_supersede_record_inconsistent_transition_rejected() {
+        let mut store = snap_store_with_candidates(&["RuleCandidate:Old", "RuleCandidate:New"]);
+        snap_accept(&mut store, "RuleCandidate:Old");
+        snap_accept(&mut store, "RuleCandidate:New");
+        snap_supersede(&mut store, "RuleCandidate:Old", "RuleCandidate:New");
+        let mut exported = store.export_snapshot();
+        // Record: prior=Accepted, new=SupersededAccepted → boz: prior=Candidate, new=Rejected.
+        exported.supersede_records[0].prior_status = DecisionStatus::Candidate;
+        exported.supersede_records[0].new_status = DecisionStatus::Rejected;
+        let err = InMemoryAnchorStore::restore_snapshot(exported).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                SnapshotError::SupersedeRecordTransitionInconsistent { .. }
+            ),
             "got {err:?}"
         );
     }

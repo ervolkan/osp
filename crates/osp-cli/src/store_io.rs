@@ -5,9 +5,9 @@
 //!   üzerinde. Atomic replace canonical dosyanın inode'unu değiştirebilir; sabit lock
 //!   dosyası şart (Review 3 son düzeltme). Process ölünce lock otomatik bırakılır
 //!   (stale-lock *state* yok; `.lock` dosyası filesystem'de kalabilir ama bu sorun değil).
-//! - **`AtomicStoreWriter`**: aynı dizinde `<rand>.tmp` → serialize → `sync_all` →
-//!   parent dir sync → platform-safe atomic replace (Windows `MoveFileEx` veya
-//!   POSIX `rename`).
+//! - **`AtomicStoreWriter`**: aynı dizinde `<rand>.tmp` → serialize → `sync_all` (temp) →
+//!   platform-safe atomic rename/replace (Windows `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` veya
+//!   POSIX `rename`) → **post-rename** parent dir `sync_all` (POSIX durability).
 //!
 //! # `PersistedStore` envelope (Review 1#6/R2#4)
 //! `revision` domain snapshot'ta değil, persistence envelope'ta. `export_snapshot`

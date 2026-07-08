@@ -158,7 +158,7 @@ fn review_accept_noninteractive_succeeds() {
         .stdout
         .clone();
     let show_json: serde_json::Value = serde_json::from_slice(&show_output).unwrap();
-    let digest_hex = show_json["basis_digest_hex"].as_str().unwrap();
+    let digest_hex = show_json["node"]["basis_digest_hex"].as_str().unwrap();
 
     // Accept.
     Command::cargo_bin("osp")
@@ -252,7 +252,7 @@ fn review_state_survives_process_restart() {
             .stdout
             .clone();
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
-        v["basis_digest_hex"].as_str().unwrap().to_string()
+        v["node"]["basis_digest_hex"].as_str().unwrap().to_string()
     };
     Command::cargo_bin("osp")
         .unwrap()
@@ -491,27 +491,127 @@ fn graph_init_creates_nested_parent_directory() {
 }
 
 /// Root `osp review --store X list` artık geçerli değil (root flag yok — Review 2.tur P1.1).
-/// clap subcommand bekler; root --store hata vermeli veya yok sayılmalı (conflict yok).
+/// Root `osp review --store X` clap tarafından reject edilir (Review 2.tur P1.1 kesin kontrat).
+/// Root flag yok → sessiz yok sayılma değil, explicit clap error. Subcommand'lar kendi --store taşır.
 #[test]
-fn review_root_store_flag_not_silently_ignored() {
+fn review_root_store_flag_rejected_by_clap() {
     let dir = tempdir().unwrap();
     let store = init_store(dir.path(), TWO_CANDIDATES_SEED);
-    // `osp review --store X list` — root'ta --store artık geçersiz; hata vermeli
-    // (sessizce yok sayıp default store'da çalışmamalı).
-    let res = Command::cargo_bin("osp")
+    Command::cargo_bin("osp")
         .unwrap()
         .args(["review", "--store", store.to_str().unwrap(), "list"])
-        .assert();
-    // clap ya error verir ya da list'i kendi default'uyla çalıştırır ama root --store
-    // gitmez. Önemli olan: list'in gördüğü store root --store DEĞİL.
-    let output = String::from_utf8_lossy(&res.get_output().stderr);
-    let stdout = String::from_utf8_lossy(&res.get_output().stdout);
-    // Eğer başarılıysa, default store kullandı (0 candidate) — root store kullanmadı.
-    // Eğer fail ise clap arg hatası — ikisi de "sessiz yok sayma değil".
-    let root_store_used =
-        stdout.contains("Concept:Payment") || stdout.contains("RuleCandidate:CouplingMustNot");
-    assert!(
-        !output.is_empty() || !root_store_used,
-        "root --store must not silently route to subcommand; stderr empty and root store used: stdout={stdout}"
-    );
+        .assert()
+        .failure()
+        .stderr(contains("unexpected argument '--store'"));
+}
+
+/// `osp review session --store X` custom store ile interactive session açar (Review 2.tur P1.1).
+/// Argümansız `osp review` default store; `session` subcommand custom store/operator.
+#[test]
+fn review_session_subcommand_uses_custom_store() {
+    let dir = tempdir().unwrap();
+    let store = init_store(dir.path(), TWO_CANDIDATES_SEED);
+    Command::cargo_bin("osp")
+        .unwrap()
+        .env("OSP_OPERATOR", "alice")
+        .args(["review", "session", "--store", store.to_str().unwrap()])
+        .write_stdin("list\nquit\n")
+        .assert()
+        .success()
+        .stdout(contains("2 candidates awaiting review."))
+        .stdout(contains("Concept:Payment"));
+}
+
+/// `review list --format json` boş listede geçerli JSON üretir (Review 3.tur P2.1).
+/// Otomasyon contract: "No candidates awaiting review" geçerli JSON değil.
+#[test]
+fn review_list_json_empty_produces_valid_json() {
+    let dir = tempdir().unwrap();
+    let store = init_store(dir.path(), TWO_CANDIDATES_SEED);
+    // İki candidate'ı da accept et (non-interactive).
+    for id in ["RuleCandidate:CouplingMustNot", "Concept:Payment"] {
+        let digest = {
+            let out = Command::cargo_bin("osp")
+                .unwrap()
+                .args([
+                    "review",
+                    "show",
+                    id,
+                    "--store",
+                    store.to_str().unwrap(),
+                    "--format",
+                    "json",
+                ])
+                .assert()
+                .success()
+                .get_output()
+                .stdout
+                .clone();
+            let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+            v["node"]["basis_digest_hex"].as_str().unwrap().to_string()
+        };
+        Command::cargo_bin("osp")
+            .unwrap()
+            .args([
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &digest,
+            ])
+            .assert()
+            .success();
+    }
+    // Artık candidate yok → list --format json geçerli JSON (items: []).
+    let output = Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "list",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON on empty list");
+    assert_eq!(v["items"].as_array().unwrap().len(), 0);
+    assert!(v["revision"].as_u64().is_some());
+}
+
+/// `review show --format json` revision alanını taşır (Review 3.tur P2.1).
+#[test]
+fn review_show_json_includes_revision() {
+    let dir = tempdir().unwrap();
+    let store = init_store(dir.path(), TWO_CANDIDATES_SEED);
+    let output = Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "show",
+            "RuleCandidate:CouplingMustNot",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert!(v["node"]["id"].as_str().is_some(), "node details present");
+    assert!(v["revision"].as_u64().is_some(), "revision present in JSON");
 }
