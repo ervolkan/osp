@@ -98,7 +98,7 @@ pub struct ReviewNodeDetails {
 // ReviewApplicationService
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Supersede confirmation presentation — iki endpoint + revision + digests (R3#2).
+/// Supersede confirmation presentation — iki endpoint + digests (R3#2).
 /// CLI adapter seviyesinde iki `Show` sonucunu birleştiren minimal model; **`ReviewQuery`
 /// değildir** (rich lineage/compatibility preview out-of-scope, sonraki PR). One-shot ve
 /// interactive adapter aynı presentation'ı render eder → ayrışma yok.
@@ -106,7 +106,6 @@ pub struct ReviewNodeDetails {
 pub struct SupersedePresentation {
     pub superseded: ReviewNodeDetails,
     pub successor: ReviewNodeDetails,
-    pub revision: u64,
     pub digests: SupersedeDigests,
 }
 
@@ -260,83 +259,94 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
             .map(|(mutation, revision)| PersistedSupersedeOutput { mutation, revision })
     }
 
-    /// Supersede confirmation presentation — iki endpoint + revision + digests (R3#2).
+    /// Supersede confirmation presentation — iki endpoint + digests (R3#2).
     /// CLI adapter seviyesinde minimal model; **`ReviewQuery` değildir** (rich lineage/
     /// compatibility preview out-of-scope). One-shot ve interactive aynı presentation'ı render eder.
     ///
-    /// **Revision retry pair olarak** (R3#3): old₁,new₁ → eşit? değilse old₂,new₂ → hâlâ
-    /// farklı fail. N3: UX consistency, correctness değil (asıl garanti commit'teki iki-digest
-    /// recheck, lock altında).
+    /// **Tek snapshot read** (Review P2.1): tek `repo.read()` → iki endpoint aynı restored
+    /// snapshot'tan → atomik pair consistency (revision retry gerekmez). Asıl freshness
+    /// garantisi commit'teki iki-digest recheck (lock altında).
+    ///
+    /// **Accepted gate** (Review P1.2): her iki endpoint `Accepted` olmalı; değilse
+    /// `EndpointNotCurrent` — operator'e invalid confirmation gösterilmez ("remains current
+    /// Accepted" yalan söylemez). Mutation `mainline_query` kontrolünün yerine geçmez;
+    /// yalnız preview doğruluğu.
     pub fn load_supersede_presentation(
         &self,
         superseded: &ConceptNodeId,
         successor: &ConceptNodeId,
     ) -> Result<SupersedePresentation, ReviewError> {
-        let fetch_pair = || -> Result<(ReviewNodeDetails, ReviewNodeDetails, u64), ReviewError> {
-            let persisted = self.repo.read()?;
-            let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot.clone())
-                .map_err(|e| ReviewError::Store(e.to_string()))?;
-            let revision = persisted.revision;
-            let to_details = |id: &ConceptNodeId| -> Result<ReviewNodeDetails, ReviewError> {
-                let n = store
-                    .graph()
-                    .nodes_iter()
-                    .find(|n| &n.id == id)
-                    .ok_or_else(|| ReviewError::NotFound(id.0.clone()))?;
-                let digest = node_digest(n);
-                let superseded_by = if n.decision_status
-                    == osp_core::anchoring::DecisionStatus::SupersededAccepted
-                {
-                    store
-                        .graph()
-                        .edges()
-                        .find(|e| {
-                            e.to == n.id
-                                && e.kind == osp_core::anchoring::ConceptEdgeKind::Supersedes
-                                && e.decision_status
-                                    == osp_core::anchoring::DecisionStatus::Accepted
-                        })
-                        .map(|e| e.from.0.clone())
-                } else {
-                    None
-                };
-                Ok(ReviewNodeDetails {
-                    id: n.id.0.clone(),
-                    canonical: n.canonical.clone(),
-                    kind: format!("{:?}", n.node_kind),
-                    decision_status: format!("{:?}", n.decision_status),
-                    node_digest_hex: format!("{:016x}", digest.get()),
-                    superseded_by,
-                })
-            };
-            Ok((to_details(superseded)?, to_details(successor)?, revision))
-        };
+        let persisted = self.repo.read()?;
+        let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot.clone())
+            .map_err(|e| ReviewError::Store(e.to_string()))?;
 
-        match fetch_pair() {
-            Ok((old, new, rev)) => Ok(SupersedePresentation {
-                digests: SupersedeDigests {
-                    superseded: parse_hex(&old.node_digest_hex)?,
-                    successor: parse_hex(&new.node_digest_hex)?,
-                },
-                superseded: old,
-                successor: new,
-                revision: rev,
-            }),
-            // Tek retry: revision değişmiş olabilir, pair bütünü yeniden (R3#3).
-            Err(_) => match fetch_pair() {
-                Ok((old, new, rev)) => Ok(SupersedePresentation {
-                    digests: SupersedeDigests {
-                        superseded: parse_hex(&old.node_digest_hex)?,
-                        successor: parse_hex(&new.node_digest_hex)?,
-                    },
-                    superseded: old,
-                    successor: new,
-                    revision: rev,
-                }),
-                Err(e) => Err(e),
+        let old = node_to_details(&store, superseded)?;
+        let new = node_to_details(&store, successor)?;
+
+        // Accepted gate — operator'e invalid confirmation gösterme (P1.2).
+        ensure_current_endpoint(&old, SupersedeEndpoint::Superseded)?;
+        ensure_current_endpoint(&new, SupersedeEndpoint::Successor)?;
+
+        Ok(SupersedePresentation {
+            digests: SupersedeDigests {
+                superseded: parse_hex(&old.node_digest_hex)?,
+                successor: parse_hex(&new.node_digest_hex)?,
             },
-        }
+            superseded: old,
+            successor: new,
+        })
     }
+}
+
+/// Endpoint'in Accepted (current mainline) olduğunu doğrula (Review P1.2). Supersede iki
+/// Accepted node üzerinde çalışır; presentation invalid endpoint için gösterilmez.
+fn ensure_current_endpoint(
+    node: &ReviewNodeDetails,
+    endpoint: SupersedeEndpoint,
+) -> Result<(), ReviewError> {
+    if node.decision_status != "Accepted" {
+        return Err(ReviewError::EndpointNotCurrent {
+            endpoint,
+            id: node.id.clone(),
+            formatted_status: format_endpoint_status(Some(&node.decision_status)),
+        });
+    }
+    Ok(())
+}
+
+/// Graph node → ReviewNodeDetails (digest + superseded_by çözümü).
+fn node_to_details(
+    store: &InMemoryAnchorStore,
+    id: &ConceptNodeId,
+) -> Result<ReviewNodeDetails, ReviewError> {
+    let n = store
+        .graph()
+        .nodes_iter()
+        .find(|n| &n.id == id)
+        .ok_or_else(|| ReviewError::NotFound(id.0.clone()))?;
+    let digest = node_digest(n);
+    let superseded_by =
+        if n.decision_status == osp_core::anchoring::DecisionStatus::SupersededAccepted {
+            store
+                .graph()
+                .edges()
+                .find(|e| {
+                    e.to == n.id
+                        && e.kind == osp_core::anchoring::ConceptEdgeKind::Supersedes
+                        && e.decision_status == osp_core::anchoring::DecisionStatus::Accepted
+                })
+                .map(|e| e.from.0.clone())
+        } else {
+            None
+        };
+    Ok(ReviewNodeDetails {
+        id: n.id.0.clone(),
+        canonical: n.canonical.clone(),
+        kind: format!("{:?}", n.node_kind),
+        decision_status: format!("{:?}", n.decision_status),
+        node_digest_hex: format!("{:016x}", digest.get()),
+        superseded_by,
+    })
 }
 
 /// Hex string → NodeDigest (presentation helper).

@@ -230,8 +230,8 @@ pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
             )
         })?;
         SupersedeDigests {
-            superseded: parse_digest_hex(&sup)?,
-            successor: parse_digest_hex(&suc)?,
+            superseded: parse_digest_hex("--superseded-digest", &sup)?,
+            successor: parse_digest_hex("--successor-digest", &suc)?,
         }
     } else {
         // TTY: iki endpoint göster + onaylat. Digest'leri gösterilen presentation'dan al.
@@ -256,9 +256,9 @@ pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!(
-            "✓ Superseded {} → {} (record #{}, revision {})",
-            output.mutation.superseded_node_id,
+            "✓ {} supersedes {} (record #{}, revision {})",
             output.mutation.successor_node_id,
+            output.mutation.superseded_node_id,
             output.mutation.decision_sequence,
             output.revision
         );
@@ -331,7 +331,7 @@ fn run_review_mutation<M: MutationArgs>(args: M, accept: bool) -> anyhow::Result
         let hex = args
             .basis_digest()
             .ok_or_else(|| anyhow::anyhow!("--basis-digest <hex> required for non-interactive accept/reject (run `osp review show <id>` to get it)"))?;
-        parse_digest_hex(&hex)?
+        parse_digest_hex("--basis-digest", &hex)?
     } else {
         // TTY: basis göster + onaylat. Digest'i gösterilen basis'ten al.
         confirm_with_basis(&args, accept)?
@@ -398,10 +398,11 @@ fn normalize_operator(value: &str) -> Result<String, anyhow::Error> {
 }
 
 /// Hex digest parse → NodeDigest.
-fn parse_digest_hex(hex: &str) -> Result<NodeDigest, anyhow::Error> {
+/// Hex digest parse → NodeDigest. `flag` hata mesajında görünür (P2.3 — yanlış flag adı yok).
+fn parse_digest_hex(flag: &str, hex: &str) -> Result<NodeDigest, anyhow::Error> {
     let hex = hex.trim();
     let raw = u64::from_str_radix(hex, 16)
-        .map_err(|e| anyhow::anyhow!("invalid --basis-digest (expected hex u64): {e}"))?;
+        .map_err(|e| anyhow::anyhow!("invalid {flag} (expected hex u64): {e}"))?;
     Ok(NodeDigest::from_raw(raw))
 }
 
@@ -437,7 +438,7 @@ fn confirm_with_basis<M: MutationArgs>(
         _ => anyhow::bail!("node not found: {}", args.id()),
     };
     ensure_candidate(&node)?;
-    let digest = parse_digest_hex(&node.node_digest_hex)?;
+    let digest = parse_digest_hex("--basis-digest", &node.node_digest_hex)?;
     let digest_hex = &node.node_digest_hex;
 
     println!("Candidate: {}", node.id);

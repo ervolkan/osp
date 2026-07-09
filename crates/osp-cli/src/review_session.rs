@@ -411,9 +411,9 @@ fn run_informed_supersede<R: BufRead, W: Write>(
         Ok(out) => {
             writeln!(
                 output,
-                "✓ Superseded {} → {} (record #{}, revision {})",
-                out.mutation.superseded_node_id,
+                "✓ {} supersedes {} (record #{}, revision {})",
                 out.mutation.successor_node_id,
+                out.mutation.superseded_node_id,
                 out.mutation.decision_sequence,
                 out.revision
             )

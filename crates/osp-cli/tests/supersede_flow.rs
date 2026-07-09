@@ -110,7 +110,11 @@ fn supersede_happy_path_direction_assert() {
         ])
         .assert()
         .success()
-        .stdout(contains("Superseded"));
+        .stdout(contains("supersedes"))
+        // Yön: successor (NewRule) superseder, superseded (OldRule) subject.
+        .stdout(contains(
+            "RuleCandidate:NewRule supersedes RuleCandidate:OldRule",
+        ));
     // Yön assert: old SupersededAccepted + successor.
     Command::cargo_bin("osp")
         .unwrap()
@@ -581,7 +585,7 @@ fn interactive_supersede_piped() {
         .assert()
         .success()
         .stdout(contains("supersedes"))
-        .stdout(contains("Superseded"));
+        .stdout(contains("RuleCandidate:NewRule supersedes RuleCandidate:OldRule"));
 }
 
 /// Interactive supersede confirmation n → abort, store unchanged (R3#7).
@@ -603,4 +607,211 @@ fn interactive_supersede_confirmation_n_aborts() {
         .assert()
         .stdout(contains("Revision: 2"))
         .stdout(contains("superseded: 0"));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Review test boşlukları (P1.2 gate + eksik senaryolar)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Stale successor digest (R1#4 endpoint-specific — superseded değil).
+#[test]
+fn supersede_stale_successor_digest_rejected() {
+    let dir = tempdir().unwrap();
+    let store = setup_two_accepted(dir.path());
+    let old_d = show_digest(&store, "RuleCandidate:OldRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "supersede",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "r",
+            "--yes",
+            "--superseded-digest",
+            &old_d,
+            "--successor-digest",
+            "0000000000000000",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("stale successor basis"));
+}
+
+/// Existing-but-non-Accepted superseded → EndpointNotCurrent (R1#2). Reject sonrası node.
+#[test]
+fn supersede_non_accepted_superseded_endpoint_not_current() {
+    let dir = tempdir().unwrap();
+    // OldRule reject et (Candidate → Rejected), NewRule accept.
+    let seed = r#"{ "schema_version": 1, "nodes": [
+        {"canonical": "OldRule", "kind": "RuleCandidate"},
+        {"canonical": "NewRule", "kind": "RuleCandidate"}
+    ]}"#;
+    let store = init_store(dir.path(), seed);
+    let old_d = show_digest(&store, "RuleCandidate:OldRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "reject",
+            "RuleCandidate:OldRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "bad",
+            "--yes",
+            "--basis-digest",
+            &old_d,
+        ])
+        .assert()
+        .success();
+    let new_d = show_digest(&store, "RuleCandidate:NewRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "accept",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "ok",
+            "--yes",
+            "--basis-digest",
+            &new_d,
+        ])
+        .assert()
+        .success();
+    // Supersede: OldRule Rejected (non-Accepted) → EndpointNotCurrent.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "supersede",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "r",
+            "--yes",
+            "--superseded-digest",
+            &old_d,
+            "--successor-digest",
+            &new_d,
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("not current Accepted"));
+}
+
+/// Candidate successor → confirmation gate (P1.2): presentation gösterilmez, reason sorulmaz.
+#[test]
+fn supersede_candidate_successor_confirmation_gate() {
+    let dir = tempdir().unwrap();
+    // OldRule accept, NewRule Candidate (accept etme).
+    let seed = r#"{ "schema_version": 1, "nodes": [
+        {"canonical": "OldRule", "kind": "RuleCandidate"},
+        {"canonical": "NewRule", "kind": "RuleCandidate"}
+    ]}"#;
+    let store = init_store(dir.path(), seed);
+    let old_d = show_digest(&store, "RuleCandidate:OldRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "accept",
+            "RuleCandidate:OldRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "ok",
+            "--yes",
+            "--basis-digest",
+            &old_d,
+        ])
+        .assert()
+        .success();
+    let new_d = show_digest(&store, "RuleCandidate:NewRule");
+    // Interactive: successor Candidate → "remains current Accepted" gösterilmez, EndpointNotCurrent.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .env("OSP_OPERATOR", "t")
+        .args(["review", "session", "--store", store.to_str().unwrap()])
+        .write_stdin("supersede RuleCandidate:OldRule RuleCandidate:NewRule\nquit\n")
+        .assert()
+        .success()
+        .stdout(contains("not current Accepted"));
+}
+
+/// Negatif: --superseded-digest eksik → fail.
+#[test]
+fn supersede_missing_superseded_digest_rejected() {
+    let dir = tempdir().unwrap();
+    let store = setup_two_accepted(dir.path());
+    let new_d = show_digest(&store, "RuleCandidate:NewRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "supersede",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "r",
+            "--yes",
+            "--successor-digest",
+            &new_d,
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--superseded-digest"));
+}
+
+/// Malformed successor digest → doğru flag mesajı (P2.3).
+#[test]
+fn supersede_malformed_successor_digest_correct_flag_message() {
+    let dir = tempdir().unwrap();
+    let store = setup_two_accepted(dir.path());
+    let old_d = show_digest(&store, "RuleCandidate:OldRule");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "supersede",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "r",
+            "--yes",
+            "--superseded-digest",
+            &old_d,
+            "--successor-digest",
+            "xyz",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--successor-digest"))
+        .stderr(contains("invalid"));
 }

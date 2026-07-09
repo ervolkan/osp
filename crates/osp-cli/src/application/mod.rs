@@ -14,4 +14,4 @@ pub mod repository;
 pub mod review;
 
 // Command adapter'lar ve interactive wizard bu tipleri kullanır.
-pub(crate) use review::{ReviewApplicationService, ReviewReadOutput, SupersedePresentation};
+pub(crate) use review::{ReviewApplicationService, ReviewReadOutput};
