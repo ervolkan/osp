@@ -226,4 +226,107 @@ mod tests {
             ConceptNodeKind::CodeEntityCandidate
         );
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Frozen characterization (O6') — refactor öncesi baseline davranış pinleme.
+    // Bu testler to_graph_seed() → into_drafts()+GraphSeedBuilder refactor'undan ÖNCE
+    // yazıldı. Refactor sonrası aynı davranış (mutlu yol + negatif) korunmalı.
+    // Reviewer: bu testlerin yeni implementation'a göre sonradan uydurulmadığınet görünür.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// F1 frozen mutlu yol: 3 node farklı kind → GraphSeed node ID/digest/aliases/kind/family/order.
+    /// Refactor sonrası (into_drafts + GraphSeedBuilder) aynı frozen values üretmeli.
+    #[test]
+    fn frozen_characterization_happy_path_semantics() {
+        let json = r#"{
+            "schema_version": 1,
+            "nodes": [
+                {"canonical": "Alpha", "kind": "Concept"},
+                {"canonical": "Beta", "kind": "RuleCandidate", "aliases": ["b"]},
+                {"canonical": "Gamma", "kind": "CodeEntity"}
+            ]
+        }"#;
+        let seed = CandidateSeedFile::from_json(json).unwrap();
+        let graph = seed.to_graph_seed().unwrap();
+        // Bucket placement (kind bazlı).
+        assert_eq!(graph.concepts.len(), 1);
+        assert_eq!(graph.rule_candidates.len(), 1);
+        assert_eq!(graph.code_entities.len(), 1);
+        // Node ID derivation (kind prefix + canonical).
+        assert_eq!(graph.concepts[0].id.0, "Concept:Alpha");
+        assert_eq!(graph.rule_candidates[0].id.0, "RuleCandidate:Beta");
+        assert_eq!(graph.code_entities[0].id.0, "CodeEntity:Gamma");
+        // Family hardcoded ConceptualIntent (F1 legacy compat).
+        assert_eq!(graph.concepts[0].position_family, PositionFamily::ConceptualIntent);
+        assert_eq!(graph.rule_candidates[0].position_family, PositionFamily::ConceptualIntent);
+        assert_eq!(graph.code_entities[0].position_family, PositionFamily::ConceptualIntent);
+        // Status Candidate (INV-C5 — illegal state unrepresentable).
+        assert_eq!(graph.concepts[0].decision_status, DecisionStatus::Candidate);
+        assert_eq!(graph.rule_candidates[0].decision_status, DecisionStatus::Candidate);
+        // Aliases preserved.
+        assert_eq!(graph.rule_candidates[0].aliases, vec!["b".to_string()]);
+        assert!(graph.concepts[0].aliases.is_empty());
+        // Node digest deterministik (canonical + aliases + kind + family).
+        let d1 = osp_core::anchoring::review::node_digest(&graph.concepts[0]);
+        let d2 = osp_core::anchoring::review::node_digest(&graph.rule_candidates[0]);
+        let d3 = osp_core::anchoring::review::node_digest(&graph.code_entities[0]);
+        assert_ne!(d1.get(), d2.get());
+        assert_ne!(d2.get(), d3.get());
+        assert_ne!(d1.get(), d3.get());
+    }
+
+    /// O6' legacy negatif: duplicate canonical → fail-closed (DuplicateCanonical).
+    /// Mevcut davranış: canonical string bazında dedup, ilk tekrar hata.
+    #[test]
+    fn frozen_characterization_duplicate_canonical_rejected() {
+        let json = r#"{
+            "schema_version": 1,
+            "nodes": [
+                {"canonical": "Dup", "kind": "Concept"},
+                {"canonical": "Dup", "kind": "RuleCandidate"}
+            ]
+        }"#;
+        let seed = CandidateSeedFile::from_json(json).unwrap();
+        let err = seed.to_graph_seed().unwrap_err();
+        assert!(
+            matches!(err, SeedError::DuplicateCanonical(ref s) if s == "Dup"),
+            "duplicate canonical must fail-closed, got {err:?}"
+        );
+    }
+
+    /// O6' legacy negatif: empty seed → Ok (GraphSeed::default, tüm bucket boş).
+    /// Mevcut davranış: boş node listesi → boş GraphSeed (kabul).
+    #[test]
+    fn frozen_characterization_empty_seed_accepted() {
+        let json = r#"{ "schema_version": 1, "nodes": [] }"#;
+        let seed = CandidateSeedFile::from_json(json).unwrap();
+        let graph = seed.to_graph_seed().unwrap();
+        assert!(graph.concepts.is_empty());
+        assert!(graph.decisions.is_empty());
+        assert!(graph.code_entities.is_empty());
+        assert!(graph.rule_candidates.is_empty());
+        assert!(graph.task_candidates.is_empty());
+        assert!(graph.risk_candidates.is_empty());
+    }
+
+    /// O6' legacy negatif: insertion-order preserved (bucket push sırası).
+    /// Mevcut davranış: JSON node sırası korunur (her bucket kendi içinde insertion-order).
+    #[test]
+    fn frozen_characterization_insertion_order_preserved() {
+        let json = r#"{
+            "schema_version": 1,
+            "nodes": [
+                {"canonical": "Zebra", "kind": "Concept"},
+                {"canonical": "Apple", "kind": "Concept"},
+                {"canonical": "Mango", "kind": "Concept"}
+            ]
+        }"#;
+        let seed = CandidateSeedFile::from_json(json).unwrap();
+        let graph = seed.to_graph_seed().unwrap();
+        // Insertion-order (Zebra, Apple, Mango) — sort edilmez.
+        assert_eq!(graph.concepts.len(), 3);
+        assert_eq!(graph.concepts[0].canonical, "Zebra");
+        assert_eq!(graph.concepts[1].canonical, "Apple");
+        assert_eq!(graph.concepts[2].canonical, "Mango");
+    }
 }
