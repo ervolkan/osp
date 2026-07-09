@@ -6,18 +6,53 @@
 
 use std::path::PathBuf;
 
-use clap::Args;
+use clap::{Args, ArgGroup};
 use osp_core::anchoring::store::InMemoryAnchorStore;
 
+use crate::analysis_bridge::{project_analysis, AnalysisIdentityScheme};
+use crate::canonical_identity::PathCasePolicy;
+use crate::graph_seed_builder::{GraphSeedBuilder, GraphSeedNodeDraft};
 use crate::seed_file::CandidateSeedFile;
 use crate::store_io::{read_persisted_store, write_persisted_store, PersistedStore, StoreLock};
 
-/// `osp graph init --seed <path> --store <path>` — Candidate-only bootstrap.
+/// Path case politikası (CLI flag). Yalnız `--analyze` ile (host OS'den bağımsız).
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum PathCaseArg {
+    Sensitive,
+    AsciiInsensitive,
+}
+
+impl From<PathCaseArg> for PathCasePolicy {
+    fn from(arg: PathCaseArg) -> Self {
+        match arg {
+            PathCaseArg::Sensitive => Self::CaseSensitive,
+            PathCaseArg::AsciiInsensitive => Self::AsciiCaseInsensitive,
+        }
+    }
+}
+
+/// `osp graph init` — iki source: `--seed <json>` veya `--analyze <repo>`.
+/// Clap ArgGroup ile mutual exclusion (exactly one required).
 #[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("input")
+        .required(true)
+        .multiple(false)
+        .args(["seed", "analyze"])
+))]
 pub struct GraphInitArgs {
     /// Candidate seed JSON dosyası (nodes-only; status/id alanları yok).
     #[arg(long)]
-    pub seed: PathBuf,
+    pub seed: Option<PathBuf>,
+    /// Repo analiz et → Candidate projection (analysis bridge).
+    #[arg(long)]
+    pub analyze: Option<PathBuf>,
+    /// SCIP index path'i (--analyze ile; gerçek LCOM4 cohesion için).
+    #[arg(long, requires = "analyze")]
+    pub scip: Option<PathBuf>,
+    /// Path case politikası (yalnız --analyze; default: ascii-insensitive).
+    #[arg(long, value_enum, requires = "analyze")]
+    pub path_case: Option<PathCaseArg>,
     /// Canonical store JSON dosyası (persisted AnchorStoreSnapshot).
     #[arg(long)]
     pub store: PathBuf,
@@ -45,16 +80,14 @@ pub struct GraphValidateArgs {
     pub format: String,
 }
 
-/// `osp graph init` — Candidate seed → trusted store.
+/// `osp graph init` — iki source (`--seed` veya `--analyze`) → Candidate store.
 ///
-/// Aynı StoreLock protokolü kullanır (review mutation'ları ile tek concurrency sözleşmesi):
-/// lock → existence/force check → build + validate → atomic write → unlock (Review P2.3).
-/// İki init process'i aynı anda `exists == false` göremez; `--force` aktif review
-/// mutation'ı ile yarışıp canonical store'u overwrite edemez.
+/// Aynı StoreLock protokolü (review mutation'ları ile tek concurrency sözleşmesi):
+/// lock → existence/force check → source projection → validate → atomic write → unlock.
+/// Pre-validation non-destructive (P3+N2): validation/builder hatasında store değişmez,
+/// `--force` dahil (eski store atomic rename'e kadar durur).
 pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
-    // (0) Parent directory oluştur (bootstrap sorumluluğu — Review 2.tur P2.2).
-    //     `.osp/` yoksa lock dosyası açılamadan fail eder. Review mutation tarafında
-    //     otomatik creation yok (eksik store orada hata vermeli).
+    // (0) Parent directory oluştur (bootstrap sorumluluğu).
     if let Some(parent) = args.store.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -75,22 +108,55 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
         );
     }
 
-    // (3) Seed parse.
-    let seed_json = std::fs::read_to_string(&args.seed)
-        .map_err(|e| anyhow::anyhow!("cannot read seed file {}: {e}", args.seed.display()))?;
-    let seed_file = CandidateSeedFile::from_json(&seed_json)
-        .map_err(|e| anyhow::anyhow!("invalid seed file: {e}"))?;
-    let graph_seed = seed_file
-        .to_graph_seed()
-        .map_err(|e| anyhow::anyhow!("seed validation failed: {e}"))?;
+    // (3) Source → GraphSeedNodeDraft[] (iki source, ayrı conversion surface — S2).
+    //     Pre-validation non-destructive: hata burada olursa store'a hiç dokunulmaz.
+    let drafts: Vec<GraphSeedNodeDraft> = if let Some(seed_path) = &args.seed {
+        // Legacy JSON source — F1 semantics (ConceptualIntent, Candidate, aliases).
+        let seed_json = std::fs::read_to_string(seed_path)
+            .map_err(|e| anyhow::anyhow!("cannot read seed file {}: {e}", seed_path.display()))?;
+        let seed_file = CandidateSeedFile::from_json(&seed_json)
+            .map_err(|e| anyhow::anyhow!("invalid seed file: {e}"))?;
+        seed_file
+            .into_drafts()
+            .map_err(|e| anyhow::anyhow!("seed validation failed: {e}"))?
+    } else if let Some(repo) = &args.analyze {
+        // Analysis source — PhysicalCode, identity_key NodeId, INV-C5 Candidate.
+        let registry = osp_analyzer::language::AdapterRegistry::default_all();
+        let config = osp_analyzer::contract::AnalysisConfig {
+            scip_index: args.scip.clone(),
+            ..Default::default()
+        };
+        let analysis = osp_analyzer::pipeline::analyze_repo_with_config(repo, &registry, &config)
+            .map_err(|e| anyhow::anyhow!("analysis failed: {e}"))?;
+        let policy = args
+            .path_case
+            .map(Into::into)
+            .unwrap_or(PathCasePolicy::AsciiCaseInsensitive);
+        let (seed, report) = project_analysis(&analysis, policy)
+            .map_err(|e| anyhow::anyhow!("analysis bridge projection failed: {e}"))?;
+        if seed.is_empty() {
+            eprintln!("warning: analysis produced no projectable Module nodes");
+        }
+        eprintln!("{report}"); // stderr — stdout'a karışmasın
+        seed.into_drafts(AnalysisIdentityScheme::PathV1)
+    } else {
+        // ArgGroup guaranteed exactly one; unreachable.
+        anyhow::bail!("either --seed <json> or --analyze <repo> required");
+    };
 
-    // (4) with_seed → export → restore-validasyon (corrupt seed'i baştan yakala).
+    // (4) One-shot GraphSeedBuilder → GraphSeed (graph-level invariant, partial imkânsız).
+    let graph_seed = GraphSeedBuilder::build(drafts)
+        .map_err(|e| anyhow::anyhow!("graph seed construction failed: {e}"))?;
+
+    // (5) with_seed → export → restore-validasyon (corrupt seed'i baştan yakala).
     let store = InMemoryAnchorStore::with_seed(graph_seed);
     let snapshot = store.export_snapshot();
     InMemoryAnchorStore::restore_snapshot(snapshot.clone())
         .map_err(|e| anyhow::anyhow!("post-init restore validation failed (corrupt seed): {e}"))?;
 
-    // (5) Atomic write (lock altında).
+    // (6) Atomic write (lock altında). --force eski dosyayı erkenden silmez (N2);
+    //     write_persisted_store atomic_replace (temp + fsync + rename) — eski dosya
+    //     rename anına kadar durur.
     let persisted = PersistedStore::from_snapshot(snapshot);
     write_persisted_store(&args.store, &persisted)
         .map_err(|e| anyhow::anyhow!("cannot write store: {e}"))?;

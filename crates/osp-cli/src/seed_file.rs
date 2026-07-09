@@ -96,6 +96,9 @@ impl CandidateSeedFile {
 
     /// Trusted `GraphSeed`'e dönüştür (Candidate-only). Duplicate canonical + empty kontrolü.
     /// F1 legacy compat wrapper: `into_drafts() + GraphSeedBuilder::build()`.
+    /// Production `commands/graph.rs` into_drafts+GraphSeedBuilder direkt kullanır;
+    /// bu metot test characterization + downstream convenience için.
+    #[allow(dead_code)]
     pub fn to_graph_seed(&self) -> Result<GraphSeed, SeedError> {
         let drafts = self.into_drafts()?;
         GraphSeedBuilder::build(drafts).map_err(map_builder_error)
