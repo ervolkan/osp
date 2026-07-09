@@ -98,6 +98,8 @@ enum ReviewAction {
     Reject(commands::review::ReviewRejectArgs),
     /// Accepted → SupersededAccepted (iki-endpoint supersession).
     Supersede(commands::review::ReviewSupersedeArgs),
+    /// Rich supersede preview — read-only lineage DAG + compatibility + eligibility.
+    SupersedePreview(commands::review::ReviewSupersedePreviewArgs),
     /// Interactive wizard — custom store/operator ile (argümansız `osp review` default kullanır).
     Session(commands::review::ReviewSessionArgs),
 }
@@ -127,6 +129,9 @@ fn main() -> anyhow::Result<()> {
             Some(ReviewAction::Accept(args)) => commands::review::run_review_accept(args),
             Some(ReviewAction::Reject(args)) => commands::review::run_review_reject(args),
             Some(ReviewAction::Supersede(args)) => commands::review::run_review_supersede(args),
+            Some(ReviewAction::SupersedePreview(args)) => {
+                commands::review::run_review_supersede_preview(args)
+            }
             Some(ReviewAction::Session(args)) => commands::review::run_review_session(args),
         },
     }

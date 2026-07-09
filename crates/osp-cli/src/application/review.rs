@@ -39,6 +39,12 @@ pub enum ReviewQuery {
     List,
     /// Tek node detayı (id ile — Candidate/Accepted/SupersededAccepted görüntüler).
     Show(ConceptNodeId),
+    /// Rich supersede preview — lineage DAG + compatibility + structural eligibility.
+    /// `osp review supersede-preview <old> <new>` + confirmation yüzeyleri aynı query'yi kullanır.
+    SupersedePreview {
+        superseded: ConceptNodeId,
+        successor: ConceptNodeId,
+    },
 }
 
 /// Mutation review komutları — `--operator` zorunlu, `expected_basis_digest` precondition.
@@ -68,6 +74,8 @@ pub enum ReviewReadOutput {
         node: Option<ReviewNodeDetails>,
         revision: u64,
     },
+    /// Rich supersede preview (lineage DAG + compatibility + structural eligibility).
+    SupersedePreview(SupersedePreviewOutput),
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -98,16 +106,175 @@ pub struct ReviewNodeDetails {
 // ReviewApplicationService
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Supersede confirmation presentation — iki endpoint + digests (R3#2).
-/// CLI adapter seviyesinde iki `Show` sonucunu birleştiren minimal model; **`ReviewQuery`
-/// değildir** (rich lineage/compatibility preview out-of-scope, sonraki PR). One-shot ve
-/// interactive adapter aynı presentation'ı render eder → ayrışma yok.
-#[derive(Debug, Clone)]
-pub struct SupersedePresentation {
-    pub superseded: ReviewNodeDetails,
-    pub successor: ReviewNodeDetails,
-    pub digests: SupersedeDigests,
+// ═══════════════════════════════════════════════════════════════════════════════
+// Rich SupersedePreview — canonical read model (tek model, 3 yüzey render eder)
+//
+// `osp review supersede-preview` standalone query + one-shot TTY confirmation + interactive
+// wizard confirmation aynı `SupersedePreviewOutput` modelini ve tek renderer'ı kullanır
+// → divergence sıfır. HANDOFF "aynı preview render eder" cümlesi doğru kalır.
+//
+// Domain policy ayrımı (divergence mekanik olarak engellenir):
+//   incoming policy      → committed_supersede_incoming_sources (core accessor)
+//   currentness policy   → DecisionStatus::is_current_mainline()
+//   compatibility policy → inspect_supersede_compatibility (core predicate)
+//   cycle policy         → would_create_supersede_cycle (core predicate)
+//   identity equality    → saf observation (kural yok)
+//
+// `structurally_eligible` point-in-time read-only assessment — mutation revalidates both
+// digests + currentness under lock (preview ≠ commit guarantee).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Structural blocker kodu — typed (schema drift'e kapalı). Sıra `ordering_key()` ile
+/// `apply_supersede` structural steps 5–10'a birebir hizalı (freshness/basis/audit hariç).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupersedeBlockerCode {
+    AlreadySuperseded,
+    SupersededNotCurrent,
+    SuccessorNotCurrent,
+    SelfSupersede,
+    IncompatibleKind,
+    IncompatibleFamily,
+    Cycle,
 }
+
+impl SupersedeBlockerCode {
+    /// Structural validation step — `apply_supersede` steps 5–10 ile birebir.
+    /// Freshness/basis/audit (steps 1–4, 11) preview scope'unda DEĞİL (preview operatörün
+    /// expected digest'ini bilmez, sadece current gösterir).
+    pub const fn mutation_step(self) -> u8 {
+        match self {
+            Self::AlreadySuperseded => 5,
+            Self::SupersededNotCurrent => 6,
+            Self::SuccessorNotCurrent => 7,
+            Self::SelfSupersede => 8,
+            Self::IncompatibleKind => 9,
+            Self::IncompatibleFamily => 9,
+            Self::Cycle => 10,
+        }
+    }
+
+    /// Step 9 tie-break (kind < family — deterministic).
+    pub const fn tie_break(self) -> u8 {
+        match self {
+            Self::IncompatibleKind => 0,
+            Self::IncompatibleFamily => 1,
+            _ => 0,
+        }
+    }
+
+    /// Deterministik ordering key — `(mutation_step, tie_break)`.
+    pub const fn ordering_key(self) -> (u8, u8) {
+        (self.mutation_step(), self.tie_break())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeBlocker {
+    pub code: SupersedeBlockerCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeEndpointPreview {
+    pub id: String,
+    pub canonical: String,
+    pub kind: String,
+    pub status: String,
+    pub family: String,
+    pub node_digest_hex: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeLineageNode {
+    pub id: String,
+    pub depth: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeLineageEdge {
+    pub from: String,
+    pub to: String,
+}
+
+/// Truncation nedeni — `Some` ise en az bir committed outgoing edge output'a sığmadı.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineageTruncation {
+    DepthLimit,
+    NodeLimit,
+    Both,
+}
+
+/// Successor outgoing committed Supersedes lineage — bounded DAG (consolidation'da branching).
+/// `depth` = root'tan BFS shortest-path (ilk ziyaret). Closed-output: her edge from/to nodes içinde.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeLineagePreview {
+    pub root: String,
+    pub nodes: Vec<SupersedeLineageNode>,
+    pub edges: Vec<SupersedeLineageEdge>,
+    pub truncation: Option<LineageTruncation>,
+    pub max_depth: usize,
+    pub max_nodes: usize,
+    /// Superseded'a gelen committed edge source'u (INV-C15 ≤1; tek core accessor kaynağı).
+    pub superseded_incoming: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedeCompatibilityView {
+    pub kind_compatible: bool,
+    pub family_compatible: bool,
+    pub cycle_risk: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProposedSupersedeEdge {
+    pub from: String,
+    pub kind: String,
+    pub to: String,
+}
+
+/// Rich supersede preview output — canonical read model.
+/// Tek model, üç yüzey (standalone / TTY confirmation / wizard confirmation) render eder.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SupersedePreviewOutput {
+    pub revision: u64,
+    pub superseded: SupersedeEndpointPreview,
+    pub successor: SupersedeEndpointPreview,
+    pub lineage: SupersedeLineagePreview,
+    pub compatibility: SupersedeCompatibilityView,
+    pub proposed_edge: ProposedSupersedeEdge,
+    /// Point-in-time structural eligibility (mutation revalidates under lock).
+    pub structurally_eligible: bool,
+    /// `blocking_reasons[0]` — store structural steps 5–10'daki ilk engel.
+    /// CLI production path'in ilk hatasıyla aynı olmak ZORUNDA DEĞİL (self/currentness/digest
+    /// precheck'leri store structural sırasına ulaşmadan dönebilir).
+    pub primary_structural_blocker: Option<SupersedeBlockerCode>,
+    /// `ordering_key()` ile sorted — deterministic.
+    pub blocking_reasons: Vec<SupersedeBlocker>,
+}
+
+impl SupersedePreviewOutput {
+    /// İki endpoint'in digest'leri — confirmation mutation'ın `expected` precondition'ı için.
+    /// Point-in-time; mutation lock altında iki-digest recheck yapar (preview ≠ guarantee).
+    /// `node_digest_hex` her zaman bizim `{:016x}` formatımızdan gelir → infallible parse.
+    pub fn digests(&self) -> SupersedeDigests {
+        let superseded = u64::from_str_radix(&self.superseded.node_digest_hex, 16)
+            .map(NodeDigest::from_raw)
+            .expect("preview node_digest_hex is our own {:016x} output");
+        let successor = u64::from_str_radix(&self.successor.node_digest_hex, 16)
+            .map(NodeDigest::from_raw)
+            .expect("preview node_digest_hex is our own {:016x} output");
+        SupersedeDigests {
+            superseded,
+            successor,
+        }
+    }
+}
+
+/// Lineage DAG traversal sınırları (adversarial/deep chain savunması — production sığ).
+const MAX_PREVIEW_LINEAGE_DEPTH: usize = 16;
+const MAX_PREVIEW_LINEAGE_NODES: usize = 128;
 
 /// Review application service — query + mutation. Repository üzerinden persistent
 /// transaction; subcommand ve interactive adapter aynı service'i kullanır.
@@ -120,12 +287,17 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
         Self { repo }
     }
 
-    /// Read-only query (list/show). `--operator` gerekmez.
-    pub fn execute_query(&self, query: ReviewQuery) -> Result<ReviewReadOutput, ReviewError> {
+    /// Read-only store + revision yükler (tek read motoru — List/Show/SupersedePreview).
+    fn read_validated_store(&self) -> Result<(InMemoryAnchorStore, u64), ReviewError> {
         let persisted = self.repo.read()?;
-        let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot.clone())
+        let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot)
             .map_err(|e| ReviewError::Store(e.to_string()))?;
-        let revision = persisted.revision;
+        Ok((store, persisted.revision))
+    }
+
+    /// Read-only query (list/show/supersede-preview). `--operator` gerekmez.
+    pub fn execute_query(&self, query: ReviewQuery) -> Result<ReviewReadOutput, ReviewError> {
+        let (store, revision) = self.read_validated_store()?;
         match query {
             ReviewQuery::List => {
                 let candidates = store
@@ -155,20 +327,15 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
                     // Node freshness digest — tüm statülerde (Candidate/Accepted/SupersededAccepted/Rejected).
                     // Tek source of truth; Candidate review `--basis-digest`, supersede iki endpoint için.
                     let digest = node_digest(&n);
-                    // SupersededAccepted ise successor'u çöz (committed Supersedes edge: successor→superseded).
+                    // SupersededAccepted ise successor'u çöz — core accessor (tek source,
+                    // preview/mutation step 5 ile aynı incoming-edge policy).
                     let superseded_by = if n.decision_status
                         == osp_core::anchoring::DecisionStatus::SupersededAccepted
                     {
                         store
-                            .graph()
-                            .edges()
-                            .find(|e| {
-                                e.to == n.id
-                                    && e.kind == osp_core::anchoring::ConceptEdgeKind::Supersedes
-                                    && e.decision_status
-                                        == osp_core::anchoring::DecisionStatus::Accepted
-                            })
-                            .map(|e| e.from.0.clone())
+                            .committed_supersede_incoming_sources(&n.id)
+                            .ok()
+                            .and_then(|srcs| srcs.into_iter().next().map(|id| id.0))
                     } else {
                         None
                     };
@@ -186,6 +353,28 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
                     revision,
                 })
             }
+            ReviewQuery::SupersedePreview {
+                superseded,
+                successor,
+            } => {
+                let preview = build_supersede_preview(&store, &superseded, &successor, revision)?;
+                Ok(ReviewReadOutput::SupersedePreview(preview))
+            }
+        }
+    }
+
+    /// Rich supersede preview convenience entrypoint — `execute_query`'yi sarmalar (tek read).
+    pub fn execute_supersede_preview(
+        &self,
+        superseded: ConceptNodeId,
+        successor: ConceptNodeId,
+    ) -> Result<SupersedePreviewOutput, ReviewError> {
+        match self.execute_query(ReviewQuery::SupersedePreview {
+            superseded,
+            successor,
+        })? {
+            ReviewReadOutput::SupersedePreview(output) => Ok(output),
+            _ => unreachable!("query/output variant mismatch"),
         }
     }
 
@@ -258,110 +447,270 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
             })
             .map(|(mutation, revision)| PersistedSupersedeOutput { mutation, revision })
     }
-
-    /// Supersede confirmation presentation — iki endpoint + digests (R3#2).
-    /// CLI adapter seviyesinde minimal model; **`ReviewQuery` değildir** (rich lineage/
-    /// compatibility preview out-of-scope). One-shot ve interactive aynı presentation'ı render eder.
-    ///
-    /// **Tek snapshot read** (Review P2.1): tek `repo.read()` → iki endpoint aynı restored
-    /// snapshot'tan → atomik pair consistency (revision retry gerekmez). Asıl freshness
-    /// garantisi commit'teki iki-digest recheck (lock altında).
-    ///
-    /// **Accepted gate** (Review P1.2): her iki endpoint `Accepted` olmalı; değilse
-    /// `EndpointNotCurrent` — operator'e invalid confirmation gösterilmez ("remains current
-    /// Accepted" yalan söylemez). Mutation `mainline_query` kontrolünün yerine geçmez;
-    /// yalnız preview doğruluğu.
-    ///
-    /// **Self-supersede gate** (Review 2.tur P1): `superseded == successor` presentation
-    /// oluşturulmadan reddedilir — aynı node için çelişkili confirmation ("X supersedes X",
-    /// hem SupersededAccepted hem current Accepted) gösterilmez. Mutation'daki early check
-    /// korunur; bu yalnız preview doğruluğu.
-    pub fn load_supersede_presentation(
-        &self,
-        superseded: &ConceptNodeId,
-        successor: &ConceptNodeId,
-    ) -> Result<SupersedePresentation, ReviewError> {
-        if superseded == successor {
-            return Err(ReviewError::SelfSupersede(superseded.0.clone()));
-        }
-        let persisted = self.repo.read()?;
-        let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot.clone())
-            .map_err(|e| ReviewError::Store(e.to_string()))?;
-
-        let old = node_to_details(&store, superseded)?;
-        let new = node_to_details(&store, successor)?;
-
-        // Accepted gate — operator'e invalid confirmation gösterme (P1.2).
-        ensure_current_endpoint(&old, SupersedeEndpoint::Superseded)?;
-        ensure_current_endpoint(&new, SupersedeEndpoint::Successor)?;
-
-        Ok(SupersedePresentation {
-            digests: SupersedeDigests {
-                superseded: parse_hex(&old.node_digest_hex)?,
-                successor: parse_hex(&new.node_digest_hex)?,
-            },
-            superseded: old,
-            successor: new,
-        })
-    }
 }
 
-/// Endpoint'in Accepted (current mainline) olduğunu doğrula (Review P1.2). Supersede iki
-/// Accepted node üzerinde çalışır; presentation invalid endpoint için gösterilmez.
-fn ensure_current_endpoint(
-    node: &ReviewNodeDetails,
-    endpoint: SupersedeEndpoint,
-) -> Result<(), ReviewError> {
-    if node.decision_status != "Accepted" {
-        return Err(ReviewError::EndpointNotCurrent {
-            endpoint,
-            id: node.id.clone(),
-            formatted_status: format_endpoint_status(Some(&node.decision_status)),
+// ═══════════════════════════════════════════════════════════════════════════════
+// build_supersede_preview — canonical preview builder (tek source: core accessor/predicate'lar)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Rich supersede preview üretir. Non-Accepted endpoint'ler blocking_reason olarak raporlanır
+/// (hard error DEĞİL — missing node → NotFound hard error kalır). Self-supersede dahil tüm
+/// ineligible durumlar blocker-bearing preview üretir.
+///
+/// **Tüm domain policy core accessor/predicate'lardan:**
+/// - incoming → `committed_supersede_incoming_sources` (core step 5)
+/// - currentness → `is_current_mainline()` (core step 6-7)
+/// - compatibility → `inspect_supersede_compatibility` (core step 9)
+/// - cycle → `would_create_supersede_cycle` (core step 10; self'de bastırılır)
+fn build_supersede_preview(
+    store: &InMemoryAnchorStore,
+    superseded: &ConceptNodeId,
+    successor: &ConceptNodeId,
+    revision: u64,
+) -> Result<SupersedePreviewOutput, ReviewError> {
+    let sup_node = store
+        .graph()
+        .node(superseded)
+        .ok_or_else(|| ReviewError::NotFound(superseded.0.clone()))?;
+    let suc_node = store
+        .graph()
+        .node(successor)
+        .ok_or_else(|| ReviewError::NotFound(successor.0.clone()))?;
+
+    let self_supersede = superseded == successor;
+
+    // Core accessor/predicate'ler — tek source (divergence mekanik olarak engellenir).
+    let incoming = store
+        .committed_supersede_incoming_sources(superseded)
+        .map_err(|e| ReviewError::Store(e.to_string()))?;
+    let compat = store
+        .inspect_supersede_compatibility(superseded, successor)
+        .map_err(|e| ReviewError::Store(e.to_string()))?;
+    let cycle_risk = if self_supersede {
+        false // self blocker (step 8) cycle'dan (step 10) önce; cycle bastırılır.
+    } else {
+        store
+            .would_create_supersede_cycle(superseded, successor)
+            .map_err(|e| ReviewError::Store(e.to_string()))?
+    };
+
+    // Raw blockers topla (mutation structural steps 5–10 sırasıyla eklenir, sonra sort).
+    let mut blockers: Vec<SupersedeBlocker> = Vec::new();
+    if !incoming.is_empty() {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::AlreadySuperseded,
+            message: format!(
+                "{} is already superseded by {}",
+                superseded.0,
+                incoming[0].0
+            ),
         });
     }
-    Ok(())
-}
+    if !sup_node.decision_status.is_current_mainline() {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::SupersededNotCurrent,
+            message: format!(
+                "superseded endpoint is {:?} (not current Accepted)",
+                sup_node.decision_status
+            ),
+        });
+    }
+    if !suc_node.decision_status.is_current_mainline() {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::SuccessorNotCurrent,
+            message: format!(
+                "successor endpoint is {:?} (not current Accepted)",
+                suc_node.decision_status
+            ),
+        });
+    }
+    if self_supersede {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::SelfSupersede,
+            message: "a node cannot supersede itself".into(),
+        });
+    }
+    if !compat.kind_compatible {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::IncompatibleKind,
+            message: format!(
+                "kind mismatch: superseded={:?}, successor={:?}",
+                sup_node.node_kind, suc_node.node_kind
+            ),
+        });
+    }
+    if !compat.family_compatible {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::IncompatibleFamily,
+            message: format!(
+                "family mismatch: superseded={:?}, successor={:?}",
+                sup_node.position_family, suc_node.position_family
+            ),
+        });
+    }
+    if cycle_risk {
+        blockers.push(SupersedeBlocker {
+            code: SupersedeBlockerCode::Cycle,
+            message: format!(
+                "the proposed edge {} → {} would close an existing cycle",
+                successor.0, superseded.0
+            ),
+        });
+    }
 
-/// Graph node → ReviewNodeDetails (digest + superseded_by çözümü).
-fn node_to_details(
-    store: &InMemoryAnchorStore,
-    id: &ConceptNodeId,
-) -> Result<ReviewNodeDetails, ReviewError> {
-    let n = store
-        .graph()
-        .nodes_iter()
-        .find(|n| &n.id == id)
-        .ok_or_else(|| ReviewError::NotFound(id.0.clone()))?;
-    let digest = node_digest(n);
-    let superseded_by =
-        if n.decision_status == osp_core::anchoring::DecisionStatus::SupersededAccepted {
-            store
-                .graph()
-                .edges()
-                .find(|e| {
-                    e.to == n.id
-                        && e.kind == osp_core::anchoring::ConceptEdgeKind::Supersedes
-                        && e.decision_status == osp_core::anchoring::DecisionStatus::Accepted
-                })
-                .map(|e| e.from.0.clone())
-        } else {
-            None
-        };
-    Ok(ReviewNodeDetails {
-        id: n.id.0.clone(),
-        canonical: n.canonical.clone(),
-        kind: format!("{:?}", n.node_kind),
-        decision_status: format!("{:?}", n.decision_status),
-        node_digest_hex: format!("{:016x}", digest.get()),
-        superseded_by,
+    // Deterministik sıralama — ordering_key (mutation step + tie-break).
+    blockers.sort_by_key(|b| b.code.ordering_key());
+
+    let structurally_eligible = blockers.is_empty();
+    let primary_structural_blocker = blockers.first().map(|b| b.code);
+
+    let superseded_preview = endpoint_preview(sup_node);
+    let successor_preview = endpoint_preview(suc_node);
+
+    // Lineage HER ZAMAN (self dahil) successor'dan üretilir.
+    let lineage = build_successor_lineage(
+        store,
+        successor,
+        &incoming,
+        MAX_PREVIEW_LINEAGE_DEPTH,
+        MAX_PREVIEW_LINEAGE_NODES,
+    );
+
+    Ok(SupersedePreviewOutput {
+        revision,
+        superseded: superseded_preview,
+        successor: successor_preview,
+        lineage,
+        compatibility: SupersedeCompatibilityView {
+            kind_compatible: compat.kind_compatible,
+            family_compatible: compat.family_compatible,
+            cycle_risk,
+        },
+        proposed_edge: ProposedSupersedeEdge {
+            from: successor.0.clone(),
+            kind: "Supersedes".into(),
+            to: superseded.0.clone(),
+        },
+        structurally_eligible,
+        primary_structural_blocker,
+        blocking_reasons: blockers,
     })
 }
 
-/// Hex string → NodeDigest (presentation helper).
-fn parse_hex(hex: &str) -> Result<NodeDigest, ReviewError> {
-    u64::from_str_radix(hex, 16)
-        .map(NodeDigest::from_raw)
-        .map_err(|e| ReviewError::Store(format!("invalid node digest hex: {e}")))
+/// ConceptNode → SupersedeEndpointPreview.
+fn endpoint_preview(node: &osp_core::anchoring::types::ConceptNode) -> SupersedeEndpointPreview {
+    let digest = node_digest(node);
+    SupersedeEndpointPreview {
+        id: node.id.0.clone(),
+        canonical: node.canonical.clone(),
+        kind: format!("{:?}", node.node_kind),
+        status: format!("{:?}", node.decision_status),
+        family: format!("{:?}", node.position_family),
+        node_digest_hex: format!("{:016x}", digest.get()),
+    }
+}
+
+/// Successor outgoing committed Supersedes lineage — bounded DAG (BFS, deterministic).
+///
+/// Closed-output: her edge from/to output nodes içinde. Diamond preservation: target daha önce
+/// görülmüş olsa da edge korunur. Truncation: dahil edilemeyen committed outgoing edge varsa Some.
+fn build_successor_lineage(
+    store: &InMemoryAnchorStore,
+    root: &ConceptNodeId,
+    superseded_incoming_sources: &[ConceptNodeId],
+    max_depth: usize,
+    max_nodes: usize,
+) -> SupersedeLineagePreview {
+    use osp_core::anchoring::{ConceptEdgeKind, DecisionStatus};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+    // Adjacency: from → sorted to set (committed Supersedes outgoing, deterministic).
+    let mut adjacency: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for e in store.graph().edges() {
+        if e.kind == ConceptEdgeKind::Supersedes && e.decision_status == DecisionStatus::Accepted {
+            adjacency
+                .entry(e.from.0.clone())
+                .or_default()
+                .insert(e.to.0.clone());
+        }
+    }
+
+    // BFS: visited yalnız enqueue engeller; edge set target görülmüş olsa da korunur (diamond).
+    let mut nodes: Vec<SupersedeLineageNode> = Vec::new();
+    let mut edges: Vec<SupersedeLineageEdge> = Vec::new();
+    let mut visited: BTreeSet<String> = BTreeSet::new();
+    let mut truncated_by_depth = false;
+    let mut truncated_by_nodes = false;
+
+    let mut queue: VecDeque<(String, usize)> = VecDeque::new();
+    queue.push_back((root.0.clone(), 0));
+    visited.insert(root.0.clone());
+
+    while let Some((current, depth)) = queue.pop_front() {
+        if nodes.len() >= max_nodes {
+            truncated_by_nodes = true;
+            break;
+        }
+        nodes.push(SupersedeLineageNode {
+            id: current.clone(),
+            depth,
+        });
+
+        if depth >= max_depth {
+            // Bu node'un outgoing edge'leri depth limit yüzünden dahil edilemedi.
+            if adjacency.contains_key(&current) {
+                truncated_by_depth = true;
+            }
+            continue;
+        }
+
+        if let Some(targets) = adjacency.get(&current) {
+            for target in targets {
+                // Closed-output invariant: edge ancak her iki ucu output nodes'ta olacaksa eklenir.
+                // target zaten visited (önceki BFS adımda output'a girdi) → edge güvenle ekle.
+                if visited.contains(target) {
+                    edges.push(SupersedeLineageEdge {
+                        from: current.clone(),
+                        to: target.clone(),
+                    });
+                    continue;
+                }
+                // Yeni target — ancak node kapasitesi varsa kabul et (visited + queue'ya).
+                // Kapasite yoksa target output'a girmez → edge de eklenmez (closed-output).
+                if nodes.len() + queue.len() >= max_nodes {
+                    truncated_by_nodes = true;
+                    continue;
+                }
+                visited.insert(target.clone());
+                queue.push_back((target.clone(), depth + 1));
+                edges.push(SupersedeLineageEdge {
+                    from: current.clone(),
+                    to: target.clone(),
+                });
+            }
+        }
+    }
+
+    // Final deterministic sort.
+    nodes.sort_by(|a, b| a.depth.cmp(&b.depth).then(a.id.cmp(&b.id)));
+    edges.sort_by(|a, b| a.from.cmp(&b.from).then(a.to.cmp(&b.to)));
+
+    let truncation = match (truncated_by_depth, truncated_by_nodes) {
+        (true, true) => Some(LineageTruncation::Both),
+        (true, false) => Some(LineageTruncation::DepthLimit),
+        (false, true) => Some(LineageTruncation::NodeLimit),
+        (false, false) => None,
+    };
+
+    SupersedeLineagePreview {
+        root: root.0.clone(),
+        nodes,
+        edges,
+        truncation,
+        max_depth,
+        max_nodes,
+        superseded_incoming: superseded_incoming_sources.first().map(|id| id.0.clone()),
+    }
 }
 
 /// Basis-freshness precondition + session accept/reject (lock altında — yeni TOCTOU yok).
@@ -659,5 +1008,381 @@ mod tests {
             "RuleCandidate:X".into(),
         )));
         assert!(matches!(err, ReviewError::SelfSupersede(ref id) if id == "RuleCandidate:X"));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Rich SupersedePreview builder unit tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    use osp_core::anchoring::review::{
+        OperatorId, PresentedSupersedeBasis, SupersedeSession,
+    };
+    use osp_core::anchoring::types::{ConceptNode, ConceptNodeKind, GraphSeed};
+    use osp_core::anchoring::{DecisionStatus, PositionFamily};
+
+    /// Test yardımcı: iki Accepted node'lu store.
+    fn preview_store_two_accepted() -> InMemoryAnchorStore {
+        let mk = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(mk("RuleCandidate:Old"));
+        seed.rule_candidates.push(mk("RuleCandidate:New"));
+        InMemoryAnchorStore::with_seed(seed)
+    }
+
+    fn supersede_in_place(store: &mut InMemoryAnchorStore, superseded: &str, successor: &str) {
+        let sup = ConceptNodeId(superseded.into());
+        let suc = ConceptNodeId(successor.into());
+        let basis = PresentedSupersedeBasis::compile(store, &sup, &suc).expect("basis");
+        let reason = NonEmptyExplanation::new("t").unwrap();
+        let mut session = SupersedeSession::open_for_operator(OperatorId::new("t"));
+        session.supersede(store, &sup, &suc, basis, reason).expect("supersede");
+    }
+
+    fn accepted_node(id: &str) -> ConceptNode {
+        ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        }
+    }
+
+    /// Mutlu yol: iki Accepted, compatible, no cycle → eligible, no blockers.
+    #[test]
+    fn preview_happy_path_eligible_no_blockers() {
+        let store = preview_store_two_accepted();
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("RuleCandidate:New".into()),
+            1,
+        )
+        .unwrap();
+        assert!(preview.structurally_eligible);
+        assert!(preview.blocking_reasons.is_empty());
+        assert_eq!(preview.primary_structural_blocker, None);
+        assert!(preview.compatibility.kind_compatible);
+        assert!(preview.compatibility.family_compatible);
+        assert!(!preview.compatibility.cycle_risk);
+    }
+
+    /// Self-supersede → SelfSupersede blocker, cycle bastırılır, lineage yine üretilir.
+    #[test]
+    fn preview_self_supersede_blocker_with_lineage() {
+        let store = preview_store_two_accepted();
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            1,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        assert_eq!(
+            preview.primary_structural_blocker,
+            Some(SupersedeBlockerCode::SelfSupersede)
+        );
+        // Self blocker varken cycle_risk false (bastırılır).
+        assert!(!preview.compatibility.cycle_risk);
+        // Lineage yine üretildi (self dahil her durumda).
+        assert_eq!(preview.lineage.root, "RuleCandidate:Old");
+    }
+
+    /// Already-superseded → AlreadySuperseded blocker (multi-blocker; primary).
+    /// INV-C15 kuplajı: incoming → SupersededAccepted → superseded_not_current de tetiklenir.
+    #[test]
+    fn preview_already_superseded_primary_blocker() {
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(accepted_node("RuleCandidate:Old"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:New"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:Newer"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:Old", "RuleCandidate:New"); // New→Old committed
+        // Preview: supersede Old (already superseded) → AlreadySuperseded primary.
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("RuleCandidate:Newer".into()),
+            3,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        // INV-C15 kuplajı: already_superseded (step 5) primary; superseded_not_current (step 6) ek.
+        assert_eq!(
+            preview.primary_structural_blocker,
+            Some(SupersedeBlockerCode::AlreadySuperseded)
+        );
+        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::AlreadySuperseded));
+        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::SupersededNotCurrent));
+        // superseded_incoming accessor'dan beslenir.
+        assert_eq!(
+            preview.lineage.superseded_incoming,
+            Some("RuleCandidate:New".into())
+        );
+    }
+
+    /// Incompatible kind → IncompatibleKind blocker (core predicate).
+    #[test]
+    fn preview_incompatible_kind_blocker() {
+        let mut old = accepted_node("RuleCandidate:Old");
+        old.node_kind = ConceptNodeKind::RuleCandidate;
+        let mut new = accepted_node("Concept:New");
+        new.node_kind = ConceptNodeKind::Concept; // diff kind
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(old);
+        seed.concepts.push(new);
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("Concept:New".into()),
+            1,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        assert_eq!(
+            preview.primary_structural_blocker,
+            Some(SupersedeBlockerCode::IncompatibleKind)
+        );
+        assert!(!preview.compatibility.kind_compatible);
+    }
+
+    /// Incompatible family → IncompatibleFamily blocker (core predicate; seed hard-code → direct store).
+    #[test]
+    fn preview_incompatible_family_blocker() {
+        let mut old = accepted_node("RuleCandidate:Old");
+        old.position_family = PositionFamily::ConceptualIntent;
+        let mut new = accepted_node("RuleCandidate:New");
+        new.position_family = PositionFamily::PhysicalCode; // diff family
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(old);
+        seed.rule_candidates.push(new);
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("RuleCandidate:New".into()),
+            1,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        assert_eq!(
+            preview.primary_structural_blocker,
+            Some(SupersedeBlockerCode::IncompatibleFamily)
+        );
+        assert!(!preview.compatibility.family_compatible);
+    }
+
+    /// Superseded non-Accepted → SupersededNotCurrent blocker.
+    #[test]
+    fn preview_superseded_not_current_blocker() {
+        let mut old = accepted_node("RuleCandidate:Old");
+        old.decision_status = DecisionStatus::Rejected;
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(old);
+        seed.rule_candidates.push(accepted_node("RuleCandidate:New"));
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:Old".into()),
+            &ConceptNodeId("RuleCandidate:New".into()),
+            1,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        assert_eq!(
+            preview.primary_structural_blocker,
+            Some(SupersedeBlockerCode::SupersededNotCurrent)
+        );
+    }
+
+    /// Cycle: existing committed edge → prospektif cycle. A→B committed, preview B→A.
+    /// cycle ek blocker; A artık SupersededAccepted → successor_not_current da tetiklenir.
+    #[test]
+    fn preview_cycle_reports_prospective_cycle() {
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(accepted_node("RuleCandidate:A"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:B"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // committed B→A
+        // Preview: supersede B (target), successor A → proposed A→B; B→A mevcut → cycle.
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:B".into()), // superseded
+            &ConceptNodeId("RuleCandidate:A".into()), // successor (artık SupersededAccepted)
+            2,
+        )
+        .unwrap();
+        assert!(!preview.structurally_eligible);
+        assert!(preview.compatibility.cycle_risk);
+        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::Cycle));
+    }
+
+    /// Lineage chain: supersede(A, B) → B→A committed. Preview successor=B → [B@0, A@1].
+    #[test]
+    fn preview_lineage_chain() {
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(accepted_node("RuleCandidate:A"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:B"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // B→A
+        // Preview successor=B (outgoing chain [B, A]); superseded=A ineligible ama lineage gösterilir.
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:A".into()),
+            &ConceptNodeId("RuleCandidate:B".into()),
+            2,
+        )
+        .unwrap();
+        assert_eq!(preview.lineage.root, "RuleCandidate:B");
+        let ids: Vec<_> = preview.lineage.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(ids, vec!["RuleCandidate:B", "RuleCandidate:A"]);
+    }
+
+    /// Lineage consolidation: C→A, C→B (bir successor iki supersede). Branching preserved.
+    #[test]
+    fn preview_lineage_consolidation() {
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(accepted_node("RuleCandidate:A"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:B"));
+        seed.rule_candidates.push(accepted_node("RuleCandidate:C"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:C"); // C→A
+        supersede_in_place(&mut store, "RuleCandidate:B", "RuleCandidate:C"); // C→B
+        // Preview successor=C → outgoing [A, B]; superseded=A ineligible ama lineage gösterilir.
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:A".into()),
+            &ConceptNodeId("RuleCandidate:C".into()),
+            3,
+        )
+        .unwrap();
+        assert_eq!(preview.lineage.root, "RuleCandidate:C");
+        let node_ids: Vec<_> = preview.lineage.nodes.iter().map(|n| n.id.clone()).collect();
+        assert!(node_ids.contains(&"RuleCandidate:C".to_string()));
+        assert!(node_ids.contains(&"RuleCandidate:A".to_string()));
+        assert!(node_ids.contains(&"RuleCandidate:B".to_string()));
+        // C→A, C→B edges preserved (branching).
+        let edge_pairs: Vec<_> = preview
+            .lineage
+            .edges
+            .iter()
+            .map(|e| (e.from.clone(), e.to.clone()))
+            .collect();
+        assert!(edge_pairs.contains(&("RuleCandidate:C".into(), "RuleCandidate:A".into())));
+        assert!(edge_pairs.contains(&("RuleCandidate:C".into(), "RuleCandidate:B".into())));
+    }
+
+    /// Missing endpoint → NotFound hard error.
+    #[test]
+    fn preview_missing_endpoint_not_found() {
+        let store = preview_store_two_accepted();
+        let err = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:MISSING".into()),
+            &ConceptNodeId("RuleCandidate:New".into()),
+            1,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReviewError::NotFound(_)));
+    }
+
+    /// Node-limit closed-output regression (Review P2-a): node cap aşımında excluded target'a
+    /// edge kalmaz. Küçük max_nodes (3) ile 4-node chain — 4. node excluded, ona edge yok.
+    #[test]
+    fn preview_lineage_node_limit_excludes_target_edges() {
+        // Chain: N0 ← N1 ← N2 ← N3 (N1→N0, N2→N1, N3→N2 committed). Successor=N3.
+        // max_nodes=3 → N3@0, N2@1, N1@2 dahil; N0 excluded. N1→N0 edge'inin de çıkarılması gerek.
+        let mk = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(mk("RuleCandidate:N0"));
+        seed.rule_candidates.push(mk("RuleCandidate:N1"));
+        seed.rule_candidates.push(mk("RuleCandidate:N2"));
+        seed.rule_candidates.push(mk("RuleCandidate:N3"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:N0", "RuleCandidate:N1"); // N1→N0
+        supersede_in_place(&mut store, "RuleCandidate:N1", "RuleCandidate:N2"); // N2→N1
+        supersede_in_place(&mut store, "RuleCandidate:N2", "RuleCandidate:N3"); // N3→N2
+        let lineage = build_successor_lineage(
+            &store,
+            &ConceptNodeId("RuleCandidate:N3".into()),
+            &[],
+            16,
+            3, // max_nodes — N0'u exclude etmek için
+        );
+        assert_eq!(lineage.nodes.len(), 3, "node cap = 3 → exactly 3 nodes");
+        assert_eq!(lineage.truncation, Some(LineageTruncation::NodeLimit));
+        // Closed-output: excluded N0'a hiçbir edge.
+        let node_ids: std::collections::BTreeSet<String> =
+            lineage.nodes.iter().map(|n| n.id.clone()).collect();
+        assert!(!node_ids.contains("RuleCandidate:N0"), "N0 must be excluded");
+        for e in &lineage.edges {
+            assert!(
+                node_ids.contains(&e.from) && node_ids.contains(&e.to),
+                "closed-output violation at node limit: edge {} → {} has excluded endpoint",
+                e.from,
+                e.to
+            );
+        }
+    }
+
+    /// Closed-output invariant: lineage DAG'deki her edge from/to nodes içinde.
+    /// INV-C15 altında diamond (bir node'a iki incoming) validated snapshot'ta kurulamaz
+    /// (her superseded node ≤1 incoming committed edge); bu test closed-output'u chain +
+    /// consolidation ile doğrular. Builder invalid/direct-store'da da invariant'ı korur.
+    #[test]
+    fn preview_lineage_closed_output_invariant() {
+        // Consolidation: C→A, C→B (successor outgoing branching). Validated INV-C15 altında legal.
+        let mk = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(mk("RuleCandidate:A"));
+        seed.rule_candidates.push(mk("RuleCandidate:B"));
+        seed.rule_candidates.push(mk("RuleCandidate:C"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:C"); // C→A
+        supersede_in_place(&mut store, "RuleCandidate:B", "RuleCandidate:C"); // C→B
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:A".into()),
+            &ConceptNodeId("RuleCandidate:C".into()),
+            3,
+        )
+        .unwrap();
+        assert_eq!(preview.lineage.root, "RuleCandidate:C");
+        // Closed-output: her edge from/to nodes içinde.
+        let node_ids: std::collections::BTreeSet<String> =
+            preview.lineage.nodes.iter().map(|n| n.id.clone()).collect();
+        assert!(!preview.lineage.edges.is_empty(), "expected lineage edges");
+        for e in &preview.lineage.edges {
+            assert!(
+                node_ids.contains(&e.from) && node_ids.contains(&e.to),
+                "closed-output violation: edge {} → {} endpoint not in nodes",
+                e.from,
+                e.to
+            );
+        }
     }
 }

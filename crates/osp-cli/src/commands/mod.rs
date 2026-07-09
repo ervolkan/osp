@@ -12,6 +12,7 @@ use osp_analyzer::pipeline::analyze_repo_with_config;
 
 pub mod graph;
 pub mod review;
+pub(crate) mod supersede_preview_render;
 
 /// Output format (text/json).
 #[derive(Debug, Clone, PartialEq, Eq)]

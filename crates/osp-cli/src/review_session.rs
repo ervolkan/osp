@@ -21,7 +21,7 @@
 //! ```
 //! Reason basis'ten önce sorulmaz — aksi halde operator görmemiş basis'e gerekçe yazmış olur.
 //!
-//! v1 minimal: list/show/accept/reject/quit. v2: dialoguer/rustyline, fuzzy, renk.
+//! v1 minimal: list/show/accept/reject/supersede/quit. v2: dialoguer/rustyline, fuzzy, renk.
 
 use std::io::{BufRead, Write};
 
@@ -203,7 +203,9 @@ pub fn run_interactive<R: BufRead, W: Write>(
                         continue;
                     }
                 };
-                run_informed_supersede(&service, input, output, &old, &new, &operator);
+                if let Err(e) = run_informed_supersede(&service, input, output, &old, &new, &operator) {
+                    writeln!(output, "✗ preview render failed: {e}").ok();
+                }
             }
             other => {
                 writeln!(
@@ -331,8 +333,10 @@ fn run_informed_mutation<R: BufRead, W: Write>(
     let _ = canonical; // canonical gösterildi; unused uyarısını bastır.
 }
 
-/// Interactive informed-supersede: presentation göster → confirm → reason → mutation.
-/// İki endpoint Accepted olmalı; yön-açık metin + endpoint-specific stale mesajları.
+/// Interactive informed-supersede: rich preview göster → confirm → reason → mutation.
+/// Non-current endpoint'ler hard error değil blocker-bearing preview (structurally_eligible=false →
+/// prompt yok). Informed I/O zinciri fail-closed: render + confirmation/reason prompt write/flush
+/// `?` ile yayılır (hata yutulmaz → mutation yürümez).
 fn run_informed_supersede<R: BufRead, W: Write>(
     service: &ReviewApplicationService<FileReviewStore>,
     input: &mut R,
@@ -340,74 +344,60 @@ fn run_informed_supersede<R: BufRead, W: Write>(
     old: &str,
     new: &str,
     operator: &OperatorId,
-) {
+) -> std::io::Result<()> {
+    use crate::commands::supersede_preview_render::render_supersede_preview_text;
     use crate::errors::SupersedeCommand;
 
-    // (1) Presentation: iki endpoint + revision + digests.
-    let presentation = match service
-        .load_supersede_presentation(&ConceptNodeId(old.into()), &ConceptNodeId(new.into()))
+    // (1) Rich preview (tek canonical model — standalone query ile aynı).
+    let preview = match service
+        .execute_supersede_preview(ConceptNodeId(old.into()), ConceptNodeId(new.into()))
     {
         Ok(p) => p,
         Err(e) => {
             writeln!(output, "✗ {e}").ok();
-            return;
+            return Ok(());
         }
     };
 
-    // (2) Yön-açık confirmation.
-    writeln!(
-        output,
-        "  '{}' supersedes '{}'",
-        presentation.successor.id, presentation.superseded.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "    {} → SupersededAccepted (no longer current)",
-        presentation.superseded.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "    {} → current Accepted",
-        presentation.successor.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "  Superseded digest: {}  |  Successor digest: {}",
-        presentation.superseded.node_digest_hex, presentation.successor.node_digest_hex
-    )
-    .ok();
-    write!(output, "  Apply this exact supersession? [y/N] ").ok();
-    output.flush().ok();
+    // (2) Canonical renderer (body only) — standalone ile aynı çıktı.
+    // Render hatası informed-basis garantisini kırar (preview eksik → confirmation/mutation
+    // devam edemez) — .ok() ile yutma, ? ile yay (Review P1-c).
+    render_supersede_preview_text(output, &preview)?;
+
+    // ineligible → confirmation prompt yok, session'a dön.
+    if !preview.structurally_eligible {
+        return Ok(());
+    }
+
+    write!(output, "  Apply this exact supersession? [y/N] ")?;
+    output.flush()?;
     let mut confirm = String::new();
     if input.read_line(&mut confirm).unwrap_or(0) == 0 {
-        return;
+        return Ok(());
     }
     if confirm.trim().to_lowercase() != "y" && confirm.trim().to_lowercase() != "yes" {
         writeln!(output, "  aborted by operator").ok();
-        return;
+        return Ok(());
     }
 
     // (3) Reason.
-    write!(output, "  Reason: ").ok();
-    output.flush().ok();
+    write!(output, "  Reason: ")?;
+    output.flush()?;
     let mut reason = String::new();
     if input.read_line(&mut reason).unwrap_or(0) == 0 {
-        return;
+        return Ok(());
     }
     let reason = reason.trim().to_string();
     if reason.is_empty() {
         writeln!(output, "✗ reason cannot be empty").ok();
-        return;
+        return Ok(());
     }
 
-    // (4) Mutation — gösterilen presentation'ın digest'leri ile (lock altında recheck).
+    // (4) Mutation — gösterilen preview'ın digest'leri ile (lock altında recheck).
     let command = SupersedeCommand {
         superseded: ConceptNodeId(old.into()),
         successor: ConceptNodeId(new.into()),
-        expected: presentation.digests,
+        expected: preview.digests(),
         reason,
     };
     match service.execute_supersede(command, operator.clone()) {
@@ -440,6 +430,7 @@ fn run_informed_supersede<R: BufRead, W: Write>(
             writeln!(output, "✗ {e}").ok();
         }
     }
+    Ok(())
 }
 
 /// Node'un basis'ini göster ve (digest, canonical) döner (Candidate değilse None).
@@ -605,5 +596,149 @@ mod tests {
         assert_eq!(op, "prompted-op");
         let out = String::from_utf8(output).unwrap();
         assert!(out.contains("Operator identity:"), "prompt shown: {out}");
+    }
+
+    /// Failing-writer: render hatası informed-basis garantisini korur — confirmation/reason/
+    /// mutation adımlarına geçilmez (Review P1-c). run_informed_supersede Err döner.
+    use std::io::{self, Write};
+    /// Writer that fails after `limit` bytes (simulates broken pipe / full buffer).
+    struct FailingWriter {
+        written: usize,
+        limit: usize,
+    }
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.written >= self.limit {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "writer failed"));
+            }
+            let n = std::cmp::min(buf.len(), self.limit - self.written);
+            self.written += n;
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// İki Accepted node'lu store (supersede için) — review_session test yardımcısı.
+    fn setup_two_accepted_store(dir: &std::path::Path) -> std::path::PathBuf {
+        use crate::store_io::{write_persisted_store, PersistedStore};
+        use osp_core::anchoring::store::InMemoryAnchorStore;
+        use osp_core::anchoring::types::{ConceptNode, ConceptNodeId, ConceptNodeKind, GraphSeed};
+        use osp_core::anchoring::{DecisionStatus, PositionFamily};
+        let mk = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(mk("RuleCandidate:Old"));
+        seed.rule_candidates.push(mk("RuleCandidate:New"));
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let path = dir.join("store2.json");
+        write_persisted_store(&path, &PersistedStore::from_snapshot(store.export_snapshot()))
+            .unwrap();
+        path
+    }
+
+    #[test]
+    fn supersede_render_failure_aborts_mutation() {
+        let dir = tempdir().unwrap();
+        let path = setup_two_accepted_store(dir.path());
+        let repo = crate::application::repository::FileReviewStore::new(&path);
+        let service = ReviewApplicationService::new(repo);
+        let mut input = Cursor::new(b"y\nreason\n"); // confirmation + reason (asla okunmamalı)
+        let mut output = FailingWriter { written: 0, limit: 5 }; // render çok erken fail
+        let result = run_informed_supersede(
+            &service,
+            &mut input,
+            &mut output,
+            "RuleCandidate:Old",
+            "RuleCandidate:New",
+            &OperatorId::new("op"),
+        );
+        // Render hatası ? ile yayılır → Err döner; confirmation/reason/mutation yürümez.
+        assert!(result.is_err(), "render failure must propagate Err");
+        // Revision unchanged — mutation gerçekleşmedi.
+        let persisted = crate::store_io::read_persisted_store(&path).unwrap();
+        assert_eq!(persisted.revision, 0, "mutation must not run after render failure");
+    }
+
+    /// Content-aware stage writer: yazılan içerikte `trigger` byte dizisi geçtikten SONRA
+    /// fail eder. Byte-offset değil — gerçekten hedef prompt render edildikten sonra kırılır,
+    /// böylece test adı/iddia edilen stage ile çalışan branch birebir eşleşir (Review P3).
+    /// Buffer taşımalı write'larda `windows` ile parça eşleşmesi arar (split prompt güvenli).
+    struct StageFailingWriter {
+        sink: Vec<u8>,
+        trigger: &'static [u8],
+        triggered: bool,
+    }
+    impl Write for StageFailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.sink.extend_from_slice(buf);
+            if self.sink.windows(self.trigger.len()).any(|w| w == self.trigger) {
+                self.triggered = true;
+            }
+            if self.triggered {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage writer failed"));
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            if self.triggered {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage flush failed"));
+            }
+            Ok(())
+        }
+    }
+
+    /// Helper: content-aware stage failure testi — trigger byte dizisi render edildikten sonra
+    /// fail, mutation yok. `trigger` = hedef prompt string'i (confirmation/reason).
+    fn run_stage_failure_test(trigger: &'static [u8]) -> (std::io::Result<()>, u64) {
+        let dir = tempdir().unwrap();
+        let path = setup_two_accepted_store(dir.path());
+        let repo = crate::application::repository::FileReviewStore::new(&path);
+        let service = ReviewApplicationService::new(repo);
+        let mut input = Cursor::new(b"y\ngood reason\n"); // asla tam okunmamalı
+        let mut output = StageFailingWriter {
+            sink: Vec::new(),
+            trigger,
+            triggered: false,
+        };
+        let result = run_informed_supersede(
+            &service,
+            &mut input,
+            &mut output,
+            "RuleCandidate:Old",
+            "RuleCandidate:New",
+            &OperatorId::new("op"),
+        );
+        let revision = crate::store_io::read_persisted_store(&path).unwrap().revision;
+        (result, revision)
+    }
+
+    /// Confirmation prompt failure: preview body render edildi, confirmation prompt yazımı başarısız
+    /// → Err, confirmation/reason tüketilmedi, revision unchanged (Review P1).
+    /// Content-aware writer "Apply this exact supersession" trigger'ı gördükten sonra fail eder
+    /// — gerçekten confirmation stage'de kırılır (byte-offset fragility yok, Review P3).
+    #[test]
+    fn supersede_confirmation_prompt_failure_aborts_mutation() {
+        let (result, revision) = run_stage_failure_test(b"Apply this exact supersession");
+        assert!(result.is_err(), "confirmation prompt failure must propagate Err");
+        assert_eq!(revision, 0, "mutation must not run after confirmation prompt failure");
+    }
+
+    /// Reason prompt failure: preview + confirmation prompt başarılı, operator "y" verdi,
+    /// reason prompt yazımı başarısız → Err, reason/mutation uygulanmadı (Review P1).
+    /// Content-aware writer yalnız "Reason:" trigger'ı gördükten sonra fail eder — confirmation
+    /// stage'i tamamlanır, gerçekten reason stage'de kırılır (byte-offset fragility yok, Review P3).
+    #[test]
+    fn supersede_reason_prompt_failure_aborts_mutation() {
+        let (result, revision) = run_stage_failure_test(b"  Reason:");
+        assert!(result.is_err(), "reason prompt failure must propagate Err");
+        assert_eq!(revision, 0, "mutation must not run after reason prompt failure");
     }
 }

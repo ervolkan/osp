@@ -52,3 +52,4 @@ docs/llm-apikey.md
 # Spike repo'ları (clone — workspace dışında P:\repos önerilir, ama içeride de olabilir)
 repos/
 /repo/
+.zcode/

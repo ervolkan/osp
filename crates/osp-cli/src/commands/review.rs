@@ -117,6 +117,21 @@ pub struct ReviewSupersedeArgs {
     pub format: String,
 }
 
+/// `osp review supersede-preview <old> <new>` — read-only rich preview query.
+/// Lineage DAG + compatibility + structural eligibility. operator/reason/digest'siz.
+#[derive(Args, Debug)]
+pub struct ReviewSupersedePreviewArgs {
+    /// Superseded node ID (SupersededAccepted olacak).
+    pub superseded: String,
+    /// Successor node ID (current Accepted kalır).
+    pub successor: String,
+    #[arg(long, default_value = ".osp/anchor-store.json")]
+    pub store: PathBuf,
+    /// Çıktı formatı (text/json) — query automation contract.
+    #[arg(long, default_value = "text")]
+    pub format: String,
+}
+
 /// `osp review list` handler.
 pub fn run_review_list(args: ReviewListArgs) -> anyhow::Result<()> {
     let repo = FileReviewStore::new(&args.store);
@@ -210,8 +225,8 @@ pub fn run_review_reject(args: ReviewRejectArgs) -> anyhow::Result<()> {
 
 /// `osp review supersede <old> <new>` handler — iki-endpoint supersession.
 ///
-/// Confirmation: TTY'de iki endpoint yön-açık göster + `[y/N]`; non-TTY/`--yes` →
-/// `--superseded-digest` + `--successor-digest` zorunlu (R3#7).
+/// Confirmation: TTY'de rich preview render et + `[y/N]`; non-TTY/`--yes` →
+/// `--superseded-digest` + `--successor-digest` zorunlu (R3#7). ineligible → exit non-zero.
 pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
     let operator = resolve_operator(args.operator.clone())?;
     let operator_id = OperatorId::new(operator);
@@ -221,12 +236,12 @@ pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
         // Non-interactive: iki digest zorunlu (R3#7).
         let sup = args.superseded_digest.clone().ok_or_else(|| {
             anyhow::anyhow!(
-                "--superseded-digest <hex> required for non-interactive supersede (run `osp review show <old>`)"
+                "--superseded-digest <hex> required for non-interactive supersede (run `osp review supersede-preview <old> <new>`)"
             )
         })?;
         let suc = args.successor_digest.clone().ok_or_else(|| {
             anyhow::anyhow!(
-                "--successor-digest <hex> required for non-interactive supersede (run `osp review show <new>`)"
+                "--successor-digest <hex> required for non-interactive supersede (run `osp review supersede-preview <old> <new>`)"
             )
         })?;
         SupersedeDigests {
@@ -234,8 +249,16 @@ pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
             successor: parse_digest_hex("--successor-digest", &suc)?,
         }
     } else {
-        // TTY: iki endpoint göster + onaylat. Digest'leri gösterilen presentation'dan al.
-        confirm_with_supersede(&args)?
+        // TTY: rich preview render et + onaylat. ineligible/aborted → exit non-zero.
+        match confirm_with_supersede(&args, &args.reason)? {
+            SupersedeConfirmationOutcome::Confirmed(d) => d,
+            SupersedeConfirmationOutcome::Ineligible => {
+                anyhow::bail!("supersession is not structurally eligible");
+            }
+            SupersedeConfirmationOutcome::Aborted => {
+                anyhow::bail!("aborted by operator");
+            }
+        }
     };
 
     let command = SupersedeCommand {
@@ -266,56 +289,74 @@ pub fn run_review_supersede(args: ReviewSupersedeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// TTY'de iki endpoint göster + onaylat (yön-açık). Gösterilen presentation'ın digest'lerini döner.
-fn confirm_with_supersede(args: &ReviewSupersedeArgs) -> Result<SupersedeDigests, anyhow::Error> {
+/// `osp review supersede-preview <old> <new>` handler — read-only rich preview query.
+/// ineligible dahil tüm durumlar exit 0 (başarılı query). `--format json` otomasyon contract.
+pub fn run_review_supersede_preview(args: ReviewSupersedePreviewArgs) -> anyhow::Result<()> {
     let repo = FileReviewStore::new(&args.store);
     let service = ReviewApplicationService::new(repo);
-    let presentation = service
-        .load_supersede_presentation(
-            &ConceptNodeId(args.superseded.clone()),
-            &ConceptNodeId(args.successor.clone()),
+    let preview = service
+        .execute_supersede_preview(
+            ConceptNodeId(args.superseded.clone()),
+            ConceptNodeId(args.successor.clone()),
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Yön-açık metin (R1#6/R2-R1) — edge yönü CLI arg sırasının TERSİ: successor→superseded.
-    println!("Supersession decision");
-    println!();
-    println!(
-        "  '{}' supersedes '{}'",
-        presentation.successor.id, presentation.superseded.id
-    );
-    println!(
-        "    '{}' will become SupersededAccepted (retains provenance, no longer current)",
-        presentation.superseded.id
-    );
-    println!(
-        "    '{}' remains current Accepted",
-        presentation.successor.id
-    );
-    println!("  Committed graph edge: successor --Supersedes--> superseded");
-    println!();
-    println!(
-        "  Superseded: {}  Status: {}  Digest: {}",
-        presentation.superseded.id,
-        presentation.superseded.decision_status,
-        presentation.superseded.node_digest_hex
-    );
-    println!(
-        "  Successor:  {}  Status: {}  Digest: {}",
-        presentation.successor.id,
-        presentation.successor.decision_status,
-        presentation.successor.node_digest_hex
-    );
-    println!("  Reason: {}", args.reason);
+    let format = OutputFormat::from_str(&args.format);
+    if format == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&preview)?);
+    } else {
+        let mut stdout = std::io::stdout();
+        crate::commands::supersede_preview_render::render_supersede_preview_text(&mut stdout, &preview)?;
+    }
+    Ok(())
+}
+
+/// Confirmation outcome — ineligible/aborted/confirmed ayrımı (exit-code sözleşmesi).
+pub(crate) enum SupersedeConfirmationOutcome {
+    /// Operator confirmed; gördüğü preview'ın digest'leri ile mutate edilecek.
+    Confirmed(SupersedeDigests),
+    /// Preview üretildi ama `structurally_eligible: false` — confirmation prompt yok.
+    Ineligible,
+    /// Operator `[y/N]`'de N verdi.
+    Aborted,
+}
+
+/// TTY'de rich preview render et + onaylat. ineligible ise prompt göstermeden Ineligible döner.
+/// `SupersedePresentation` yerine tek canonical `SupersedePreviewOutput` (tek renderer, 3 yüzey).
+fn confirm_with_supersede(
+    args: &ReviewSupersedeArgs,
+    reason: &str,
+) -> Result<SupersedeConfirmationOutcome, anyhow::Error> {
+    use crate::commands::supersede_preview_render::render_supersede_preview_text;
+
+    let repo = FileReviewStore::new(&args.store);
+    let service = ReviewApplicationService::new(repo);
+    let preview = service
+        .execute_supersede_preview(
+            ConceptNodeId(args.superseded.clone()),
+            ConceptNodeId(args.successor.clone()),
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Canonical renderer (body only).
+    let mut stdout = std::io::stdout();
+    render_supersede_preview_text(&mut stdout, &preview)?;
+    println!("  Reason: {reason}");
+
+    // ineligible → confirmation prompt yok.
+    if !preview.structurally_eligible {
+        return Ok(SupersedeConfirmationOutcome::Ineligible);
+    }
+
     print!("  Apply this exact supersession? [y/N] ");
     std::io::stdout().flush()?;
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
     let input = input.trim().to_lowercase();
     if input != "y" && input != "yes" {
-        anyhow::bail!("aborted by operator");
+        return Ok(SupersedeConfirmationOutcome::Aborted);
     }
-    Ok(presentation.digests)
+    Ok(SupersedeConfirmationOutcome::Confirmed(preview.digests()))
 }
 
 /// Ortak mutation handler (accept/reject). Confirmation modeli (R1#2).

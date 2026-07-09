@@ -847,19 +847,23 @@ fn supersede_self_presentation_gate() {
         .stdout
         .clone();
     let out = String::from_utf8(output).unwrap();
-    // self-supersede forbidden mesajı gösterilir.
+    // Rich preview render edilir — self-supersede blocker gösterilir (tek canonical model).
     assert!(
-        out.contains("self-supersede"),
-        "expected self-supersede msg: {out}"
+        out.contains("Self supersede"),
+        "expected self-supersede blocker in preview: {out}"
     );
-    // Çelişkili confirmation gösterilmez.
+    assert!(
+        out.contains("Both endpoint IDs are identical"),
+        "expected self-supersede operator note: {out}"
+    );
+    // ineligible → confirmation prompt gösterilmez.
     assert!(
         !out.contains("Apply this exact supersession?"),
-        "confirmation must NOT show for self-supersede: {out}"
+        "confirmation must NOT show for ineligible (self) supersede: {out}"
     );
     assert!(
         !out.contains("Reason:"),
-        "reason must NOT be asked for self-supersede: {out}"
+        "reason must NOT be asked for ineligible (self) supersede: {out}"
     );
     // Revision unchanged.
     Command::cargo_bin("osp")
