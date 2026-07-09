@@ -667,37 +667,47 @@ mod tests {
         assert_eq!(persisted.revision, 0, "mutation must not run after render failure");
     }
 
-    /// Stage-aware writer: preview body tamamlandıktan sonra belirli prompt'ta fail eder.
-    /// Preview body render'ı (ilk write'lar) serbest; hedef prompt'ta BrokenPipe.
+    /// Content-aware stage writer: yazılan içerikte `trigger` byte dizisi geçtikten SONRA
+    /// fail eder. Byte-offset değil — gerçekten hedef prompt render edildikten sonra kırılır,
+    /// böylece test adı/iddia edilen stage ile çalışan branch birebir eşleşir (Review P3).
+    /// Buffer taşımalı write'larda `windows` ile parça eşleşmesi arar (split prompt güvenli).
     struct StageFailingWriter {
-        written: usize,
-        fail_at: usize, // byte offset where failure begins
+        sink: Vec<u8>,
+        trigger: &'static [u8],
+        triggered: bool,
     }
     impl Write for StageFailingWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            if self.written >= self.fail_at {
+            self.sink.extend_from_slice(buf);
+            if self.sink.windows(self.trigger.len()).any(|w| w == self.trigger) {
+                self.triggered = true;
+            }
+            if self.triggered {
                 return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage writer failed"));
             }
-            let n = std::cmp::min(buf.len(), self.fail_at - self.written);
-            self.written += n;
-            Ok(n)
+            Ok(buf.len())
         }
         fn flush(&mut self) -> io::Result<()> {
-            if self.written >= self.fail_at {
+            if self.triggered {
                 return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage flush failed"));
             }
             Ok(())
         }
     }
 
-    /// Helper: stage failure testi — preview render'ı tamam, hedef prompt'ta fail, mutation yok.
-    fn run_stage_failure_test(fail_at: usize) -> (std::io::Result<()>, u64) {
+    /// Helper: content-aware stage failure testi — trigger byte dizisi render edildikten sonra
+    /// fail, mutation yok. `trigger` = hedef prompt string'i (confirmation/reason).
+    fn run_stage_failure_test(trigger: &'static [u8]) -> (std::io::Result<()>, u64) {
         let dir = tempdir().unwrap();
         let path = setup_two_accepted_store(dir.path());
         let repo = crate::application::repository::FileReviewStore::new(&path);
         let service = ReviewApplicationService::new(repo);
         let mut input = Cursor::new(b"y\ngood reason\n"); // asla tam okunmamalı
-        let mut output = StageFailingWriter { written: 0, fail_at };
+        let mut output = StageFailingWriter {
+            sink: Vec::new(),
+            trigger,
+            triggered: false,
+        };
         let result = run_informed_supersede(
             &service,
             &mut input,
@@ -710,55 +720,24 @@ mod tests {
         (result, revision)
     }
 
-    /// Confirmation prompt failure: preview body render edildi, confirmation prompt yazımı/flush
-    /// başarısız → Err, confirmation/reason tüketilmedi, revision unchanged (Review P1).
+    /// Confirmation prompt failure: preview body render edildi, confirmation prompt yazımı başarısız
+    /// → Err, confirmation/reason tüketilmedi, revision unchanged (Review P1).
+    /// Content-aware writer "Apply this exact supersession" trigger'ı gördükten sonra fail eder
+    /// — gerçekten confirmation stage'de kırılır (byte-offset fragility yok, Review P3).
     #[test]
     fn supersede_confirmation_prompt_failure_aborts_mutation() {
-        // Preview body'yı tamamen yaz, confirmation prompt'ta fail. fail_at = preview body uzunluğu.
-        // Önce preview body boyutunu ölç (tam başarılı render ile).
-        let dir = tempdir().unwrap();
-        let path = setup_two_accepted_store(dir.path());
-        let repo = crate::application::repository::FileReviewStore::new(&path);
-        let service = ReviewApplicationService::new(repo);
-        let mut full_output = Vec::new();
-        // Preview body render'ı (eligibility=true, eligible store) — boyutu ölç.
-        let preview = service
-            .execute_supersede_preview(
-                ConceptNodeId("RuleCandidate:Old".into()),
-                ConceptNodeId("RuleCandidate:New".into()),
-            )
-            .unwrap();
-        use crate::commands::supersede_preview_render::render_supersede_preview_text;
-        render_supersede_preview_text(&mut full_output, &preview).unwrap();
-        let preview_len = full_output.len();
-        drop(service);
-        // Şimdi confirmation prompt'ta fail et (fail_at = preview_len).
-        let (result, revision) = run_stage_failure_test(preview_len);
+        let (result, revision) = run_stage_failure_test(b"Apply this exact supersession");
         assert!(result.is_err(), "confirmation prompt failure must propagate Err");
         assert_eq!(revision, 0, "mutation must not run after confirmation prompt failure");
     }
 
     /// Reason prompt failure: preview + confirmation prompt başarılı, operator "y" verdi,
-    /// reason prompt yazımı/flush başarısız → Err, reason/mutation uygulanmadı (Review P1).
+    /// reason prompt yazımı başarısız → Err, reason/mutation uygulanmadı (Review P1).
+    /// Content-aware writer yalnız "Reason:" trigger'ı gördükten sonra fail eder — confirmation
+    /// stage'i tamamlanır, gerçekten reason stage'de kırılır (byte-offset fragility yok, Review P3).
     #[test]
     fn supersede_reason_prompt_failure_aborts_mutation() {
-        // fail_at = preview_len + confirmation prompt uzunluğu (~34 byte "  Apply this exact supersession? [y/N] ").
-        let dir = tempdir().unwrap();
-        let path = setup_two_accepted_store(dir.path());
-        let repo = crate::application::repository::FileReviewStore::new(&path);
-        let service = ReviewApplicationService::new(repo);
-        let mut full_output = Vec::new();
-        let preview = service
-            .execute_supersede_preview(
-                ConceptNodeId("RuleCandidate:Old".into()),
-                ConceptNodeId("RuleCandidate:New".into()),
-            )
-            .unwrap();
-        use crate::commands::supersede_preview_render::render_supersede_preview_text;
-        render_supersede_preview_text(&mut full_output, &preview).unwrap();
-        let prompt_len = full_output.len() + "  Apply this exact supersession? [y/N] ".len();
-        drop(service);
-        let (result, revision) = run_stage_failure_test(prompt_len);
+        let (result, revision) = run_stage_failure_test(b"  Reason:");
         assert!(result.is_err(), "reason prompt failure must propagate Err");
         assert_eq!(revision, 0, "mutation must not run after reason prompt failure");
     }
