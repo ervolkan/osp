@@ -12,6 +12,7 @@
 use clap::{Parser, Subcommand};
 
 mod application;
+mod canonical_identity;
 mod commands;
 mod errors;
 mod mock_llm;
