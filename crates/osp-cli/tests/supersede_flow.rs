@@ -243,6 +243,13 @@ fn supersede_swapped_digests_rejected() {
         ])
         .assert()
         .failure();
+    // T1 atomicity: store unchanged — revision aynı, statuses hâlâ Accepted.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args(["graph", "status", "--store", store.to_str().unwrap()])
+        .assert()
+        .stdout(contains("Revision: 2"))
+        .stdout(contains("superseded: 0"));
 }
 
 /// Missing endpoint → NotFound (R1#2).
@@ -641,6 +648,13 @@ fn supersede_stale_successor_digest_rejected() {
         .assert()
         .failure()
         .stderr(contains("stale successor basis"));
+    // T1 atomicity: store unchanged.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args(["graph", "status", "--store", store.to_str().unwrap()])
+        .assert()
+        .stdout(contains("Revision: 2"))
+        .stdout(contains("superseded: 0"));
 }
 
 /// Existing-but-non-Accepted superseded → EndpointNotCurrent (R1#2). Reject sonrası node.
@@ -814,4 +828,109 @@ fn supersede_malformed_successor_digest_correct_flag_message() {
         .failure()
         .stderr(contains("--successor-digest"))
         .stderr(contains("invalid"));
+}
+
+/// Interactive self-supersede → presentation gate (Review 2.tur P1): çelişkili confirmation
+/// gösterilmez, "self-supersede forbidden", Reason sorulmaz, revision değişmez.
+#[test]
+fn supersede_self_presentation_gate() {
+    let dir = tempdir().unwrap();
+    let store = setup_two_accepted(dir.path());
+    let output = Command::cargo_bin("osp")
+        .unwrap()
+        .env("OSP_OPERATOR", "t")
+        .args(["review", "session", "--store", store.to_str().unwrap()])
+        .write_stdin("supersede RuleCandidate:OldRule RuleCandidate:OldRule\nquit\n")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(output).unwrap();
+    // self-supersede forbidden mesajı gösterilir.
+    assert!(
+        out.contains("self-supersede"),
+        "expected self-supersede msg: {out}"
+    );
+    // Çelişkili confirmation gösterilmez.
+    assert!(
+        !out.contains("Apply this exact supersession?"),
+        "confirmation must NOT show for self-supersede: {out}"
+    );
+    assert!(
+        !out.contains("Reason:"),
+        "reason must NOT be asked for self-supersede: {out}"
+    );
+    // Revision unchanged.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args(["graph", "status", "--store", store.to_str().unwrap()])
+        .assert()
+        .stdout(contains("Revision: 2"));
+}
+
+/// Incompatible endpoints uçtan uca (Review 1 küçük — production-surface zinciri):
+/// CLI command → SupersedeSession → StoreError::IncompatibleSupersedeEndpoints → typed
+/// ReviewError → kullanıcı mesajı → revision unchanged. Farklı kind (Rule vs Concept).
+#[test]
+fn supersede_incompatible_endpoints_e2e() {
+    let dir = tempdir().unwrap();
+    // OldRule = RuleCandidate, Payment = Concept (farklı kind).
+    let seed = r#"{ "schema_version": 1, "nodes": [
+        {"canonical": "OldRule", "kind": "RuleCandidate"},
+        {"canonical": "Payment", "kind": "Concept"}
+    ]}"#;
+    let store = init_store(dir.path(), seed);
+    for id in ["RuleCandidate:OldRule", "Concept:Payment"] {
+        let d = show_digest(&store, id);
+        Command::cargo_bin("osp")
+            .unwrap()
+            .args([
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &d,
+            ])
+            .assert()
+            .success();
+    }
+    let old_d = show_digest(&store, "RuleCandidate:OldRule");
+    let new_d = show_digest(&store, "Concept:Payment");
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review",
+            "supersede",
+            "RuleCandidate:OldRule",
+            "Concept:Payment",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "r",
+            "--yes",
+            "--superseded-digest",
+            &old_d,
+            "--successor-digest",
+            &new_d,
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("incompatible"));
+    // T1 atomicity: store unchanged.
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args(["graph", "status", "--store", store.to_str().unwrap()])
+        .assert()
+        .stdout(contains("Revision: 2"))
+        .stdout(contains("superseded: 0"));
 }

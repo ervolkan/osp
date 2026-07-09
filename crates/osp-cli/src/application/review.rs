@@ -271,11 +271,19 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
     /// `EndpointNotCurrent` — operator'e invalid confirmation gösterilmez ("remains current
     /// Accepted" yalan söylemez). Mutation `mainline_query` kontrolünün yerine geçmez;
     /// yalnız preview doğruluğu.
+    ///
+    /// **Self-supersede gate** (Review 2.tur P1): `superseded == successor` presentation
+    /// oluşturulmadan reddedilir — aynı node için çelişkili confirmation ("X supersedes X",
+    /// hem SupersededAccepted hem current Accepted) gösterilmez. Mutation'daki early check
+    /// korunur; bu yalnız preview doğruluğu.
     pub fn load_supersede_presentation(
         &self,
         superseded: &ConceptNodeId,
         successor: &ConceptNodeId,
     ) -> Result<SupersedePresentation, ReviewError> {
+        if superseded == successor {
+            return Err(ReviewError::SelfSupersede(superseded.0.clone()));
+        }
         let persisted = self.repo.read()?;
         let store = InMemoryAnchorStore::restore_snapshot(persisted.snapshot.clone())
             .map_err(|e| ReviewError::Store(e.to_string()))?;

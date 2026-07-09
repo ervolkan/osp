@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~858 workspace test (osp-desktop hariç, CLI: osp-core 526 lib, osp-cli 26 unit + 21 review_flow + 13 supersede_flow, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~865 workspace test (osp-desktop hariç, CLI: osp-core 526 lib, osp-cli 26 unit + 21 review_flow + 20 supersede_flow, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -179,10 +179,10 @@ cargo test --workspace --exclude osp-desktop
 - osp-core: 524 lib unit (503 + 21 AnchorStoreSnapshot/restore validator/transition consistency) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 554; 24 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 26 unit (store_io/repository/seed_file/review_session/mapper) + 21 review_flow + 13 supersede_flow integration
+- osp-cli: 26 unit (store_io/repository/seed_file/review_session/mapper) + 21 review_flow + 20 supersede_flow integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~858 workspace test (osp-desktop hariç, CLI accept/reject + supersession)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
+- **Toplam: ~865 workspace test (osp-desktop hariç, CLI accept/reject + supersession)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

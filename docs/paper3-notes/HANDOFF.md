@@ -244,6 +244,21 @@ session'ından ikincisinin yüzeyi kapandı (`OperatorReviewSession` ✓ → `Su
   swapped + missing/non-current + self + negatif digest + restart-safe + rename + consolidation
   + chain + interactive + confirmation n).
 
+### Pre-commit count checklist (F2 dersi — 4. kez kaçırdık)
+Test sayıları doküman yüzeylerinde elle girilince same-PR test eklemesinde stale kalıyor
+(STATUS:39, STATUS:182, run-metadata:49). **Commit öncesi mekanik doğrulama:**
+```bash
+# Ground truth — her test dosyası için:
+for t in review_flow supersede_flow; do
+  echo -n "$t: "; cargo test -p osp-cli --test $t 2>&1 | grep -o "[0-9]* passed" | head -1
+done
+echo -n "unit: "; cargo test -p osp-cli --bin osp 2>&1 | grep -o "[0-9]* passed" | head -1
+echo -n "core lib: "; cargo test -p osp-core --lib 2>&1 | grep -o "[0-9]* passed" | head -1
+# Sonra grep ile üç yüzeyde aynı sayılar mı:
+grep -rn "supersede_flow\|review_flow\|osp-cli:.*unit" docs/STATUS.md docs/paper3-notes/evidence/run-metadata.md
+```
+Sayı yazıldıktan sonra aynı PR'da test eklendiyse re-propagate ET.
+
 ## Sıradaki işler
 
 ### Rich `SupersedePreview` query (sonraki PR)

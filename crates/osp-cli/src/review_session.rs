@@ -3,9 +3,12 @@
 //! Argümansız `osp review` → operator oturumu açılır. Generic `R: BufRead, W: Write`
 //! (Review 1#14) — production `stdin/stdout`, test `Cursor/Vec`.
 //!
-//! Her mutation `ReviewApplicationService::execute_mutation` çağırır (one-shot ile aynı
-//! service — iki davranış oluşmaz). Gösterilen basis digest'ini taşır (Review 1#1):
-//! reload sonrası yeni basis compile ETME; operator'ın gördüğü digest ile karar.
+//! Komutlar: `list`, `show <id>`, `accept <id>`, `reject <id>`, `supersede <old> <new>`, `quit`.
+//!
+//! Her mutation `ReviewApplicationService` üzerinden gider (one-shot ile aynı service —
+//! iki davranış oluşmaz): accept/reject `execute_mutation`, supersede `execute_supersede`.
+//! Gösterilen basis/digest taşınır — reload sonrası yeni compile ETME; operator'ın gördüğü
+//! ile karar.
 //!
 //! # Informed-acceptance sırası (Review P1.2)
 //! Operator, basis'i GÖRDÜKTEN sonra karar verir:

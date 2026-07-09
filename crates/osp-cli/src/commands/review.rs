@@ -36,7 +36,7 @@ pub struct ReviewListArgs {
     pub format: String,
 }
 
-/// `osp review show <id>` — node detayı + basis digest (Candidate için).
+/// `osp review show <id>` — node detayı + node digest (tüm statülerde; Candidate için accept/reject hint).
 #[derive(Args, Debug)]
 pub struct ReviewShowArgs {
     /// Node ID (örn "RuleCandidate:CouplingMustNot").
