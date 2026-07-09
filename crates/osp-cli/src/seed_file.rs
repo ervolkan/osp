@@ -12,8 +12,9 @@
 //! - **duplicate canonical kontrolü:** `insert_node` HashMap sessiz overwrite eder;
 //!   post-init restore-validasyon yakalar ama hata kaynağı bulanıklaşır → DTO'da erken yakala.
 
-use osp_core::anchoring::types::{ConceptNode, ConceptNodeKind, GraphSeed};
-use osp_core::anchoring::{DecisionStatus, PositionFamily};
+use osp_core::anchoring::types::{ConceptNodeKind, ConceptNodeId, GraphSeed};
+
+use crate::graph_seed_builder::{GraphSeedBuilder, GraphSeedBuilderError, GraphSeedNodeDraft};
 
 /// Seed parse hatası.
 #[derive(Debug, thiserror::Error)]
@@ -67,11 +68,12 @@ impl CandidateSeedFile {
         Ok(seed)
     }
 
-    /// Trusted `GraphSeed`'e dönüştür (Candidate-only). Duplicate canonical + empty kontrolü.
-    pub fn to_graph_seed(&self) -> Result<GraphSeed, SeedError> {
+    /// Legacy `GraphSeedNodeDraft` üretir — F1 semantics (ConceptualIntent, Candidate, aliases).
+    /// Canonical dedup + empty kontrolü burada; NodeId collision GraphSeedBuilder'da.
+    pub(crate) fn into_drafts(&self) -> Result<Vec<GraphSeedNodeDraft>, SeedError> {
         use std::collections::BTreeSet;
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut seed = GraphSeed::default();
+        let mut drafts: Vec<GraphSeedNodeDraft> = Vec::new();
         for (idx, node) in self.nodes.iter().enumerate() {
             let canonical = node.canonical.trim();
             if canonical.is_empty() {
@@ -81,28 +83,36 @@ impl CandidateSeedFile {
                 return Err(SeedError::DuplicateCanonical(canonical.to_string()));
             }
             // id türet: kind prefix + canonical (ConceptNodeKind konvansiyonu).
-            let id = derive_node_id(node.kind, canonical);
-            let concept_node = ConceptNode {
-                id: osp_core::anchoring::types::ConceptNodeId(id),
-                canonical: canonical.to_string(),
-                aliases: node.aliases.clone(),
-                node_kind: node.kind,
-                decision_status: DecisionStatus::Candidate, // hard-code — illegal state unrepresentable
-                position_family: PositionFamily::ConceptualIntent,
-            };
-            // kind'a göre uygun bucket'a koy (GraphSeed 6 bucket).
-            match node.kind {
-                ConceptNodeKind::Concept => seed.concepts.push(concept_node),
-                ConceptNodeKind::Decision => seed.decisions.push(concept_node),
-                ConceptNodeKind::CodeEntity => seed.code_entities.push(concept_node),
-                ConceptNodeKind::RuleCandidate => seed.rule_candidates.push(concept_node),
-                ConceptNodeKind::TaskCandidate => seed.task_candidates.push(concept_node),
-                ConceptNodeKind::RiskCandidate => seed.risk_candidates.push(concept_node),
-                ConceptNodeKind::Risk => seed.risk_candidates.push(concept_node),
-                ConceptNodeKind::CodeEntityCandidate => seed.code_entities.push(concept_node),
-            }
+            let id = ConceptNodeId(derive_node_id(node.kind, canonical));
+            drafts.push(GraphSeedNodeDraft::legacy_candidate(
+                id,
+                canonical.to_string(),
+                node.aliases.clone(),
+                node.kind,
+            ));
         }
-        Ok(seed)
+        Ok(drafts)
+    }
+
+    /// Trusted `GraphSeed`'e dönüştür (Candidate-only). Duplicate canonical + empty kontrolü.
+    /// F1 legacy compat wrapper: `into_drafts() + GraphSeedBuilder::build()`.
+    pub fn to_graph_seed(&self) -> Result<GraphSeed, SeedError> {
+        let drafts = self.into_drafts()?;
+        GraphSeedBuilder::build(drafts).map_err(map_builder_error)
+    }
+}
+
+/// GraphSeedBuilder hatası → SeedError (F1 legacy compat — DuplicateCanonical mapping).
+fn map_builder_error(e: GraphSeedBuilderError) -> SeedError {
+    match e {
+        GraphSeedBuilderError::DuplicateNode { canonical, .. } => {
+            SeedError::DuplicateCanonical(canonical)
+        }
+        // NodeIdCollision mevcut davranışta unreachable (canonical dedup önce yakalar).
+        // Hardening: DuplicateCanonical'a map (canonical dedup zaten NodeId collision'ı önler).
+        GraphSeedBuilderError::NodeIdCollision { .. } => {
+            SeedError::DuplicateCanonical("(node-id collision)".into())
+        }
     }
 }
 
@@ -117,7 +127,7 @@ pub(crate) fn derive_node_id(kind: ConceptNodeKind, canonical: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use osp_core::anchoring::DecisionStatus;
+    use osp_core::anchoring::{DecisionStatus, PositionFamily};
 
     /// Happy path: valid seed → GraphSeed (Candidate-only).
     #[test]

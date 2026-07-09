@@ -47,9 +47,8 @@ impl GraphSeedNodeDraft {
         }
     }
 
-    /// Legacy JSON source: Candidate + ConceptualIntent (F1). Yalnız seed_file.rs adapter.
-    #[allow(dead_code)] // analysis bridge tamamlanınca kullanılacak
-    pub(super) fn legacy_candidate(
+    /// Legacy JSON source: Candidate + ConceptualIntent (F1). seed_file.rs adapter.
+    pub(crate) fn legacy_candidate(
         id: ConceptNodeId,
         canonical: String,
         aliases: Vec<String>,
