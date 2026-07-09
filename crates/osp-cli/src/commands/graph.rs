@@ -110,8 +110,15 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
 
     // (3) Source → GraphSeedNodeDraft[] (iki source, ayrı conversion surface — S2).
     //     Pre-validation non-destructive: hata burada olursa store'a hiç dokunulmaz.
+    //     P2: --path-case yalnız --analyze ile (Clap requires yetersiz — explicit kontrol).
     let drafts: Vec<GraphSeedNodeDraft> = if let Some(seed_path) = &args.seed {
         // Legacy JSON source — F1 semantics (ConceptualIntent, Candidate, aliases).
+        if args.path_case.is_some() {
+            anyhow::bail!("--path-case can only be used with --analyze");
+        }
+        if args.scip.is_some() {
+            anyhow::bail!("--scip can only be used with --analyze");
+        }
         let seed_json = std::fs::read_to_string(seed_path)
             .map_err(|e| anyhow::anyhow!("cannot read seed file {}: {e}", seed_path.display()))?;
         let seed_file = CandidateSeedFile::from_json(&seed_json)
