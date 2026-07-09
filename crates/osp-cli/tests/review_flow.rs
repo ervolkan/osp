@@ -158,7 +158,7 @@ fn review_accept_noninteractive_succeeds() {
         .stdout
         .clone();
     let show_json: serde_json::Value = serde_json::from_slice(&show_output).unwrap();
-    let digest_hex = show_json["node"]["basis_digest_hex"].as_str().unwrap();
+    let digest_hex = show_json["node"]["node_digest_hex"].as_str().unwrap();
 
     // Accept.
     Command::cargo_bin("osp")
@@ -252,7 +252,7 @@ fn review_state_survives_process_restart() {
             .stdout
             .clone();
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
-        v["node"]["basis_digest_hex"].as_str().unwrap().to_string()
+        v["node"]["node_digest_hex"].as_str().unwrap().to_string()
     };
     Command::cargo_bin("osp")
         .unwrap()
@@ -548,7 +548,7 @@ fn review_list_json_empty_produces_valid_json() {
                 .stdout
                 .clone();
             let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
-            v["node"]["basis_digest_hex"].as_str().unwrap().to_string()
+            v["node"]["node_digest_hex"].as_str().unwrap().to_string()
         };
         Command::cargo_bin("osp")
             .unwrap()

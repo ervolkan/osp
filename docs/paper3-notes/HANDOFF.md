@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI `osp review` vertical slice TAMAM)
+# Paper 3 — Handoff Notu (CLI accept/reject + supersession surface TAMAM)
 
-> **Tarih:** 2026-07-08 (CLI osp review branch — commit öncesi)
-> **Dal:** `feat/cli-osp-review` (main `5ed13c1` üstünde)
-> **Durum:** Faz 8b epistemik çekirdek TAMAM (PR #48-51) + **CLI `osp review` vertical slice TAMAM** — persistent `AnchorStoreSnapshot` round-trip (graph + iki ledger + audit_seq, invariant-validasyonlu restore), Candidate-only seed bootstrap, one-shot subcommand'lar + interactive wizard (tek `ReviewApplicationService`), basis-freshness (`expected_basis_digest`), INV-C11 MCP/CLI surface ayrımı (negatif test). Paper 3 v1.3 Zenodo'da canlı (`10.5281/zenodo.21251821`); markdown kaynak INV-C11 + known gap güncellendi (v1.4 derive adayı). Sırada: supersession operator surface (ayrı PR), analysis → candidate bridge (sonraki milestone).
+> **Tarih:** 2026-07-09 (CLI supersession branch — commit öncesi)
+> **Dal:** `feat/cli-supersession-surface` (main `c897549` üstünde)
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (bu dal) TAMAM. İki session'ın yüzeyi kapandı: `OperatorReviewSession` (accept/reject) + `SupersedeSession` (supersede). `node_digest_hex` unconditional rename, named `SupersedeDigests`, endpoint-specific stale, store-level typed errors (E1 downcast), yön-açık confirmation. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı (accept/reject/supersede evaluated). Sırada: rich `SupersedePreview` (lineage/compatibility/cycle), analysis → candidate bridge.
 
 ---
 
@@ -206,20 +206,73 @@ değişirse iki yer değişmeli (constraint-propagation hata sınıfı).*
 - **PR/Faz YOK** paper prose'ta — "evaluated artifact" dili. paper3.tex (dist) eski v1.3; derive aracı
   sonraki revizyonda senkronize eder.
 
+## CLI `osp review supersede` — ne yapıldı (bu dalda)
+
+PR #53 (accept/reject) üzerine **supersession operator surface** eklendi. Faz 8b'in iki
+session'ından ikincisinin yüzeyi kapandı (`OperatorReviewSession` ✓ → `SupersedeSession` ✓).
+
+### osp-cli (`crates/osp-cli/src/`)
+- **`node_digest_hex` rename + unconditional** (Aşama 1) — `basis_digest(_hex): Option` →
+  `node_digest_hex: String` (tüm statülerde dolu; hex only, raw u64 yok — JS 2^53). Intentional
+  JSON breaking rename. `ensure_candidate` helper explicit Candidate gate (accept/reject).
+- **Supersede types** (`errors.rs`) — `SupersedeEndpoint` + endpoint-specific errors
+  (`EndpointNotCurrent { status: Option }`, `StaleSupersededBasis`, `StaleSuccessorBasis`,
+  `SelfSupersede`, `AlreadySuperseded`, `IncompatibleSupersedeEndpoints` 4 family alanı,
+  `SupersedeCycle`) + `SupersedeDigests` (named, tuple yok) + `SupersedeCommand` (ayrı) +
+  `ReviewSupersedeMutation`/`PersistedSupersedeOutput` (accept/reject'i kirletmez).
+- **`apply_supersede`** (`application/review.rs`) — mainline_query (Accepted), iki-digest
+  precondition (endpoint-specific stale), `PresentedSupersedeBasis::compile`, `SupersedeSession`.
+- **`map_supersede_error` + `map_supersede_store_error`** — source string + downcast typed
+  (E1: `SupersedeError::Store` Display "store error" source'u enterpole ETMİYOR → downcast
+  `AlreadySuperseded`/`IncompatibleSupersedeEndpoints`/`SupersedeCycle` typed; fallback source).
+- **`SupersedePresentation` + `load_supersede_presentation`** (R3#2) — one-shot + interactive
+  aynı confirmation metni; revision retry pair olarak (UX, correctness değil).
+- **One-shot adapter** (`commands/review.rs`) — `osp review supersede <old> <new>` + yön-açık
+  confirmation ("'{successor}' supersedes '{superseded}'", edge `successor→superseded`) + `--format json`.
+- **Interactive adapter** (`review_session.rs`) — `supersede <old> <new>` komutu + endpoint-specific
+  stale mesajları + help text.
+- **`--format json` retroaktif** (R4) — accept/reject mutation da JSON (tutarlı otomasyon contract).
+
+### osp-core değişiklik YOK
+`SupersedeSession`/`PresentedSupersedeBasis`/`SupersedeError`/`SupersedeRecord` PR #50'de hazır.
+`mutate()` generic — iki-digest op fits verbatim.
+
+### Testler (0 regression)
+- **osp-cli unit:** 20 → 26 (+6 mapper: AlreadySuperseded/Incompatible/Cycle/fallback source/
+  endpoint-specific stale/SelfSupersede).
+- **osp-cli integration:** review_flow 21 + supersede_flow 13 (mutlu yol + yön assert + stale +
+  swapped + missing/non-current + self + negatif digest + restart-safe + rename + consolidation
+  + chain + interactive + confirmation n).
+
+### Pre-commit count checklist (F2 dersi — 4. kez kaçırdık)
+Test sayıları doküman yüzeylerinde elle girilince same-PR test eklemesinde stale kalıyor
+(STATUS:39, STATUS:182, run-metadata:49). **Commit öncesi mekanik doğrulama:**
+```bash
+# Ground truth — her test dosyası için:
+for t in review_flow supersede_flow; do
+  echo -n "$t: "; cargo test -p osp-cli --test $t 2>&1 | grep -o "[0-9]* passed" | head -1
+done
+echo -n "unit: "; cargo test -p osp-cli --bin osp 2>&1 | grep -o "[0-9]* passed" | head -1
+echo -n "core lib: "; cargo test -p osp-core --lib 2>&1 | grep -o "[0-9]* passed" | head -1
+# Sonra grep ile üç yüzeyde aynı sayılar mı:
+grep -rn "supersede_flow\|review_flow\|osp-cli:.*unit" docs/STATUS.md docs/paper3-notes/evidence/run-metadata.md
+```
+Sayı yazıldıktan sonra aynı PR'da test eklendiyse re-propagate ET.
+
 ## Sıradaki işler
 
-### Supersession operator surface (ayrı PR)
-- `osp review supersede <old> <new>` + interactive lineage preview. Snapshot formatı zaten supersession'ı
-  kapsar (üretmez ama restore eder + show görüntüler). Bu PR persistence/repo/seed altyapısını yeniden kullanır.
+### Rich `SupersedePreview` query (sonraki PR)
+- Pair-level lineage + compatibility (kind/family) + cycle preview. Bu PR yalnız minimal
+  `SupersedePresentation` (iki endpoint + digests); rich preview out-of-scope kaldı.
 
 ### Analysis → candidate bridge (sonraki milestone)
-- `AnalysisResult → CandidateBatch → GraphSeed` projection protocol. Acceptance kriterleri (persistent
-  review lifecycle) geçti; şimdi candidate üretim kaynağı. Ayrı `feat(anchor): project analyzer output`.
+- `AnalysisResult → CandidateBatch → GraphSeed` projection protocol. Acceptance kriterleri
+  (persistent review lifecycle) geçti; şimdi candidate üretim kaynağı.
 
 ### Diğer
 - **TUI v2:** dialoguer/rustyline, fuzzy, renk (v1 stdio yeterli).
 - **Snapshot content-digest** (v2): elle JSON düzenleme tahrifatı için.
-- **arXiv:** v1.3 epistemik çekirdek tamam; CLI surface sonraki revizyon (v1.4) adayı.
+- **arXiv:** v1.3 epistemik çekirdek + CLI accept/reject/supersede surface tamam; v1.4 derive adayı.
 
 ## Model A (normatif sözleşme)
 

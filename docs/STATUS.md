@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~825 workspace test (osp-desktop hariç, CLI osp review: osp-core 503→524 +21 snapshot/restore validator, osp-cli 20 unit + 18 integration, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~865 workspace test (osp-desktop hariç, CLI: osp-core 526 lib, osp-cli 26 unit + 21 review_flow + 20 supersede_flow, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -69,7 +69,7 @@ için draft deposit bekliyor. **~825 workspace test (osp-desktop hariç, CLI osp
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
 | **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
-| **Faz 8b** | ✅ PR48-51 + CLI | PR #48 ✅ (varyant + INV-C14). PR #49 ✅ (`apply_supersede` + INV-C15 atomic). PR #50 ✅ (`SupersedeSession` + crate-private authority issuer, INV-C15 production invocation). PR #51 ✅ (`mainline_query` deterministic ordering). **CLI `osp review`** ✅ (`feat/cli-osp-review`): persistent `AnchorStoreSnapshot` round-trip (validate), Candidate-only seed, one-shot + interactive wizard (`ReviewApplicationService`), basis-freshness (`expected_basis_digest`), INV-C11 MCP/CLI surface ayrımı. Epistemik çekirdek + operator review yüzeyi tamam; sıradaki: supersession surface (ayrı PR), analysis bridge |
+| **Faz 8b** | ✅ PR48-51 + CLI | PR #48 ✅ (varyant + INV-C14). PR #49 ✅ (`apply_supersede` + INV-C15 atomic). PR #50 ✅ (`SupersedeSession` + crate-private authority issuer, INV-C15 production invocation). PR #51 ✅ (`mainline_query` deterministic ordering). **CLI accept/reject** ✅ (PR #53): persistent `AnchorStoreSnapshot`, Candidate-only seed, one-shot + interactive, basis-freshness. **CLI supersession** ✅ (bu dal): `osp review supersede`, `node_digest_hex` unconditional, named `SupersedeDigests`, endpoint-specific stale, store-level typed errors (E1 downcast), yön-açık confirmation. İki session yüzeyi tamam; sıradaki: rich `SupersedePreview`, analysis bridge |
 | Faz 8c | ✅ PR47 | promote_to_accepted kaldırma (legacy path migrate) |
 
 ### Invariant'lar (15 Paper 3'e özgü + INV-T2 boundary)
@@ -179,10 +179,10 @@ cargo test --workspace --exclude osp-desktop
 - osp-core: 524 lib unit (503 + 21 AnchorStoreSnapshot/restore validator/transition consistency) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 554; 24 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 20 unit (store_io/repository/seed_file/review_session) + 18 integration (review_flow)
+- osp-cli: 26 unit (store_io/repository/seed_file/review_session/mapper) + 21 review_flow + 20 supersede_flow integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~825 workspace test (osp-desktop hariç, CLI osp review)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
+- **Toplam: ~865 workspace test (osp-desktop hariç, CLI accept/reject + supersession)**, hepsi yeşil. Clippy pre-existing uyarılar mevcut (CI warning-only `|| true`); PR #50 değiştirdiği 5 anchoring src dosyasında 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

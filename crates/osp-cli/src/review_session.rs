@@ -3,9 +3,12 @@
 //! Argümansız `osp review` → operator oturumu açılır. Generic `R: BufRead, W: Write`
 //! (Review 1#14) — production `stdin/stdout`, test `Cursor/Vec`.
 //!
-//! Her mutation `ReviewApplicationService::execute_mutation` çağırır (one-shot ile aynı
-//! service — iki davranış oluşmaz). Gösterilen basis digest'ini taşır (Review 1#1):
-//! reload sonrası yeni basis compile ETME; operator'ın gördüğü digest ile karar.
+//! Komutlar: `list`, `show <id>`, `accept <id>`, `reject <id>`, `supersede <old> <new>`, `quit`.
+//!
+//! Her mutation `ReviewApplicationService` üzerinden gider (one-shot ile aynı service —
+//! iki davranış oluşmaz): accept/reject `execute_mutation`, supersede `execute_supersede`.
+//! Gösterilen basis/digest taşınır — reload sonrası yeni compile ETME; operator'ın gördüğü
+//! ile karar.
 //!
 //! # Informed-acceptance sırası (Review P1.2)
 //! Operator, basis'i GÖRDÜKTEN sonra karar verir:
@@ -119,7 +122,7 @@ pub fn run_interactive<R: BufRead, W: Write>(
     .ok();
     writeln!(
         output,
-        "Commands: list, show <id>, accept <id>, reject <id>, quit"
+        "Commands: list, show <id>, accept <id>, reject <id>, supersede <old> <new>, quit"
     )
     .ok();
     writeln!(output).ok();
@@ -185,10 +188,27 @@ pub fn run_interactive<R: BufRead, W: Write>(
                 // P1.2 informed-acceptance: basis göster → confirm → reason → mutation.
                 run_informed_mutation(&service, input, output, &id, accept, &operator);
             }
+            "supersede" | "sup" => {
+                let old = match parts.next() {
+                    Some(id) => id.to_string(),
+                    None => {
+                        writeln!(output, "Usage: supersede <old> <new>").ok();
+                        continue;
+                    }
+                };
+                let new = match parts.next() {
+                    Some(id) => id.to_string(),
+                    None => {
+                        writeln!(output, "Usage: supersede <old> <new>").ok();
+                        continue;
+                    }
+                };
+                run_informed_supersede(&service, input, output, &old, &new, &operator);
+            }
             other => {
                 writeln!(
                     output,
-                    "✗ unknown command: {other} (list/show/accept/reject/quit)"
+                    "✗ unknown command: {other} (list/show/accept/reject/supersede/quit)"
                 )
                 .ok();
             }
@@ -212,9 +232,7 @@ fn show_node<W: Write>(
                 n.id, n.canonical, n.kind, n.decision_status
             )
             .ok();
-            if let Some(hex) = &n.basis_digest_hex {
-                writeln!(output, "  digest: {hex}").ok();
-            }
+            writeln!(output, "  digest: {}", n.node_digest_hex).ok();
         }
         Ok(_) => {
             writeln!(output, "✗ node not found: {id}").ok();
@@ -313,6 +331,117 @@ fn run_informed_mutation<R: BufRead, W: Write>(
     let _ = canonical; // canonical gösterildi; unused uyarısını bastır.
 }
 
+/// Interactive informed-supersede: presentation göster → confirm → reason → mutation.
+/// İki endpoint Accepted olmalı; yön-açık metin + endpoint-specific stale mesajları.
+fn run_informed_supersede<R: BufRead, W: Write>(
+    service: &ReviewApplicationService<FileReviewStore>,
+    input: &mut R,
+    output: &mut W,
+    old: &str,
+    new: &str,
+    operator: &OperatorId,
+) {
+    use crate::errors::SupersedeCommand;
+
+    // (1) Presentation: iki endpoint + revision + digests.
+    let presentation = match service
+        .load_supersede_presentation(&ConceptNodeId(old.into()), &ConceptNodeId(new.into()))
+    {
+        Ok(p) => p,
+        Err(e) => {
+            writeln!(output, "✗ {e}").ok();
+            return;
+        }
+    };
+
+    // (2) Yön-açık confirmation.
+    writeln!(
+        output,
+        "  '{}' supersedes '{}'",
+        presentation.successor.id, presentation.superseded.id
+    )
+    .ok();
+    writeln!(
+        output,
+        "    {} → SupersededAccepted (no longer current)",
+        presentation.superseded.id
+    )
+    .ok();
+    writeln!(
+        output,
+        "    {} → current Accepted",
+        presentation.successor.id
+    )
+    .ok();
+    writeln!(
+        output,
+        "  Superseded digest: {}  |  Successor digest: {}",
+        presentation.superseded.node_digest_hex, presentation.successor.node_digest_hex
+    )
+    .ok();
+    write!(output, "  Apply this exact supersession? [y/N] ").ok();
+    output.flush().ok();
+    let mut confirm = String::new();
+    if input.read_line(&mut confirm).unwrap_or(0) == 0 {
+        return;
+    }
+    if confirm.trim().to_lowercase() != "y" && confirm.trim().to_lowercase() != "yes" {
+        writeln!(output, "  aborted by operator").ok();
+        return;
+    }
+
+    // (3) Reason.
+    write!(output, "  Reason: ").ok();
+    output.flush().ok();
+    let mut reason = String::new();
+    if input.read_line(&mut reason).unwrap_or(0) == 0 {
+        return;
+    }
+    let reason = reason.trim().to_string();
+    if reason.is_empty() {
+        writeln!(output, "✗ reason cannot be empty").ok();
+        return;
+    }
+
+    // (4) Mutation — gösterilen presentation'ın digest'leri ile (lock altında recheck).
+    let command = SupersedeCommand {
+        superseded: ConceptNodeId(old.into()),
+        successor: ConceptNodeId(new.into()),
+        expected: presentation.digests,
+        reason,
+    };
+    match service.execute_supersede(command, operator.clone()) {
+        Ok(out) => {
+            writeln!(
+                output,
+                "✓ {} supersedes {} (record #{}, revision {})",
+                out.mutation.successor_node_id,
+                out.mutation.superseded_node_id,
+                out.mutation.decision_sequence,
+                out.revision
+            )
+            .ok();
+        }
+        Err(crate::errors::ReviewError::StaleSupersededBasis) => {
+            writeln!(
+                output,
+                "✗ superseded endpoint changed since you viewed it; review both again"
+            )
+            .ok();
+        }
+        Err(crate::errors::ReviewError::StaleSuccessorBasis) => {
+            writeln!(
+                output,
+                "✗ successor endpoint changed since you viewed it; review both again"
+            )
+            .ok();
+        }
+        Err(e) => {
+            writeln!(output, "✗ {e}").ok();
+        }
+    }
+}
+
 /// Node'un basis'ini göster ve (digest, canonical) döner (Candidate değilse None).
 fn get_basis_for(
     service: &ReviewApplicationService<FileReviewStore>,
@@ -321,7 +450,17 @@ fn get_basis_for(
 ) -> Option<(NodeDigest, String)> {
     match service.execute_query(ReviewQuery::Show(ConceptNodeId(id.into()))) {
         Ok(ReviewReadOutput::Show { node: Some(n), .. }) => {
-            let hex = n.basis_digest_hex.as_deref()?;
+            // Explicit Candidate gate (node_digest_hex unconditional — R3#1).
+            if n.decision_status != "Candidate" {
+                writeln!(
+                    output,
+                    "✗ node {} is not Candidate (status: {}) — only Candidate nodes can be reviewed",
+                    n.id, n.decision_status
+                )
+                .ok();
+                return None;
+            }
+            let hex = &n.node_digest_hex;
             writeln!(output, "  Basis: {} — {} (digest {hex})", n.id, n.canonical).ok();
             Some((
                 NodeDigest::from_raw(u64::from_str_radix(hex, 16).expect("valid hex from show")),
@@ -329,7 +468,7 @@ fn get_basis_for(
             ))
         }
         _ => {
-            writeln!(output, "✗ node not found or not Candidate: {id}").ok();
+            writeln!(output, "✗ node not found: {id}").ok();
             None
         }
     }
