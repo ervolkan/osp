@@ -259,11 +259,62 @@ grep -rn "supersede_flow\|review_flow\|osp-cli:.*unit" docs/STATUS.md docs/paper
 ```
 Sayı yazıldıktan sonra aynı PR'da test eklendiyse re-propagate ET.
 
-## Sıradaki işler
+## CLI `osp review supersede-preview` — ne yapıldı (bu dalda)
 
-### Rich `SupersedePreview` query (sonraki PR)
-- Pair-level lineage + compatibility (kind/family) + cycle preview. Bu PR yalnız minimal
-  `SupersedePresentation` (iki endpoint + digests); rich preview out-of-scope kaldı.
+Rich `SupersedePreview` read-only query — HANDOFF "Sıradaki işler #1" kapandı. Standalone
+query (`osp review supersede-preview <old> <new>`) + one-shot TTY confirmation + interactive
+wizard confirmation **tek canonical model + tek renderer** kullanır (divergence sıfır; HANDOFF
+"aynı preview render eder" cümlesi doğru kaldı).
+
+### osp-core (minimal additive — mutation semantiği değişmez)
+- **Üç public read-only accessor + typed compatibility read model** (`store.rs`):
+  `committed_supersede_incoming_sources` (Vec source IDs — INV-C15 ≤1, deterministic sorted),
+  `inspect_supersede_compatibility`, `would_create_supersede_cycle` (Result<bool> — node existence).
+  Canonical private helper `supersede_compatibility_from_parts` + `SupersedeCompatibility` struct.
+- **apply_supersede delegasyonları** (12-step precedence KORUNUR): step 5 (incoming → accessor),
+  step 6-7 (currentness → `is_current_mainline()`), step 9 (compatibility → canonical helper).
+  Mutation semantiği, hata tipleri, error ordering değişmedi. `is_reachable_via_committed_supersedes` private kaldı.
+- **Domain policy ayrımı (divergence mekanik engellenir):** incoming → core accessor; currentness →
+  `is_current_mainline()`; compatibility → core predicate; cycle → core predicate; identity → saf observation.
+
+### osp-cli (`crates/osp-cli/src/`)
+- **Canonical read model** (`application/review.rs`): `SupersedePreviewOutput` + `SupersedeBlockerCode`
+  (typed enum + `ordering_key()` — structural steps 5–10'a birebir) + `SupersedeLineagePreview` (bounded
+  DAG + typed `LineageTruncation`) + `ProposedSupersedeEdge` + `primary_structural_blocker`.
+  `SupersedePresentation` (minimal) kaldırıldı.
+- **`build_supersede_preview`** — tüm policy core accessor/predicate'lardan; non-Accepted → blocking_reason
+  (hard error DEĞİL; missing → NotFound); self dahil her durumda lineage üretilir (cycle bastırılır).
+- **Tek read path:** `read_validated_store` + `execute_query(ReviewQuery::SupersedePreview)` →
+  `execute_supersede_preview` sarmalar (çift repo.read yok). List/Show da aynı read motoru.
+- **`supersede_preview_render.rs`** (yeni) — body-only renderer (UI state yok; üç yüzey çağırır).
+- **`SupersedeConfirmationOutcome { Confirmed, Ineligible, Aborted }`** — exit-code sözleşmesi
+  (standalone ineligible exit 0 / mutation ineligible-aborted non-zero / wizard session'a dönüş).
+  Self early gate YOK — self blocker-bearing preview üretir.
+- **`osp review supersede-preview <old> <new>`** + `ReviewAction::SupersedePreview` + main.rs dispatch.
+
+### Testler (0 regression)
+- **osp-core lib:** 526 → 538 (+12: compatibility matrix, incoming accessor 4 vaka, cycle 3 vaka,
+  step-9 characterization, currentness, multi-blocker precedence).
+- **osp-cli unit:** 26 → 36 (+10 preview builder: mutlu yol, self/already/incompatible-kind/family/
+  non-current/cycle/lineage chain/consolidation/missing).
+- **osp-cli integration:** supersede_flow 20 (güncellenen — rich preview body) + review_flow 21
+  (değişmedi) + **preview_flow 10** (yeni: mutlu yol text/json, incompatible, cycle, lineage chain,
+  missing, ineligible exit 0, self, non-accepted, wizard ineligible).
+
+### 5 tur plan review'ün metodolojik dersi
+Plan 5 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
+- **Tur 1-2:** lineage DAG (Vec<String> değil — consolidation bilgi kaybı) + Accepted gate çelişkisi
+  (incoming → SupersededAccepted zorunlu → blocker'a ulaşılamaz) → non-Accepted blocking_reason modeli.
+- **Tur 3:** cycle tek source-of-truth (core wrapper) ama compatibility asimetrik divergence → iki
+  dar predicate + apply step 9 delegasyonu. `primary_blocker` → `primary_structural_blocker`.
+- **Tur 4:** blocking_reasons sırası "core precedence ile uyumlu" iddiası yanlıştı (self planda 1./
+  core'da step 8) → core structural steps 5–10'a birebilir hizalama + characterization. self early
+  gate tek-model ilkesini bozardı → kaldırıldı.
+- **Tur 5:** incoming predicate `bool` değil source ID'leri döndürmeli (presentation duplication);
+  self'te lineage her zaman; currentness `is_current_mainline()`. Tek source-of-truth her domain
+  kuralı için ayrı canonical predicate (devasa helper değil).
+
+## Sıradaki işler
 
 ### Analysis → candidate bridge (sonraki milestone)
 - `AnalysisResult → CandidateBatch → GraphSeed` projection protocol. Acceptance kriterleri

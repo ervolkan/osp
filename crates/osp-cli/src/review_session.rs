@@ -341,11 +341,12 @@ fn run_informed_supersede<R: BufRead, W: Write>(
     new: &str,
     operator: &OperatorId,
 ) {
+    use crate::commands::supersede_preview_render::render_supersede_preview_text;
     use crate::errors::SupersedeCommand;
 
-    // (1) Presentation: iki endpoint + revision + digests.
-    let presentation = match service
-        .load_supersede_presentation(&ConceptNodeId(old.into()), &ConceptNodeId(new.into()))
+    // (1) Rich preview (tek canonical model — standalone query ile aynı).
+    let preview = match service
+        .execute_supersede_preview(ConceptNodeId(old.into()), ConceptNodeId(new.into()))
     {
         Ok(p) => p,
         Err(e) => {
@@ -354,31 +355,14 @@ fn run_informed_supersede<R: BufRead, W: Write>(
         }
     };
 
-    // (2) Yön-açık confirmation.
-    writeln!(
-        output,
-        "  '{}' supersedes '{}'",
-        presentation.successor.id, presentation.superseded.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "    {} → SupersededAccepted (no longer current)",
-        presentation.superseded.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "    {} → current Accepted",
-        presentation.successor.id
-    )
-    .ok();
-    writeln!(
-        output,
-        "  Superseded digest: {}  |  Successor digest: {}",
-        presentation.superseded.node_digest_hex, presentation.successor.node_digest_hex
-    )
-    .ok();
+    // (2) Canonical renderer (body only) — standalone ile aynı çıktı.
+    render_supersede_preview_text(output, &preview).ok();
+
+    // ineligible → confirmation prompt yok, session'a dön.
+    if !preview.structurally_eligible {
+        return;
+    }
+
     write!(output, "  Apply this exact supersession? [y/N] ").ok();
     output.flush().ok();
     let mut confirm = String::new();
@@ -403,11 +387,11 @@ fn run_informed_supersede<R: BufRead, W: Write>(
         return;
     }
 
-    // (4) Mutation — gösterilen presentation'ın digest'leri ile (lock altında recheck).
+    // (4) Mutation — gösterilen preview'ın digest'leri ile (lock altında recheck).
     let command = SupersedeCommand {
         superseded: ConceptNodeId(old.into()),
         successor: ConceptNodeId(new.into()),
-        expected: presentation.digests,
+        expected: preview.digests(),
         reason,
     };
     match service.execute_supersede(command, operator.clone()) {

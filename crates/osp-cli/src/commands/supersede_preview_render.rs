@@ -1,0 +1,173 @@
+//! Canonical supersede preview text renderer — body-only (UI state yok).
+//!
+//! Tek renderer, üç yüzey tarafından çağrılır (divergence sıfır):
+//!   - `osp review supersede-preview` standalone query
+//!   - one-shot `osp review supersede` TTY confirmation
+//!   - interactive wizard `supersede` confirmation
+//!
+//! Renderer input okumaz, confirmation/reason prompt'u içermez — adapter'larda kalır.
+//! `eligible: false` → blockers gösterir; confirmation yüzeyleri prompt göstermeden döner.
+
+use std::io::{self, Write};
+
+use crate::application::review::{
+    SupersedeBlockerCode, SupersedePreviewOutput, SupersedeEndpointPreview,
+};
+
+impl SupersedeBlockerCode {
+    /// İnsan-okunabilir blocker başlığı.
+    fn label(self) -> &'static str {
+        match self {
+            Self::AlreadySuperseded => "Already superseded",
+            Self::SupersededNotCurrent => "Superseded endpoint is not current",
+            Self::SuccessorNotCurrent => "Successor endpoint is not current",
+            Self::SelfSupersede => "Self supersede",
+            Self::IncompatibleKind => "Incompatible kind",
+            Self::IncompatibleFamily => "Incompatible family",
+            Self::Cycle => "Supersede cycle",
+        }
+    }
+}
+
+/// Endpoint detay satırlarını yaz (renderer ortak parça).
+fn write_endpoint<W: Write>(out: &mut W, label: &str, ep: &SupersedeEndpointPreview) -> io::Result<()> {
+    writeln!(out, "  {label}:")?;
+    writeln!(out, "    ID: {}", ep.id)?;
+    writeln!(out, "    Status: {}", ep.status)?;
+    writeln!(out, "    Kind: {}", ep.kind)?;
+    writeln!(out, "    Family: {}", ep.family)?;
+    writeln!(out, "    Digest: {}", ep.node_digest_hex)?;
+    Ok(())
+}
+
+/// Canonical preview body renderer — üç yüzey aynı çıktıyı alır.
+///
+/// Input okumaz, UI state taşımaz. Confirmation yüzeyleri bunu çağırır, ardından
+/// kendi reason/confirm akışlarını yürütür. `structurally_eligible: false` ise
+/// blockers gösterilir.
+pub(crate) fn render_supersede_preview_text<W: Write>(
+    output: &mut W,
+    preview: &SupersedePreviewOutput,
+) -> io::Result<()> {
+    writeln!(output, "Supersession preview (revision {})", preview.revision)?;
+    writeln!(output)?;
+
+    write_endpoint(output, "Superseded endpoint", &preview.superseded)?;
+    write_endpoint(output, "Successor endpoint", &preview.successor)?;
+    writeln!(output)?;
+
+    // Proposed edge (yön-açık).
+    writeln!(
+        output,
+        "Proposed committed edge:  {} --{}--> {}",
+        preview.proposed_edge.from, preview.proposed_edge.kind, preview.proposed_edge.to
+    )?;
+    writeln!(
+        output,
+    "  {} → SupersededAccepted (retains provenance, no longer current)",
+        preview.superseded.id
+    )?;
+    writeln!(
+        output,
+    "  {} remains current Accepted",
+        preview.successor.id
+    )?;
+    writeln!(output)?;
+
+    // Lineage (successor outgoing chain + superseded incoming).
+    if preview.lineage.nodes.len() <= 1 && preview.lineage.edges.is_empty() {
+        writeln!(output, "Lineage:  {} has no committed supersession history", preview.lineage.root)?;
+    } else {
+        writeln!(output, "Lineage (successor outgoing committed chain):")?;
+        let chain: Vec<String> = preview
+            .lineage
+            .nodes
+            .iter()
+            .map(|n| n.id.clone())
+            .collect();
+        writeln!(output, "  {}", chain.join(" → "))?;
+        if let Some(t) = preview.lineage.truncation {
+            writeln!(output, "  (truncated: {:?} — chain may be longer)", t)?;
+        }
+    }
+    if let Some(incoming) = &preview.lineage.superseded_incoming {
+        writeln!(
+            output,
+            "  Superseded already has incoming from: {}",
+            incoming
+        )?;
+    }
+    writeln!(output)?;
+
+    // Compatibility + cycle.
+    writeln!(output, "Compatibility:")?;
+    writeln!(
+        output,
+    "  Kind compatible: {}    Family compatible: {}    Cycle risk: {}",
+        preview.compatibility.kind_compatible,
+        preview.compatibility.family_compatible,
+        preview.compatibility.cycle_risk
+    )?;
+    writeln!(output)?;
+
+    // Structural eligibility + blockers.
+    writeln!(
+        output,
+        "Structurally eligible at revision {}: {}",
+        preview.revision,
+        if preview.structurally_eligible { "yes" } else { "no" }
+    )?;
+    if let Some(primary) = preview.primary_structural_blocker {
+        writeln!(output, "Primary structural blocker:")?;
+        let primary_blocker = preview
+            .blocking_reasons
+            .iter()
+            .find(|b| b.code == primary)
+            .expect("primary_structural_blocker has matching entry");
+        writeln!(output, "  {} — {}", primary.label(), primary_blocker.message)?;
+        let additional: Vec<_> = preview
+            .blocking_reasons
+            .iter()
+            .filter(|b| b.code != primary)
+            .collect();
+        if !additional.is_empty() {
+            writeln!(output, "Additional blockers:")?;
+            for b in additional {
+                writeln!(output, "  {} — {}", b.code.label(), b.message)?;
+            }
+        }
+    }
+    writeln!(output)?;
+
+    // Freshness link + operator notes.
+    if preview.structurally_eligible {
+        writeln!(
+            output,
+            "Freshness tokens (pass to supersede as --superseded-digest/--successor-digest):"
+        )?;
+        writeln!(
+            output,
+            "  --superseded-digest {}    --successor-digest {}",
+            preview.superseded.node_digest_hex, preview.successor.node_digest_hex
+        )?;
+        writeln!(output)?;
+    }
+    writeln!(
+        output,
+    "Operator note: this is a read-only point-in-time assessment."
+    )?;
+    writeln!(
+        output,
+    "  Mutation revalidates both digests and currentness under lock."
+    )?;
+    // Self-supersede operatör notu.
+    if preview
+        .blocking_reasons
+        .iter()
+        .any(|b| b.code == SupersedeBlockerCode::SelfSupersede)
+    {
+        writeln!(output, "  Both endpoint IDs are identical.")?;
+    }
+
+    Ok(())
+}

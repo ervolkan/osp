@@ -114,6 +114,54 @@ pub enum StoreError {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SupersedePreview read-only domain predicates (Rich SupersedePreview query)
+//
+// Üç canonical read-only accessor + bir typed compatibility read model. `apply_supersede`
+// structural validation steps 5/9 (incoming/compatibility) bunlara delegasyon yapar;
+// CLI `build_supersede_preview` de aynı kaynakları kullanır → divergence mekanik olarak
+// engellenir. Mutation semantiği değişmez (12-step precedence korunur); `apply_supersede`
+// cycle step 10 mevcut private `is_reachable_via_committed_supersedes`'i kullanmaya devam eder
+// (node existence step 2'de doğrulandı).
+//
+// Domain policy ayrımı:
+//   incoming policy      → committed_supersede_incoming_sources (core accessor)
+//   currentness policy   → DecisionStatus::is_current_mainline() (apply step 6-7)
+//   compatibility policy → supersede_compatibility_from_parts (core predicate)
+//   cycle policy         → would_create_supersede_cycle (core predicate)
+//   identity equality    → saf observation (kural yok)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Endpoint compatibility read model — coarse structural (same kind AND same family).
+/// `apply_supersede` step 9 ile aynı kural (tek source). Semantic replacement judgment
+/// operator-reviewed basis'te; lineage/scope key future work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupersedeCompatibility {
+    pub kind_compatible: bool,
+    pub family_compatible: bool,
+}
+
+impl SupersedeCompatibility {
+    /// Both kind and family compatible (coarse structural eligibility).
+    pub fn is_compatible(self) -> bool {
+        self.kind_compatible && self.family_compatible
+    }
+}
+
+/// Canonical compatibility rule — tek source. Preview (`inspect_supersede_compatibility`)
+/// ve mutation (`apply_supersede` step 9) aynı hesabı kullanır.
+fn supersede_compatibility_from_parts(
+    superseded_kind: ConceptNodeKind,
+    successor_kind: ConceptNodeKind,
+    superseded_family: PositionFamily,
+    successor_family: PositionFamily,
+) -> SupersedeCompatibility {
+    SupersedeCompatibility {
+        kind_compatible: superseded_kind == successor_kind,
+        family_compatible: superseded_family == successor_family,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // AnchorStoreSnapshot + SnapshotError — kalıcı store snapshot (Faz: CLI osp review)
 //
 // `ConceptGraphSnapshot` (types.rs) yalnız graph'ı taşır; `restore_trusted_snapshot`
@@ -639,6 +687,85 @@ impl InMemoryAnchorStore {
         false
     }
 
+    /// INV-C15 incoming committed Supersedes source'ları — `apply_supersede` step 5 filtresiyle
+    /// birebir aynı: `Supersedes && decision_status==Accepted && to==id` (Candidate proposal
+    /// edge'leri sayılmaz). Tek source — preview (`superseded_incoming` presentation +
+    /// `AlreadySuperseded` blocker) ve mutation (`apply_supersede` step 5) buradan beslenir.
+    ///
+    /// Validated snapshot'ta INV-C15 ≤1 (restore validator incoming cardinality'yi doğrular);
+    /// invalid/direct-store'da Vec dürüst davranır. Deterministik (source ID ascending).
+    pub fn committed_supersede_incoming_sources(
+        &self,
+        id: &ConceptNodeId,
+    ) -> Result<Vec<ConceptNodeId>, StoreError> {
+        use crate::anchoring::ConceptEdgeKind;
+        self.graph
+            .node(id)
+            .ok_or_else(|| StoreError::NodeNotFound(id.clone()))?;
+        let mut sources: Vec<ConceptNodeId> = self
+            .graph
+            .edges()
+            .filter(|e| {
+                e.kind == ConceptEdgeKind::Supersedes
+                    && e.decision_status == DecisionStatus::Accepted
+                    && &e.to == id
+            })
+            .map(|e| e.from.clone())
+            .collect();
+        sources.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(sources)
+    }
+
+    /// Endpoint compatibility — coarse structural (same kind AND same family). `apply_supersede`
+    /// step 9 ile aynı kural (tek canonical helper). Node existence doğrulanır (public API
+    /// kendi sözleşmesini korur). Otomasyon/preview divergence'ı engellenir: compatibility
+    /// bir presentation detayı değil domain policy — core'da kalır.
+    pub fn inspect_supersede_compatibility(
+        &self,
+        superseded: &ConceptNodeId,
+        successor: &ConceptNodeId,
+    ) -> Result<SupersedeCompatibility, StoreError> {
+        let sup = self
+            .graph
+            .node(superseded)
+            .ok_or_else(|| StoreError::NodeNotFound(superseded.clone()))?;
+        let suc = self
+            .graph
+            .node(successor)
+            .ok_or_else(|| StoreError::NodeNotFound(successor.clone()))?;
+        Ok(supersede_compatibility_from_parts(
+            sup.node_kind,
+            suc.node_kind,
+            sup.position_family,
+            suc.position_family,
+        ))
+    }
+
+    /// Proposed `successor --Supersedes--> superseded` edge'i committed supersede graph'ında
+    /// cycle yaratır mı? `apply_supersede` step 10 ile aynı hesap: `superseded →* successor`
+    /// committed Supersedes yolu var mı (tek source of truth).
+    ///
+    /// Node existence doğrulanır (public API sözleşmesi). `apply_supersede` bu wrapper'ı
+    /// çağırmak zorunda değil — node existence step 2'de doğrulandı, private predicate'i
+    /// kullanmaya devam eder (mutation yolu değişmez).
+    ///
+    /// **Self-supersede notu:** `superseded == successor` için trivially `Ok(true)` döner
+    /// (ilk stack elemanı hedefe eşit). Caller önce self-supersede kontrol etmeli; preview
+    /// builder self blocker'ı (step 8) cycle'dan (step 10) önce üretir ve cycle'ı bastırır.
+    pub fn would_create_supersede_cycle(
+        &self,
+        superseded: &ConceptNodeId,
+        successor: &ConceptNodeId,
+    ) -> Result<bool, StoreError> {
+        self.graph
+            .node(superseded)
+            .ok_or_else(|| StoreError::NodeNotFound(superseded.clone()))?;
+        self.graph
+            .node(successor)
+            .ok_or_else(|| StoreError::NodeNotFound(successor.clone()))?;
+        Ok(self.is_reachable_via_committed_supersedes(superseded, successor))
+    }
+
     /// Test-only: audit_seq'i zorla set et (overflow exhaustion test için).
     #[cfg(test)]
     pub(crate) fn set_audit_seq_for_tests(&mut self, seq: u64) {
@@ -902,31 +1029,32 @@ impl AnchorStore for InMemoryAnchorStore {
             });
         }
 
-        // (5) INV-C15 committed incoming edge — Accepted only (Candidate proposal'lar sayılmaz).
-        let already_superseded = self.graph.edges().any(|e| {
-            e.kind == ConceptEdgeKind::Supersedes
-                && e.decision_status == DecisionStatus::Accepted
-                && &e.to == &superseded_id
-        });
-        if already_superseded {
+        // (5) INV-C15 committed incoming edge — canonical accessor (preview ile aynı source).
+        // Accepted only (Candidate proposal'lar sayılmaz).
+        let incoming = self.committed_supersede_incoming_sources(&superseded_id)?;
+        if !incoming.is_empty() {
             return Err(StoreError::AlreadySuperseded(superseded_id.clone()));
         }
 
-        // (6) Superseded status — Accepted olmalı.
-        if sup_status != DecisionStatus::Accepted {
+        // (6) Superseded currentness — canonical predicate (mainline_query ile aynı).
+        if !sup_status.is_current_mainline() {
             return Err(StoreError::NotSupersedeableFrom(sup_status));
         }
-        // (7) Successor status — Accepted olmalı (creation-time).
-        if suc_status != DecisionStatus::Accepted {
+        // (7) Successor currentness — canonical predicate (creation-time Accepted).
+        if !suc_status.is_current_mainline() {
             return Err(StoreError::SuccessorNotAccepted(suc_status));
         }
         // (8) Self-supersede.
         if superseded_id == successor_id {
             return Err(StoreError::SelfSupersede(superseded_id.clone()));
         }
-        // (9) Endpoint compatibility — coarse structural (same kind + family).
-        // Semantic replacement judgment operator-reviewed basis'te; lineage/scope key future work.
-        if sup_kind != suc_kind || sup_family != suc_family {
+        // (9) Endpoint compatibility — canonical predicate (preview ile aynı source).
+        // Coarse structural (same kind + family). Semantic replacement judgment operator-reviewed
+        // basis'te; lineage/scope key future work.
+        let compatibility = supersede_compatibility_from_parts(
+            sup_kind, suc_kind, sup_family, suc_family,
+        );
+        if !compatibility.is_compatible() {
             return Err(StoreError::IncompatibleSupersedeEndpoints {
                 superseded_kind: sup_kind,
                 successor_kind: suc_kind,
@@ -2523,5 +2651,368 @@ mod tests {
             ),
             "duplicate record should reject, got {err:?}"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Rich SupersedePreview read-only predicates (preview ↔ mutation divergence guard)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Test yardımcı: belirli kind/family ile node (compatibility matrisi için).
+    fn preview_node(
+        id: &str,
+        status: DecisionStatus,
+        kind: ConceptNodeKind,
+        family: PositionFamily,
+    ) -> ConceptNode {
+        ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: kind,
+            decision_status: status,
+            position_family: family,
+        }
+    }
+
+    /// Test yardımcı: iki Accepted endpoint'li store (farklı kind/family override ile).
+    fn preview_store_with_nodes(nodes: Vec<ConceptNode>) -> InMemoryAnchorStore {
+        let mut seed = GraphSeed::default();
+        for n in nodes {
+            match n.node_kind {
+                ConceptNodeKind::Concept => seed.concepts.push(n),
+                ConceptNodeKind::Decision => seed.decisions.push(n),
+                ConceptNodeKind::CodeEntity => seed.code_entities.push(n),
+                ConceptNodeKind::RuleCandidate => seed.rule_candidates.push(n),
+                ConceptNodeKind::TaskCandidate => seed.task_candidates.push(n),
+                ConceptNodeKind::RiskCandidate => seed.risk_candidates.push(n),
+                ConceptNodeKind::Risk => seed.risk_candidates.push(n),
+                ConceptNodeKind::CodeEntityCandidate => seed.code_entities.push(n),
+            }
+        }
+        InMemoryAnchorStore::with_seed(seed)
+    }
+
+    /// Compatibility matrix: same/diff kind × same/diff family → 4 vaka.
+    #[test]
+    fn supersede_compatibility_matrix() {
+        // supersede_compatibility_from_parts store.rs'in kendi private fn'i — super::* ile erişilir.
+        // (sup_kind, suc_kind, sup_family, suc_family) → (kind_ok, family_ok)
+        let mk = |k1, k2, f1, f2| supersede_compatibility_from_parts(k1, k2, f1, f2);
+        // same kind, same family
+        let c = mk(
+            ConceptNodeKind::RuleCandidate,
+            ConceptNodeKind::RuleCandidate,
+            PositionFamily::ConceptualIntent,
+            PositionFamily::ConceptualIntent,
+        );
+        assert!(c.is_compatible() && c.kind_compatible && c.family_compatible);
+        // diff kind, same family
+        let c = mk(
+            ConceptNodeKind::RuleCandidate,
+            ConceptNodeKind::Concept,
+            PositionFamily::ConceptualIntent,
+            PositionFamily::ConceptualIntent,
+        );
+        assert!(!c.is_compatible() && !c.kind_compatible && c.family_compatible);
+        // same kind, diff family
+        let c = mk(
+            ConceptNodeKind::RuleCandidate,
+            ConceptNodeKind::RuleCandidate,
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+        );
+        assert!(!c.is_compatible() && c.kind_compatible && !c.family_compatible);
+        // both diff
+        let c = mk(
+            ConceptNodeKind::RuleCandidate,
+            ConceptNodeKind::Concept,
+            PositionFamily::ConceptualIntent,
+            PositionFamily::PhysicalCode,
+        );
+        assert!(!c.is_compatible() && !c.kind_compatible && !c.family_compatible);
+    }
+
+    /// inspect_supersede_compatibility: missing endpoint → NodeNotFound.
+    #[test]
+    fn inspect_supersede_compatibility_node_not_found() {
+        let store = preview_store_with_nodes(vec![preview_node(
+            "RuleCandidate:A",
+            DecisionStatus::Accepted,
+            ConceptNodeKind::RuleCandidate,
+            PositionFamily::ConceptualIntent,
+        )]);
+        let err = store
+            .inspect_supersede_compatibility(
+                &ConceptNodeId("RuleCandidate:A".into()),
+                &ConceptNodeId("RuleCandidate:MISSING".into()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StoreError::NodeNotFound(_)));
+    }
+
+    /// inspect_supersede_compatibility ↔ apply_supersede step 9 characterization:
+    /// predicate false ise mutation IncompatibleSupersedeEndpoints döner (tek source).
+    /// Production path (SupersedeSession → apply_supersede) ile.
+    #[test]
+    fn inspect_supersede_compatibility_matches_apply_supersede_step9() {
+        use crate::anchoring::review::{PresentedSupersedeBasis, SupersedeSession};
+        let mut store = preview_store_with_nodes(vec![
+            preview_node(
+                "RuleCandidate:Old",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+            preview_node(
+                "Concept:New",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::Concept, // different kind → incompatible
+                PositionFamily::ConceptualIntent,
+            ),
+        ]);
+        let sup = ConceptNodeId("RuleCandidate:Old".into());
+        let suc = ConceptNodeId("Concept:New".into());
+        // predicate: incompatible (diff kind)
+        let compat = store.inspect_supersede_compatibility(&sup, &suc).unwrap();
+        assert!(!compat.is_compatible());
+        // mutation (production path): same verdict (tek source). SupersedeSession → apply_supersede.
+        let basis = PresentedSupersedeBasis::compile(&store, &sup, &suc).expect("basis");
+        let reason = NonEmptyExplanation::new("test").unwrap();
+        let mut session = SupersedeSession::open_for_operator(OperatorId::new("test"));
+        let err = session
+            .supersede(&mut store, &sup, &suc, basis, reason)
+            .unwrap_err();
+        // SupersedeError::Store(Box<IncompatibleSupersedeEndpoints>) — downcast ile doğrula.
+        use crate::anchoring::review::SupersedeError;
+        match err {
+            SupersedeError::Store(source) => {
+                assert!(
+                    source
+                        .downcast_ref::<StoreError>()
+                        .map_or(false, |e| matches!(
+                            e,
+                            StoreError::IncompatibleSupersedeEndpoints { .. }
+                        )),
+                    "mutation must match predicate (tek source), got source: {source}"
+                );
+            }
+            other => panic!("expected Store(IncompatibleSupersedeEndpoints), got {other:?}"),
+        }
+    }
+
+    /// committed_supersede_incoming_sources: committed incoming → [successor].
+    #[test]
+    fn committed_supersede_incoming_sources_returns_successor() {
+        let mut store = snap_store_with_candidates(&["RuleCandidate:Old", "RuleCandidate:New"]);
+        snap_accept(&mut store, "RuleCandidate:Old");
+        snap_accept(&mut store, "RuleCandidate:New");
+        snap_supersede(&mut store, "RuleCandidate:Old", "RuleCandidate:New"); // New→Old committed
+        let sources = store
+            .committed_supersede_incoming_sources(&ConceptNodeId("RuleCandidate:Old".into()))
+            .unwrap();
+        assert_eq!(sources, vec![ConceptNodeId("RuleCandidate:New".into())]);
+    }
+
+    /// committed_supersede_incoming_sources: Candidate proposal edge sayılmaz.
+    #[test]
+    fn committed_supersede_incoming_sources_ignores_candidate_proposal() {
+        let mut store = preview_store_with_nodes(vec![
+            preview_node(
+                "RuleCandidate:Old",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+            preview_node(
+                "RuleCandidate:New",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+        ]);
+        // Candidate proposal edge (decision_status Candidate) — sayılmamalı.
+        store.graph_mut().insert_edge(ConceptEdge {
+            from: ConceptNodeId("RuleCandidate:New".into()),
+            to: ConceptNodeId("RuleCandidate:Old".into()),
+            kind: ConceptEdgeKind::Supersedes,
+            decision_status: DecisionStatus::Candidate,
+            explanation: Some(
+                crate::anchoring::types::NonEmptyExplanation::from_validated("proposal".into()),
+            ),
+        });
+        let sources = store
+            .committed_supersede_incoming_sources(&ConceptNodeId("RuleCandidate:Old".into()))
+            .unwrap();
+        assert!(sources.is_empty(), "Candidate proposal must not count");
+    }
+
+    /// committed_supersede_incoming_sources: missing node → NodeNotFound.
+    #[test]
+    fn committed_supersede_incoming_sources_missing_node() {
+        let store = InMemoryAnchorStore::new();
+        let err = store
+            .committed_supersede_incoming_sources(&ConceptNodeId("RuleCandidate:MISSING".into()))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::NodeNotFound(_)));
+    }
+
+    /// committed_supersede_incoming_sources: invalid store, çoklu incoming → deterministik sorted.
+    /// (Validated snapshot INV-C15 ≤1; bu invalid direct-store davranışını sabitler.)
+    #[test]
+    fn committed_supersede_incoming_sources_multiple_deterministic() {
+        let mut store = preview_store_with_nodes(vec![
+            preview_node(
+                "RuleCandidate:Old",
+                DecisionStatus::SupersededAccepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+            preview_node(
+                "RuleCandidate:New1",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+            preview_node(
+                "RuleCandidate:New2",
+                DecisionStatus::Accepted,
+                ConceptNodeKind::RuleCandidate,
+                PositionFamily::ConceptualIntent,
+            ),
+        ]);
+        // İki committed incoming edge (invalid — INV-C15 ihlali, ama accessor dürüst davranır).
+        for succ in ["RuleCandidate:New2", "RuleCandidate:New1"] {
+            store.graph_mut().insert_edge(ConceptEdge {
+                from: ConceptNodeId(succ.into()),
+                to: ConceptNodeId("RuleCandidate:Old".into()),
+                kind: ConceptEdgeKind::Supersedes,
+                decision_status: DecisionStatus::Accepted,
+                explanation: Some(
+                    crate::anchoring::types::NonEmptyExplanation::from_validated("t".into()),
+                ),
+            });
+        }
+        let sources = store
+            .committed_supersede_incoming_sources(&ConceptNodeId("RuleCandidate:Old".into()))
+            .unwrap();
+        // Deterministik: ID ascending (New1 < New2).
+        assert_eq!(
+            sources,
+            vec![
+                ConceptNodeId("RuleCandidate:New1".into()),
+                ConceptNodeId("RuleCandidate:New2".into())
+            ]
+        );
+    }
+
+    /// would_create_supersede_cycle: existing B→A, proposed A→B → true.
+    #[test]
+    fn would_create_supersede_cycle_true() {
+        let mut store = snap_store_with_candidates(&[
+            "RuleCandidate:A",
+            "RuleCandidate:B",
+            "RuleCandidate:C",
+        ]);
+        snap_accept(&mut store, "RuleCandidate:A");
+        snap_accept(&mut store, "RuleCandidate:B");
+        snap_supersede(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // committed B→A
+        // proposed: A→B (superseded=B, successor=A) → B→A mevcut → cycle
+        assert!(store
+            .would_create_supersede_cycle(
+                &ConceptNodeId("RuleCandidate:B".into()), // superseded
+                &ConceptNodeId("RuleCandidate:A".into()), // successor
+            )
+            .unwrap());
+    }
+
+    /// would_create_supersede_cycle: unrelated endpoint → false.
+    #[test]
+    fn would_create_supersede_cycle_false() {
+        let mut store =
+            snap_store_with_candidates(&["RuleCandidate:A", "RuleCandidate:B", "RuleCandidate:C"]);
+        snap_accept(&mut store, "RuleCandidate:A");
+        snap_accept(&mut store, "RuleCandidate:B");
+        snap_accept(&mut store, "RuleCandidate:C");
+        snap_supersede(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // committed B→A
+        // proposed: A→C (C unrelated) → no cycle
+        assert!(!store
+            .would_create_supersede_cycle(
+                &ConceptNodeId("RuleCandidate:C".into()), // superseded
+                &ConceptNodeId("RuleCandidate:A".into()), // successor
+            )
+            .unwrap());
+    }
+
+    /// would_create_supersede_cycle: missing node → NodeNotFound.
+    #[test]
+    fn would_create_supersede_cycle_missing_node() {
+        let store = InMemoryAnchorStore::new();
+        let err = store
+            .would_create_supersede_cycle(
+                &ConceptNodeId("RuleCandidate:A".into()),
+                &ConceptNodeId("RuleCandidate:B".into()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, StoreError::NodeNotFound(_)));
+    }
+
+    /// Multi-blocker structural precedence characterization (store'a karşı, osp-core içinde).
+    /// Vaka: superseded already-superseded (committed incoming) + non-current + incompatible.
+    /// Store ilk hatası: AlreadySuperseded (step 5 < 6 < 9). Production path (SupersedeSession)
+    /// ile — direct application ctor bypass yerine, snap_supersede helper pattern.
+    #[test]
+    fn apply_supersede_precedence_already_superseded_before_status_and_compat() {
+        use crate::anchoring::review::PresentedSupersedeBasis;
+        let mut store = snap_store_with_candidates(&[
+            "RuleCandidate:Old",
+            "RuleCandidate:New",
+            "RuleCandidate:Newer",
+        ]);
+        snap_accept(&mut store, "RuleCandidate:Old");
+        snap_accept(&mut store, "RuleCandidate:New");
+        snap_accept(&mut store, "RuleCandidate:Newer");
+        snap_supersede(&mut store, "RuleCandidate:Old", "RuleCandidate:New"); // committed New→Old
+        // Şimdi Old=SupersededAccepted (incoming var, non-current). Tekrar supersede dene.
+        let sup = ConceptNodeId("RuleCandidate:Old".into());
+        let suc = ConceptNodeId("RuleCandidate:Newer".into());
+        let basis = PresentedSupersedeBasis::compile(&store, &sup, &suc);
+        // Old non-current (SupersededAccepted) → compile SupersededNotCurrent döner
+        // (session precheck, step 5'ten önce). Bu expected: production path store step 5'e
+        // ulaşmadan currentness precheck ile reddeder. Karakterizasyon: accessor doğruluğu.
+        assert!(basis.is_err(), "Old non-current → basis compile must reject");
+        // Store accessor doğruluğu (multi-blocker kaynağı):
+        let incoming = store.committed_supersede_incoming_sources(&sup).unwrap();
+        assert_eq!(incoming, vec![ConceptNodeId("RuleCandidate:New".into())]);
+        // Old artık non-current (SupersededAccepted) — is_current_mainline false.
+        let old_node = store.graph().node(&sup).unwrap();
+        assert!(!old_node.decision_status.is_current_mainline());
+        // Compatibility (aynı kind+family → compatible; bu vaka compat ile çelişmiyor).
+        let compat = store.inspect_supersede_compatibility(&sup, &suc).unwrap();
+        assert!(compat.is_compatible(), "same kind+family → compatible");
+    }
+
+    /// apply_supersede currentness accessor characterization: is_current_mainline() predicate
+    /// apply_supersede step 6-7 ile aynı source. Accepted → true; SupersededAccepted → false.
+    #[test]
+    fn is_current_mainline_matches_apply_supersede_currentness_gate() {
+        // Accepted → current mainline (supersedeable).
+        let accepted = preview_node(
+            "RuleCandidate:Ok",
+            DecisionStatus::Accepted,
+            ConceptNodeKind::RuleCandidate,
+            PositionFamily::ConceptualIntent,
+        );
+        assert!(accepted.decision_status.is_current_mainline());
+        // SupersededAccepted → not current (apply step 6 NotSupersedeableFrom döner).
+        let superseded = preview_node(
+            "RuleCandidate:Old",
+            DecisionStatus::SupersededAccepted,
+            ConceptNodeKind::RuleCandidate,
+            PositionFamily::ConceptualIntent,
+        );
+        assert!(!superseded.decision_status.is_current_mainline());
+        // Rejected / Candidate → not current.
+        assert!(!DecisionStatus::Rejected.is_current_mainline());
+        assert!(!DecisionStatus::Candidate.is_current_mainline());
     }
 }
