@@ -636,14 +636,12 @@ fn build_successor_lineage(
     let mut nodes: Vec<SupersedeLineageNode> = Vec::new();
     let mut edges: Vec<SupersedeLineageEdge> = Vec::new();
     let mut visited: BTreeSet<String> = BTreeSet::new();
-    let mut node_depths: BTreeMap<String, usize> = BTreeMap::new();
     let mut truncated_by_depth = false;
     let mut truncated_by_nodes = false;
 
     let mut queue: VecDeque<(String, usize)> = VecDeque::new();
     queue.push_back((root.0.clone(), 0));
     visited.insert(root.0.clone());
-    node_depths.insert(root.0.clone(), 0);
 
     while let Some((current, depth)) = queue.pop_front() {
         if nodes.len() >= MAX_PREVIEW_LINEAGE_NODES {
@@ -673,7 +671,6 @@ fn build_successor_lineage(
                 });
                 if !visited.contains(target) {
                     visited.insert(target.clone());
-                    node_depths.insert(target.clone(), depth + 1);
                     if nodes.len() + queue.len() >= MAX_PREVIEW_LINEAGE_NODES {
                         truncated_by_nodes = true;
                         // Edge eklendi ama target node limit yüzünden dahil edilmedi → closed-output
@@ -1290,5 +1287,49 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, ReviewError::NotFound(_)));
+    }
+
+    /// Closed-output invariant: lineage DAG'deki her edge from/to nodes içinde.
+    /// INV-C15 altında diamond (bir node'a iki incoming) validated snapshot'ta kurulamaz
+    /// (her superseded node ≤1 incoming committed edge); bu test closed-output'u chain +
+    /// consolidation ile doğrular. Builder invalid/direct-store'da da invariant'ı korur.
+    #[test]
+    fn preview_lineage_closed_output_invariant() {
+        // Consolidation: C→A, C→B (successor outgoing branching). Validated INV-C15 altında legal.
+        let mk = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.split(':').nth(1).unwrap_or(id).into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::RuleCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.rule_candidates.push(mk("RuleCandidate:A"));
+        seed.rule_candidates.push(mk("RuleCandidate:B"));
+        seed.rule_candidates.push(mk("RuleCandidate:C"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:C"); // C→A
+        supersede_in_place(&mut store, "RuleCandidate:B", "RuleCandidate:C"); // C→B
+        let preview = build_supersede_preview(
+            &store,
+            &ConceptNodeId("RuleCandidate:A".into()),
+            &ConceptNodeId("RuleCandidate:C".into()),
+            3,
+        )
+        .unwrap();
+        assert_eq!(preview.lineage.root, "RuleCandidate:C");
+        // Closed-output: her edge from/to nodes içinde.
+        let node_ids: std::collections::BTreeSet<String> =
+            preview.lineage.nodes.iter().map(|n| n.id.clone()).collect();
+        assert!(!preview.lineage.edges.is_empty(), "expected lineage edges");
+        for e in &preview.lineage.edges {
+            assert!(
+                node_ids.contains(&e.from) && node_ids.contains(&e.to),
+                "closed-output violation: edge {} → {} endpoint not in nodes",
+                e.from,
+                e.to
+            );
+        }
     }
 }

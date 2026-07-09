@@ -295,8 +295,8 @@ wizard confirmation **tek canonical model + tek renderer** kullanır (divergence
 ### Testler (0 regression)
 - **osp-core lib:** 526 → 538 (+12: compatibility matrix, incoming accessor 4 vaka, cycle 3 vaka,
   step-9 characterization, currentness, multi-blocker precedence).
-- **osp-cli unit:** 26 → 36 (+10 preview builder: mutlu yol, self/already/incompatible-kind/family/
-  non-current/cycle/lineage chain/consolidation/missing).
+- **osp-cli unit:** 26 → 37 (+11 preview builder: mutlu yol, self/already/incompatible-kind/family/
+  non-current/cycle/lineage chain/consolidation/missing/closed-output invariant).
 - **osp-cli integration:** supersede_flow 20 (güncellenen — rich preview body) + review_flow 21
   (değişmedi) + **preview_flow 10** (yeni: mutlu yol text/json, incompatible, cycle, lineage chain,
   missing, ineligible exit 0, self, non-accepted, wizard ineligible).
