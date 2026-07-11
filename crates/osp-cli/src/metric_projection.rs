@@ -14,8 +14,6 @@
 //! value → confidence → coverage doğrulaması source admission'dan ÖNCE. Placeholder + NaN
 //! sessizce skip edilmez → InvalidMetric error. Tutarlılık > kullanılabilirlik.
 
-use std::collections::BTreeMap;
-
 use osp_analyzer::contract::AnalysisResult;
 use osp_core::anchoring::types::{ConceptNodeId, ObservedCodeMetricSource};
 use osp_core::coords::MetricSource;
@@ -220,13 +218,14 @@ pub(crate) struct AnalysisMetricProjection {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct MetricProjectionReport {
     pub module_nodes_seen: usize,
-    pub input_axis_values: usize, // N6: == module_nodes_seen × 3 (başarılı projection)
+    pub input_axis_values: usize,
     pub projected_axis_values: usize,
     pub skipped_placeholder: usize,
     pub skipped_heuristic: usize,
     pub skipped_zero_confidence: usize,
-    pub analyzer_provided_axes: AxisSet,
-    pub analyzer_unavailable_axes: AxisSet,
+    pub analyzer_declared_axes: AxisSet,   // capability (analyzer declares 3 axes)
+    pub analyzer_unavailable_axes: AxisSet, // capability (entropy/witness_depth)
+    pub projected_axes: AxisSet,           // actually projected after admission (distinct from declared)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -295,15 +294,15 @@ pub(crate) fn project_code_metrics(
     analysis: &AnalysisResult,
     identity_index: &crate::analysis_bridge::AnalysisProjectionIndex,
 ) -> Result<AnalysisMetricProjection, MetricProjectionError> {
-    // Analyzer capability: 3 axis sağlar, 2 sağlamaz.
-    let analyzer_provided_axes =
+    // Analyzer capability: 3 axis declares, 2 unavailable.
+    let analyzer_declared_axes =
         AxisSet::from_axes(&[PhysicalCodeAxis::Coupling, PhysicalCodeAxis::Cohesion, PhysicalCodeAxis::Instability]);
     let analyzer_unavailable_axes =
         AxisSet::from_axes(&[PhysicalCodeAxis::Entropy, PhysicalCodeAxis::WitnessDepth]);
 
     let mut metrics: Vec<ProjectedCodeMetric> = Vec::new();
     let mut report = MetricProjectionReport {
-        analyzer_provided_axes,
+        analyzer_declared_axes,
         analyzer_unavailable_axes,
         ..Default::default()
     };
@@ -318,7 +317,7 @@ pub(crate) fn project_code_metrics(
         .collect();
 
     // Duplicate (ConceptNodeId, axis) detection — String key (ConceptNodeId Ord değil).
-    let mut seen: BTreeMap<(String, u8), ()> = BTreeMap::new();
+    let mut seen: std::collections::BTreeSet<(String, u8)> = std::collections::BTreeSet::new();
 
     for node_id in &module_node_ids {
         report.module_nodes_seen += 1;
@@ -390,9 +389,10 @@ pub(crate) fn project_code_metrics(
                 continue;
             }
 
-            // Duplicate (ConceptNodeId, axis) — many-to-one collision (N7 plan #7).
+            // Duplicate (ConceptNodeId, axis) — many-to-one collision.
+            // Assembler yolundan unreachable (try_new önce); defensive invariant.
             let dedup_key = (concept_id.0.clone(), axis.stable_rank());
-            if !seen.insert(dedup_key, ()).is_none() {
+            if !seen.insert(dedup_key) {
                 return Err(MetricProjectionError::DuplicateProjectedAxis {
                     node_id: concept_id.clone(),
                     axis,
@@ -410,6 +410,10 @@ pub(crate) fn project_code_metrics(
                 },
             });
             report.projected_axis_values += 1;
+            // projected_axes: actually emitted axes after admission (distinct from declared).
+            let mut pa = report.projected_axes;
+            pa = pa.union(AxisSet::from_axes(&[axis]));
+            report.projected_axes = pa;
         }
     }
 
@@ -526,15 +530,15 @@ mod tests {
         };
         let (analysis, index) = analysis_with_metrics(vec![(1, "src/a.rs", metrics)]);
         let proj = project_code_metrics(&analysis, &index).unwrap();
-        let all = proj.report.analyzer_provided_axes.union(proj.report.analyzer_unavailable_axes);
+        let all = proj.report.analyzer_declared_axes.union(proj.report.analyzer_unavailable_axes);
         assert!(all.contains(PhysicalCodeAxis::Coupling));
         assert!(all.contains(PhysicalCodeAxis::Cohesion));
         assert!(all.contains(PhysicalCodeAxis::Instability));
         assert!(all.contains(PhysicalCodeAxis::Entropy));
         assert!(all.contains(PhysicalCodeAxis::WitnessDepth));
         // No overlap.
-        assert!(!proj.report.analyzer_provided_axes.contains(PhysicalCodeAxis::Entropy));
-        assert!(!proj.report.analyzer_provided_axes.contains(PhysicalCodeAxis::WitnessDepth));
+        assert!(!proj.report.analyzer_declared_axes.contains(PhysicalCodeAxis::Entropy));
+        assert!(!proj.report.analyzer_declared_axes.contains(PhysicalCodeAxis::WitnessDepth));
     }
 
     // ── Source admission skip (N4: Heuristic defensive policy) ────────────────
@@ -766,18 +770,25 @@ mod tests {
 
     #[test]
     fn c5_pass_through_preserves_confidence_and_coverage() {
+        // C5: pass-through — analyzer MetricValue.confidence/coverage değiştirilmeden taşınır.
+        // Formula kopyalanmaz: MetricValue'nun kendi field'ıyla karşılaştır (analyzer katsayısı
+        // değişirse test yanlış nedenle kırılmaz).
+        let coupling_mv = MetricValue::tree_sitter(0.4, 0.82);
         let metrics = ModuleMetrics {
-            coupling: MetricValue::tree_sitter(0.4, 0.82), // conf=0.75×0.82≈0.615
+            coupling: coupling_mv.clone(),
             cohesion: ts(0.7),
             instability: ts(0.3),
         };
         let (analysis, index) = analysis_with_metrics(vec![(1, "src/a.rs", metrics)]);
         let proj = project_code_metrics(&analysis, &index).unwrap();
-        let coupling_metric = proj.metrics.iter().find(|m| m.axis() == PhysicalCodeAxis::Coupling).unwrap();
-        // Pass-through: analyzer confidence/coverage değiştirilmeden taşınır (formül kopyalanmaz).
-        let expected_conf = 0.75 * 0.82;
-        assert!((coupling_metric.provenance().confidence().get() - expected_conf).abs() < 1e-9);
-        assert!((coupling_metric.provenance().coverage().get() - 0.82).abs() < 1e-9);
+        let coupling_metric = proj
+            .metrics
+            .iter()
+            .find(|m| m.axis() == PhysicalCodeAxis::Coupling)
+            .unwrap();
+        // MetricValue'nun kendi alanlarıyla birebir karşılaştır (formül bilgisi YOK).
+        assert_eq!(coupling_metric.provenance().confidence().get(), coupling_mv.confidence);
+        assert_eq!(coupling_metric.provenance().coverage().get(), coupling_mv.coverage);
     }
 
     // ── N6 invariant: input_axis_values == module_nodes_seen × 3 ─────────────
@@ -795,5 +806,61 @@ mod tests {
         ]);
         let proj = project_code_metrics(&analysis, &index).unwrap();
         assert_eq!(proj.report.input_axis_values, proj.report.module_nodes_seen * 3);
+    }
+
+    // ── Many-to-one collision: DuplicateProjectedAxis ─────────────────────────
+    // Assembler yolundan unreachable (try_new önce yakalar) ama for_tests ile
+    // iki node → aynı ConceptNodeId mümkün. Defensive invariant test.
+
+    #[test]
+    fn many_to_one_collision_is_duplicate_axis_error() {
+        let metrics = ModuleMetrics {
+            coupling: ts(0.5),
+            cohesion: ts(0.7),
+            instability: ts(0.3),
+        };
+        let mut space = Space::default();
+        let mut node_paths = HashMap::new();
+        let mut module_metrics_map = HashMap::new();
+        // İki node, farklı path'ler ama index'te aynı ConceptNodeId'ye map.
+        for (id, path) in [(1u64, "src/a.rs"), (2u64, "src/b.rs")] {
+            space.nodes.insert(
+                id,
+                Node {
+                    id,
+                    kind: NodeKind::Module,
+                    mass: 10.0,
+                    ..Default::default()
+                },
+            );
+            node_paths.insert(id, path.to_string());
+            module_metrics_map.insert(id, metrics.clone());
+        }
+        let analysis = AnalysisResult {
+            space,
+            module_metrics: module_metrics_map,
+            node_paths,
+            node_semantics: HashMap::new(),
+            node_witnesses: HashMap::new(),
+            repo_metrics: RepoMetrics {
+                abstractness: MetricValue::placeholder(0.0),
+                main_sequence_distance: MetricValue::placeholder(0.0),
+                abstractness_by_package: None,
+            },
+            semantic_coverage: SemanticCoverage::none("testhead".into()),
+            diagnostics: vec![],
+        };
+        // İki analyzer node → aynı ConceptNodeId (many-to-one).
+        let shared_concept_id = ConceptNodeId("CodeEntityCandidate:src/shared.rs".into());
+        let index = AnalysisProjectionIndex::for_tests(vec![
+            (1, shared_concept_id.clone()),
+            (2, shared_concept_id.clone()),
+        ])
+        .unwrap();
+        let err = project_code_metrics(&analysis, &index).unwrap_err();
+        assert!(
+            matches!(err, MetricProjectionError::DuplicateProjectedAxis { .. }),
+            "many-to-one collision must produce DuplicateProjectedAxis, got {err:?}"
+        );
     }
 }

@@ -161,7 +161,10 @@ impl AnalysisProjectionIndex {
         Self::default()
     }
 
-    /// Insert — duplicate analysis node → error (N5: index injectivity invariant).
+    /// Insert — duplicate analysis NodeId key → error (source key uniqueness).
+    /// NOT injective on ConceptNodeId value: many-to-one (two NodeId → same ConceptNodeId)
+    /// is allowed at index level; detected downstream by DuplicateProjectedAxis in metric projection.
+    /// Production candidate seed dedup (try_new) catches this before metric projection in assembler path.
     fn insert(
         &mut self,
         analysis_node_id: NodeId,
