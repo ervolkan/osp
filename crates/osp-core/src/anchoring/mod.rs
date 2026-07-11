@@ -32,6 +32,7 @@ pub mod code_evidence;
 pub mod edit_distance;
 pub mod extractor;
 pub mod gate;
+pub mod identity;
 pub mod pipeline;
 pub mod predicate_lowering;
 pub mod review;
@@ -56,6 +57,8 @@ pub use types::{
     PhysicalAxisValue, PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector,
     ScalarSimilarity, SimilarityOutOfRange,
 };
+// PR E — CodeIdentityBinding (types.rs'te, store-owned binding katmanı)
+pub use types::CodeIdentityBinding;
 // Faz 5a/5b/5.1 — predicate lowering tipleri
 pub use predicate_lowering::{
     bind_metric_threshold, lower_rule_to_predicate_stub, merge_axis_hints, AxisHint,
@@ -64,6 +67,11 @@ pub use predicate_lowering::{
     NormalizedMetricThreshold, NormalizedMetricThresholdError, PhysicalCodeMetricAxis,
     PredicateLoweringError, PredicateLoweringOutcome, PredicateSlot, PredicateStub,
     PredicateStubError, PredicateStubReason, PredicateTemplateId, TranslationAmbiguity, ALL_SLOTS,
+};
+// PR E — physical code identity tipleri
+pub use identity::{
+    derive_resolved_code_entity_id, CodeIdentityKey, CodeIdentityKeyError, CodeIdentityScheme,
+    CodePathCasePolicy,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -183,6 +191,15 @@ impl DecisionStatus {
     pub const fn preserves_accepted_provenance(self) -> bool {
         matches!(self, Self::Accepted | Self::SupersededAccepted)
     }
+
+    /// PR E (tur 3 P2-B) — R7 "live CodeEntity" predicate.
+    ///
+    /// Bir CodeEntity node'unun "live" (resolvable target / reuse candidate) olup olmadığı.
+    /// `Candidate` (yeni oluşturulan entity henüz review'dan geçmemiş) ve `Accepted` live;
+    /// `Rejected`/`Deprecated`/`SupersededAccepted` live değil (`EntityNotLiveForResolution`).
+    pub const fn is_live_code_identity(self) -> bool {
+        matches!(self, Self::Candidate | Self::Accepted)
+    }
 }
 
 /// İnsan/metin girdisinin ontolojik paket türü (§12 Q1).
@@ -204,13 +221,13 @@ pub enum ConceptPacketType {
     AntiGoal,
 }
 
-/// Concept graph edge türleri (§8.3). 15 = 14 ontolojik + 1 meta.
+/// Concept graph edge türleri (§8.3). 16 = 15 ontolojik + 1 meta.
 ///
-/// High-stake (10): INV-C7 gereği explanation zorunlu. Düşük-stake (4): opsiyonel.
+/// High-stake (11): INV-C7 gereği explanation zorunlu. Düşük-stake (4): opsiyonel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum ConceptEdgeKind {
-    // --- 14 ontolojik ---
+    // --- 15 ontolojik ---
     Mentions,
     Refines,
     DerivesRule,
@@ -225,6 +242,10 @@ pub enum ConceptEdgeKind {
     RelatedTo,
     AntiGoalOf,
     DependsOnDecision,
+    /// PR E — identity resolution: CodeEntityCandidate → CodeEntity (operator-reviewed identity fact).
+    /// Semantik: promotion/acceptance DEĞİL; geçici/hipotetik ontolojik temsilin kanonik fiziksel
+    /// varlığa bağlanması. Source yalnız CodeEntityCandidate; target yalnız CodeEntity (R3/R4).
+    ResolvesTo,
     // --- 1 meta ---
     HasPosition,
 }
@@ -244,6 +265,7 @@ impl ConceptEdgeKind {
                 | Self::Contradicts
                 | Self::Supersedes
                 | Self::AntiGoalOf
+                | Self::ResolvesTo
         )
     }
 }

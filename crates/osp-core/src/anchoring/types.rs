@@ -18,7 +18,10 @@ use crate::anchoring::{
 pub struct ConceptPacketId(pub String);
 
 /// ConceptNode newtype ID'si — typed-prefix formatı ("Concept:Payment").
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// PR E: `Ord`/`PartialOrd` eklendi (BTreeMap key — store-owned identity bindings deterministik
+/// sort için). String Ord olduğu için lexicographic sıralama güvenli.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ConceptNodeId(pub String);
 
@@ -1688,6 +1691,23 @@ impl GraphSeed {
             .chain(self.task_candidates.iter())
             .chain(self.risk_candidates.iter())
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E — CodeIdentityBinding (store-owned identity binding katmanı, tur 3 P1-A)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Node ↔ physical code identity binding (store-owned; `ConceptNode` alanı DEĞİL).
+///
+/// # PR E (tur 3 P1-A)
+/// `CodeIdentityKey` node'nun alanı değil; store-owned `BTreeMap<ConceptNodeId, CodeIdentityKey>`
+/// üzerinden node'lara bağlanır. Universal `ConceptNode` büyümez; yalnız PhysicalCode node'ları
+/// binding taşır. Candidate ve Entity aynı key'e bağlanabilir (R2); snapshot validator R2/R7'yi
+/// doğrular. PR F provider migration doğrudan bu indeksi kullanır.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CodeIdentityBinding {
+    pub node_id: ConceptNodeId,
+    pub identity_key: crate::anchoring::identity::CodeIdentityKey,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

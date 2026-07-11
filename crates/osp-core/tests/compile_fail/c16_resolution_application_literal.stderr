@@ -1,0 +1,21 @@
+error[E0432]: unresolved import `osp_core::anchoring::SessionId`
+ --> tests/compile_fail/c16_resolution_application_literal.rs:6:5
+  |
+6 | use osp_core::anchoring::SessionId;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `SessionId` in `anchoring`
+
+error[E0603]: struct `NonEmptyExplanation` is private
+ --> tests/compile_fail/c16_resolution_application_literal.rs:5:35
+  |
+5 | use osp_core::anchoring::review::{NonEmptyExplanation, PresentedResolutionBasis};
+  |                                   ^^^^^^^^^^^^^^^^^^^ private struct
+  |
+note: the struct `NonEmptyExplanation` is defined here
+ --> src/anchoring/review.rs
+  |
+  | use crate::anchoring::types::{ConceptNode, ConceptNodeId, NonEmptyExplanation};
+  |                                                           ^^^^^^^^^^^^^^^^^^^
+help: import `NonEmptyExplanation` directly
+  |
+5 | use osp_core::anchoring::review::{osp_core::anchoring::types::NonEmptyExplanation, PresentedResolutionBasis};
+  |                                   ++++++++++++++++++++++++++++

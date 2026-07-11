@@ -40,8 +40,8 @@ pub struct PersistedStore {
 }
 
 impl PersistedStore {
-    /// Mevcut envelope schema version.
-    pub const STORE_SCHEMA_VERSION: u32 = 1;
+    /// Mevcut envelope schema version (PR E: v1 → v2; resolution ledger + identity bindings).
+    pub const STORE_SCHEMA_VERSION: u32 = 2;
 
     /// Boş (fresh) envelope — revision 0, boş store. `osp graph init` ilk yazımda.
     pub fn from_snapshot(snapshot: AnchorStoreSnapshot) -> Self {
@@ -50,6 +50,54 @@ impl PersistedStore {
             revision: 0,
             snapshot,
         }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E — v1 → v2 migration (tur 3 P1-1 gerçek envelope shape)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Legacy v1 inner snapshot (graph + 2 ledger + audit_seq; resolution/binding YOK).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AnchorStoreSnapshotV1 {
+    graph: osp_core::anchoring::types::ConceptGraphSnapshot,
+    decision_records: Vec<osp_core::anchoring::review::DecisionRecord>,
+    supersede_records: Vec<osp_core::anchoring::review::SupersedeRecord>,
+    audit_sequence: u64,
+}
+
+/// Legacy v1 outer envelope (version + revision + snapshot_v1).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedStoreV1 {
+    store_schema_version: u32, // = 1
+    revision: u64,
+    snapshot: AnchorStoreSnapshotV1,
+}
+
+/// Header — yalnız version okuma (tur 3 P1-1 version dispatch).
+#[derive(Debug, serde::Deserialize)]
+struct PersistedStoreHeader {
+    store_schema_version: u32,
+}
+
+/// v1 → v2 migration: revision korunur; resolution_records + code_identity_bindings boş;
+/// graph + decision + supersede ledger + audit_sequence değişmeden migrate.
+impl TryFrom<PersistedStoreV1> for PersistedStore {
+    type Error = crate::errors::StoreIoError;
+
+    fn try_from(v1: PersistedStoreV1) -> Result<Self, Self::Error> {
+        Ok(Self {
+            store_schema_version: Self::STORE_SCHEMA_VERSION,
+            revision: v1.revision,
+            snapshot: AnchorStoreSnapshot {
+                graph: v1.snapshot.graph,
+                decision_records: v1.snapshot.decision_records,
+                supersede_records: v1.snapshot.supersede_records,
+                resolution_records: Vec::new(),
+                code_identity_bindings: Vec::new(),
+                audit_sequence: v1.snapshot.audit_sequence,
+            },
+        })
     }
 }
 
@@ -228,24 +276,45 @@ fn atomic_rename(from: &Path, to: &Path) -> Result<(), std::io::Error> {
     std::fs::rename(from, to)
 }
 
-/// Canonical store dosyasını oku (PersistedStore deserialize).
+/// Canonical store dosyasını oku (PersistedStore deserialize) + v1→v2 migration.
+///
+/// PR E (tur 3 P1-1): header-based version dispatch.
+///   - v1 → PersistedStoreV1 deserialize → TryFrom → PersistedStore (v2 migration)
+///   - v2 → PersistedStore deserialize (direct)
+///   - başka → UnsupportedStoreSchema reject
 pub fn read_persisted_store(store_path: &Path) -> Result<PersistedStore, StoreIoError> {
     let data = std::fs::read(store_path).map_err(|e| StoreIoError::Read {
         path: store_path.to_path_buf(),
         source: e,
     })?;
-    let persisted: PersistedStore =
+    // Header-based version dispatch (yalnız store_schema_version oku).
+    let header: PersistedStoreHeader =
         serde_json::from_slice(&data).map_err(|e| StoreIoError::Deserialize {
             path: store_path.to_path_buf(),
             source: e,
         })?;
-    if persisted.store_schema_version != PersistedStore::STORE_SCHEMA_VERSION {
-        return Err(StoreIoError::UnsupportedStoreSchema {
+    match header.store_schema_version {
+        1 => {
+            // v1 → migrate → v2.
+            let v1: PersistedStoreV1 =
+                serde_json::from_slice(&data).map_err(|e| StoreIoError::Deserialize {
+                    path: store_path.to_path_buf(),
+                    source: e,
+                })?;
+            v1.try_into()
+        }
+        2 => {
+            // v2 direct.
+            serde_json::from_slice(&data).map_err(|e| StoreIoError::Deserialize {
+                path: store_path.to_path_buf(),
+                source: e,
+            })
+        }
+        other => Err(StoreIoError::UnsupportedStoreSchema {
             expected: PersistedStore::STORE_SCHEMA_VERSION,
-            found: persisted.store_schema_version,
-        });
+            found: other,
+        }),
     }
-    Ok(persisted)
 }
 
 /// PersistedStore'u canonical dosyaya atomik yaz (revision envelope içinde).
@@ -339,6 +408,61 @@ mod tests {
         assert_eq!(back, p);
     }
 
+    /// PR E (tur 3 P1-1) — v1 store migrates to v2 (empty resolution ledger; revision preserved).
+    #[test]
+    fn v1_store_migrates_to_v2_empty_resolution_ledger() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("store.json");
+        // Legacy v1 store (revision=42, audit_sequence=7) yaz.
+        let v1 = PersistedStoreV1 {
+            store_schema_version: 1,
+            revision: 42,
+            snapshot: AnchorStoreSnapshotV1 {
+                graph: osp_core::anchoring::types::ConceptGraphSnapshot {
+                    nodes: vec![],
+                    edges: vec![],
+                    schema_version: 1,
+                },
+                decision_records: vec![],
+                supersede_records: vec![],
+                audit_sequence: 7,
+            },
+        };
+        let v1_json = serde_json::to_vec_pretty(&v1).unwrap();
+        std::fs::write(&path, v1_json).unwrap();
+        // Read → migration → v2.
+        let migrated = read_persisted_store(&path).unwrap();
+        assert_eq!(migrated.store_schema_version, 2);
+        assert_eq!(migrated.revision, 42, "revision preserved (tur 3 P1-1)");
+        assert_eq!(migrated.snapshot.audit_sequence, 7, "audit_sequence preserved");
+        assert!(
+            migrated.snapshot.resolution_records.is_empty(),
+            "v1 → v2 boş resolution ledger"
+        );
+        assert!(
+            migrated.snapshot.code_identity_bindings.is_empty(),
+            "v1 → v2 boş identity bindings"
+        );
+    }
+
+    /// PR E (tur 3 P1-1) — header dispatch rejects unknown version.
+    #[test]
+    fn header_dispatch_rejects_unknown_version() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("store.json");
+        let mut p = empty_persisted();
+        p.store_schema_version = 3; // bilinmeyen version
+        write_persisted_store(&path, &p).unwrap();
+        let err = read_persisted_store(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            StoreIoError::UnsupportedStoreSchema {
+                expected: 2,
+                found: 3
+            }
+        ));
+    }
+
     /// Schema mismatch → StoreIoError::UnsupportedStoreSchema.
     #[test]
     fn read_rejects_unsupported_store_schema() {
@@ -351,7 +475,7 @@ mod tests {
         assert!(matches!(
             err,
             StoreIoError::UnsupportedStoreSchema {
-                expected: 1,
+                expected: 2,
                 found: 999
             }
         ));

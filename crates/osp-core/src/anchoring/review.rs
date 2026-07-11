@@ -792,6 +792,54 @@ pub(crate) fn supersede_basis_fingerprint(basis: &PresentedSupersedeBasis) -> [u
     out
 }
 
+/// PR E — Resolution basis fingerprint (SupersedeRecord mirror; domain-tag `osp:resolution-basis:v1`).
+pub(crate) fn resolution_basis_fingerprint(basis: &PresentedResolutionBasis) -> [u8; 32] {
+    const FNV_OFFSET_1: u64 = 0xcbf29ce484222325;
+    const FNV_OFFSET_2: u64 = 0x84222325cbf29ce4;
+    const FNV_OFFSET_3: u64 = 0x100000001b3a1b3a;
+    const FNV_OFFSET_4: u64 = 0x254a1b3a0d1e0853;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    fn feed(h: &mut u64, bytes: &[u8]) {
+        for &b in bytes {
+            *h ^= b as u64;
+            *h = h.wrapping_mul(FNV_PRIME);
+        }
+    }
+    fn feed_field(h: &mut u64, bytes: &[u8]) {
+        feed(h, &(bytes.len() as u64).to_le_bytes());
+        feed(h, bytes);
+    }
+
+    let (mut h1, mut h2, mut h3, mut h4) = (FNV_OFFSET_1, FNV_OFFSET_2, FNV_OFFSET_3, FNV_OFFSET_4);
+    for h in [&mut h1, &mut h2, &mut h3, &mut h4] {
+        feed_field(h, b"osp:resolution-basis:v1"); // domain tag
+        feed_field(h, basis.candidate_id().0.as_bytes());
+        feed_field(h, &basis.candidate_digest().get().to_le_bytes());
+        feed_field(h, basis.identity_key().canonical_key().as_bytes());
+        match basis.target() {
+            PresentedResolutionTarget::Create { proposed_entity_id } => {
+                feed_field(h, b"Create");
+                feed_field(h, proposed_entity_id.0.as_bytes());
+            }
+            PresentedResolutionTarget::Reuse {
+                entity_id,
+                entity_digest,
+            } => {
+                feed_field(h, b"Reuse");
+                feed_field(h, entity_id.0.as_bytes());
+                feed_field(h, &entity_digest.get().to_le_bytes());
+            }
+        }
+    }
+    let mut out = [0u8; 32];
+    out[0..8].copy_from_slice(&h1.to_le_bytes());
+    out[8..16].copy_from_slice(&h2.to_le_bytes());
+    out[16..24].copy_from_slice(&h3.to_le_bytes());
+    out[24..32].copy_from_slice(&h4.to_le_bytes());
+    out
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Faz 8b (PR #50): SupersedeSession — production authority boundary (INV-C15 production path)
 //
@@ -980,6 +1028,330 @@ impl SupersedeSession {
             session_id: self.session_id,
             operator: self.operator,
             supersedes: self.supersedes,
+        }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+    pub fn operator(&self) -> &OperatorId {
+        &self.operator
+    }
+    pub fn opened_at(&self) -> SystemTime {
+        self.opened_at
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E — CodeEntityResolutionSession (identity resolution; SupersedeSession mirror)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// CodeEntityCandidate ─ResolvesTo→ CodeEntity identity resolution. SupersedeSession pattern'ini
+// mirror eder: PresentedResolutionBasis (compile) + ResolutionApplication (opaque, session üretir)
+// + ResolutionRecord (audit) + CodeEntityResolutionSession (atomik resolve).
+//
+// # Ontolojik sözleşme (tur 1+2+3)
+// node identity ≠ physical code identity. Resolution acceptance DEĞİL; geçici/hipotetik ontolojik
+// temsilin kanonik fiziksel varlığa bağlanması. Source Accepted kalır; target Created=Candidate
+// (otomatik mainline'a alınmaz), Reused=existing live entity. Edge Accepted + explanation (INV-C7).
+
+use crate::anchoring::identity::CodeIdentityKey;
+
+/// Resolution outcome — Created (yeni entity) veya Reused (mevcut live entity).
+///
+/// tur 3 P1-D: `PresentedResolutionBasis` target'ı pinler; create→reuse sessiz dönüşümü YOK
+/// (`StaleResolutionTarget`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", content = "payload")]
+pub enum ResolutionOutcome {
+    /// Yeni CodeEntity node oluşturuldu (deterministic material from identity key).
+    Created { entity_id: ConceptNodeId },
+    /// Mevcut live CodeEntity yeniden kullanıldı (N:1 cardinality, R7).
+    Reused { entity_id: ConceptNodeId },
+}
+
+/// Basis target — operator'ın gördüğü outcome pinlenir (tur 3 P1-D).
+///
+/// Create: `proposed_entity_id` deterministic derivation'dan.
+/// Reuse: mevcut live entity ID + digest (freshness için).
+#[derive(Debug, Clone, PartialEq)]
+pub enum PresentedResolutionTarget {
+    Create {
+        proposed_entity_id: ConceptNodeId,
+    },
+    Reuse {
+        entity_id: ConceptNodeId,
+        entity_digest: NodeDigest,
+    },
+}
+
+/// Resolution basis — store'dan derlenir (INV-C12 freshness). Target outcome pinlenir.
+///
+/// Mevcut `PresentedBasis::compile` Candidate-only (candidate_query); Accepted source için
+/// ayrı compile yolu (tur 2 nokta 3 + tur 3 P2-F). `PresentedResolutionBasis::compile`
+/// `resolution_basis_view` üzerinden view alır → digest/fingerprint üretir.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PresentedResolutionBasis {
+    candidate_id: ConceptNodeId,
+    candidate_digest: NodeDigest,
+    identity_key: CodeIdentityKey,
+    target: PresentedResolutionTarget, // create vs reuse pin
+    compiled_at: SystemTime,
+}
+
+impl PresentedResolutionBasis {
+    /// Canonical pre-state compiler (tur 2 nokta 3 + tur 3 P2-F). Accepted candidate için ayrı yol.
+    pub fn compile<S: crate::anchoring::store::AnchorStore + ?Sized>(
+        store: &S,
+        candidate_id: &ConceptNodeId,
+    ) -> Result<Self, ResolutionError>
+    where
+        S::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let view = store
+            .resolution_basis_view(candidate_id)
+            .map_err(|e| ResolutionError::Store(Box::new(e)))?;
+        let candidate_digest =
+            crate::anchoring::review::node_digest(&view.candidate);
+        let target = match view.target {
+            crate::anchoring::store::ResolutionTargetView::Create { proposed_entity_id } => {
+                PresentedResolutionTarget::Create { proposed_entity_id }
+            }
+            crate::anchoring::store::ResolutionTargetView::Reuse { entity } => {
+                PresentedResolutionTarget::Reuse {
+                    entity_id: entity.id.clone(),
+                    entity_digest: crate::anchoring::review::node_digest(&entity),
+                }
+            }
+        };
+        Ok(Self {
+            candidate_id: candidate_id.clone(),
+            candidate_digest,
+            identity_key: view.identity_key,
+            target,
+            compiled_at: SystemTime::now(),
+        })
+    }
+
+    pub fn candidate_id(&self) -> &ConceptNodeId {
+        &self.candidate_id
+    }
+    pub fn candidate_digest(&self) -> NodeDigest {
+        self.candidate_digest
+    }
+    pub fn identity_key(&self) -> &CodeIdentityKey {
+        &self.identity_key
+    }
+    pub fn target(&self) -> &PresentedResolutionTarget {
+        &self.target
+    }
+    pub fn compiled_at(&self) -> SystemTime {
+        self.compiled_at
+    }
+}
+
+/// Opaque application — yalnız Session üretir (private fields + pub(crate) new + no Deserialize).
+///
+/// tur 3 P2-E sadeleşme: redundant `entity_id`/`identity_key`/`outcome` çıkarıldı; basis
+/// authoritative (tek representation — store defense-in-depth basis'ten okur).
+#[derive(Debug, Clone)]
+pub struct ResolutionApplication {
+    candidate_id: ConceptNodeId,
+    basis: PresentedResolutionBasis,
+    reason: NonEmptyExplanation,
+    session_id: SessionId,
+    operator: OperatorId,
+    resolved_at: SystemTime,
+}
+
+impl ResolutionApplication {
+    /// Session (TCB içi) constructor.
+    pub(crate) fn new(
+        candidate_id: ConceptNodeId,
+        basis: PresentedResolutionBasis,
+        reason: NonEmptyExplanation,
+        session_id: SessionId,
+        operator: OperatorId,
+        resolved_at: SystemTime,
+    ) -> Self {
+        Self {
+            candidate_id,
+            basis,
+            reason,
+            session_id,
+            operator,
+            resolved_at,
+        }
+    }
+
+    pub fn candidate_id(&self) -> &ConceptNodeId {
+        &self.candidate_id
+    }
+    pub fn basis(&self) -> &PresentedResolutionBasis {
+        &self.basis
+    }
+    pub fn reason(&self) -> &NonEmptyExplanation {
+        &self.reason
+    }
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+    pub fn operator(&self) -> &OperatorId {
+        &self.operator
+    }
+    pub fn resolved_at(&self) -> SystemTime {
+        self.resolved_at
+    }
+}
+
+/// Resolution hatası (tur 3 P2-D `EntityNotLiveForResolution` + `EntityIdentityCollision`
+/// + `StaleResolutionTarget` dahil).
+#[derive(Debug, thiserror::Error)]
+pub enum ResolutionError {
+    #[error("resolution basis mismatch: basis={basis_candidate}, request={request_candidate}")]
+    BasisMismatch {
+        basis_candidate: ConceptNodeId,
+        request_candidate: ConceptNodeId,
+    },
+    #[error("candidate not found: {0}")]
+    CandidateNotFound(ConceptNodeId),
+    #[error("candidate kind değil CodeEntityCandidate")]
+    WrongCandidateKind,
+    #[error("candidate family değil PhysicalCode")]
+    WrongFamily,
+    #[error("candidate status değil Accepted (current: {current:?})")]
+    CandidateNotAccepted { current: DecisionStatus },
+    #[error("stale resolution basis — candidate digest değişmiş")]
+    StaleResolutionBasis,
+    #[error("candidate identity binding bulunamadı")]
+    MissingIdentityBinding,
+    #[error("candidate already resolved (R6 — outgoing ResolvesTo mevcut)")]
+    AlreadyResolved,
+    #[error("stale resolution target — basis create/reuse outcome artık geçerli değil")]
+    StaleResolutionTarget,
+    #[error("reuse target kind/family/status/key uyumsuz")]
+    ReuseTargetIncompatible,
+    /// tur 3 P2-D: aynı key + inactive entity (Rejected/Deprecated/SupersededAccepted).
+    #[error("entity not live for resolution: {entity_id} status={status:?}")]
+    EntityNotLiveForResolution {
+        entity_id: ConceptNodeId,
+        status: DecisionStatus,
+    },
+    /// tur 3 P2-B: aynı ID + farklı material/key (hash collision fail-closed).
+    #[error("entity identity collision: {entity_id} farklı material")]
+    EntityIdentityCollision { entity_id: ConceptNodeId },
+    #[error("duplicate live entity for same key (R7 violation)")]
+    DuplicateLiveEntity,
+    #[error("audit sequence exhausted")]
+    AuditSequenceExhausted,
+    #[error("session counter exhausted")]
+    SessionCounterExhausted,
+    #[error("store error: {0}")]
+    Store(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+/// Resolution audit record — SupersedeRecord mirror.
+///
+/// `candidate_digest`/`entity_digest` raw u64 (NodeDigest Serialize-only; domain alanı —
+/// serde detail değil). `basis_fingerprint` domain-tag `osp:resolution-basis:v1`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResolutionRecord {
+    pub seq: u64, // global audit_seq (3 ledger union)
+    pub session_id: SessionId,
+    pub operator: OperatorId,
+    pub candidate_id: ConceptNodeId,
+    pub entity_id: ConceptNodeId,
+    pub identity_key: CodeIdentityKey,
+    pub outcome: ResolutionOutcome,
+    pub reason: NonEmptyExplanation,
+    pub candidate_digest: u64,
+    pub entity_digest: u64,
+    pub basis_fingerprint: [u8; 32],
+    pub at: SystemTime,
+}
+
+/// Session close summary (tur 3 P1-3 — SupersedeSession pattern).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolutionSessionSummary {
+    pub session_id: SessionId,
+    pub operator: OperatorId,
+    pub resolutions: u64,
+}
+
+/// CodeEntityResolutionSession — identity resolution (SupersedeSession mirror).
+///
+/// # Counter exhaustion precedence (SupersedeSession pattern)
+/// `SessionCounterExhausted`, session-level basis validation'dan SONRA ama store-level
+/// defense-in-depth'tan ÖNCE değerlendirilir.
+pub struct CodeEntityResolutionSession {
+    session_id: SessionId,
+    operator: OperatorId,
+    opened_at: SystemTime,
+    resolutions: u64,
+}
+
+impl CodeEntityResolutionSession {
+    /// Trusted-boundary constructor. INV-C11: operator doğrulaması deployment sorumluluğu.
+    pub fn open_for_operator(operator: OperatorId) -> Self {
+        let opened_at = SystemTime::now();
+        Self {
+            session_id: SessionId::derive(&operator, opened_at),
+            operator,
+            opened_at,
+            resolutions: 0,
+        }
+    }
+
+    /// Atomik resolution (tur 3 P1-3 — `&mut self` counter semantics).
+    ///
+    /// SupersedeSession pattern: (1) basis validation, (2) checked_add counter exhaustion,
+    /// (3) opaque application üretimi, (4) store mutation, (5) yalnız başarıdan sonra counter assignment.
+    pub fn resolve<S: crate::anchoring::store::AnchorStore + ?Sized>(
+        &mut self,
+        store: &mut S,
+        candidate_id: &ConceptNodeId,
+        basis: PresentedResolutionBasis,
+        reason: NonEmptyExplanation,
+    ) -> Result<ResolutionRecord, ResolutionError>
+    where
+        S::Error: std::error::Error + Send + Sync + 'static,
+    {
+        // (1) Basis endpoint match — defense-in-depth (store da kontrol eder).
+        if basis.candidate_id() != candidate_id {
+            return Err(ResolutionError::BasisMismatch {
+                basis_candidate: basis.candidate_id().clone(),
+                request_candidate: candidate_id.clone(),
+            });
+        }
+
+        // (2) Counter exhaustion precedence (Tur 4 §3 — session-level geçerlilik sonrası).
+        let next_resolutions = self.resolutions.checked_add(1).ok_or(ResolutionError::SessionCounterExhausted)?;
+
+        // (3) Opaque application üretimi.
+        let application = ResolutionApplication::new(
+            candidate_id.clone(),
+            basis,
+            reason,
+            self.session_id.clone(),
+            self.operator.clone(),
+            SystemTime::now(),
+        );
+
+        // (4) Store mutation (store-level defense-in-depth tüm 14 step doğrular).
+        let record = store
+            .apply_resolution(application)
+            .map_err(|e| ResolutionError::Store(Box::new(e)))?;
+
+        // (5) Counter assignment — yalnız başarıdan sonra (atomicity guarantee).
+        self.resolutions = next_resolutions;
+        Ok(record)
+    }
+
+    pub fn close(self) -> ResolutionSessionSummary {
+        ResolutionSessionSummary {
+            session_id: self.session_id,
+            operator: self.operator,
+            resolutions: self.resolutions,
         }
     }
 
@@ -2520,5 +2892,454 @@ mod tests {
         );
         assert_eq!(snapshot_store(&store), before, "store unchanged");
         assert_eq!(session.supersedes, u64::MAX, "counter unchanged on error");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PR E — CodeEntityResolutionSession unit tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+    /// Accepted CodeEntityCandidate node (PhysicalCode family).
+    fn accepted_code_entity_candidate(path: &str) -> ConceptNode {
+        ConceptNode {
+            id: ConceptNodeId(format!("CodeEntityCandidate:{path}")),
+            canonical: path.into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::PhysicalCode,
+        }
+    }
+
+    /// Store with Accepted CodeEntityCandidate + identity binding seed'li.
+    fn store_with_resolvable_candidate(path: &str) -> InMemoryAnchorStore {
+        let node = accepted_code_entity_candidate(path);
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(node);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        // Identity binding bootstrap.
+        let key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::AsciiCaseInsensitive,
+            },
+            path,
+        )
+        .unwrap();
+        let binding = crate::anchoring::types::CodeIdentityBinding {
+            node_id: ConceptNodeId(format!("CodeEntityCandidate:{path}")),
+            identity_key: key,
+        };
+        use crate::anchoring::store::AnchorStore;
+        store
+            .seed_code_identity_bindings_trusted(&[binding])
+            .unwrap();
+        store
+    }
+
+    fn insensitive_key(path: &str) -> CodeIdentityKey {
+        CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::AsciiCaseInsensitive,
+            },
+            path,
+        )
+        .unwrap()
+    }
+
+    /// Happy path: Accepted candidate resolves → Created CodeEntity.
+    #[test]
+    fn accepted_candidate_resolves_to_newly_created_entity() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let record = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("resolution test").unwrap(),
+            )
+            .unwrap();
+        // Outcome Created.
+        assert!(matches!(
+            record.outcome,
+            crate::anchoring::review::ResolutionOutcome::Created { .. }
+        ));
+        // Entity node oluşturuldu (Candidate status).
+        let entity_id = record.entity_id.clone();
+        let entity = store.graph().node(&entity_id).expect("entity created");
+        assert_eq!(entity.node_kind, ConceptNodeKind::CodeEntity);
+        assert_eq!(entity.decision_status, DecisionStatus::Candidate);
+    }
+
+    #[test]
+    fn entity_initial_status_pinned_candidate() {
+        let mut store = store_with_resolvable_candidate("src/x.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/x.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let record = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        let entity = store.graph().node(&record.entity_id).unwrap();
+        assert_eq!(
+            entity.decision_status,
+            DecisionStatus::Candidate,
+            "entity initial = Candidate (otomatik mainline'a alınmaz)"
+        );
+    }
+
+    #[test]
+    fn entity_material_deterministic_from_key() {
+        // tur 3 P2-C: canonical = key.canonical_key(), aliases = [].
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let record = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        let entity = store.graph().node(&record.entity_id).unwrap();
+        assert_eq!(entity.canonical, "src/auth.rs", "canonical = key.canonical_key()");
+        assert!(entity.aliases.is_empty(), "aliases = []");
+    }
+
+    #[test]
+    fn resolves_to_edge_accepted_with_explanation() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let record = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("resolution reason").unwrap(),
+            )
+            .unwrap();
+        // Committed ResolvesTo edge (Accepted + explanation).
+        let edge = store
+            .graph()
+            .edges()
+            .find(|e| {
+                e.kind == crate::anchoring::ConceptEdgeKind::ResolvesTo
+                    && e.from == candidate_id
+                    && e.to == record.entity_id
+            })
+            .expect("ResolvesTo edge mevcut");
+        assert_eq!(edge.decision_status, DecisionStatus::Accepted);
+        assert!(edge.explanation.is_some(), "INV-C7 explanation");
+    }
+
+    #[test]
+    fn record_outcome_created() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let record = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            record.outcome,
+            crate::anchoring::review::ResolutionOutcome::Created { entity_id: _ }
+        ));
+    }
+
+    /// N:1 reuse: ikinci candidate aynı key → mevcut entity'ye resolve.
+    #[test]
+    fn second_candidate_same_key_resolves_to_existing_entity() {
+        // İlk candidate resolve → Created entity.
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate1 = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis1 = PresentedResolutionBasis::compile(&store, &candidate1).unwrap();
+        let record1 = session
+            .resolve(
+                &mut store,
+                &candidate1,
+                basis1,
+                NonEmptyExplanation::new("first").unwrap(),
+            )
+            .unwrap();
+        let entity_id = record1.entity_id.clone();
+
+        // İkinci candidate (farklı path, aynı identity key) seed + resolve → Reused.
+        let candidate2 = accepted_code_entity_candidate("src/Auth.rs"); // case-insensitive aynı key
+        let mut seed2 = GraphSeed::default();
+        seed2.code_entities.push(candidate2);
+        store.seed_trusted(&seed2).unwrap();
+        let binding2 = crate::anchoring::types::CodeIdentityBinding {
+            node_id: ConceptNodeId("CodeEntityCandidate:src/Auth.rs".into()),
+            identity_key: insensitive_key("src/auth.rs"),
+        };
+        store.seed_code_identity_bindings_trusted(&[binding2]).unwrap();
+        let candidate2_id = ConceptNodeId("CodeEntityCandidate:src/Auth.rs".into());
+        let basis2 = PresentedResolutionBasis::compile(&store, &candidate2_id).unwrap();
+        let record2 = session
+            .resolve(
+                &mut store,
+                &candidate2_id,
+                basis2,
+                NonEmptyExplanation::new("second").unwrap(),
+            )
+            .unwrap();
+        // Outcome Reused → aynı entity.
+        assert!(matches!(
+            record2.outcome,
+            crate::anchoring::review::ResolutionOutcome::Reused { entity_id: _ }
+        ));
+        assert_eq!(record2.entity_id, entity_id, "reuse → aynı entity ID");
+    }
+
+    #[test]
+    fn no_duplicate_entity_created_on_reuse() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate1 = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis1 = PresentedResolutionBasis::compile(&store, &candidate1).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate1,
+                basis1,
+                NonEmptyExplanation::new("first").unwrap(),
+            )
+            .unwrap();
+        let entity_count_before: usize = store
+            .graph()
+            .nodes_iter()
+            .filter(|n| n.node_kind == ConceptNodeKind::CodeEntity)
+            .count();
+        // İkinci candidate reuse.
+        let candidate2 = accepted_code_entity_candidate("src/Auth.rs");
+        let mut seed2 = GraphSeed::default();
+        seed2.code_entities.push(candidate2);
+        store.seed_trusted(&seed2).unwrap();
+        store
+            .seed_code_identity_bindings_trusted(&[crate::anchoring::types::CodeIdentityBinding {
+                node_id: ConceptNodeId("CodeEntityCandidate:src/Auth.rs".into()),
+                identity_key: insensitive_key("src/auth.rs"),
+            }])
+            .unwrap();
+        let candidate2_id = ConceptNodeId("CodeEntityCandidate:src/Auth.rs".into());
+        let basis2 = PresentedResolutionBasis::compile(&store, &candidate2_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate2_id,
+                basis2,
+                NonEmptyExplanation::new("second").unwrap(),
+            )
+            .unwrap();
+        let entity_count_after: usize = store
+            .graph()
+            .nodes_iter()
+            .filter(|n| n.node_kind == ConceptNodeKind::CodeEntity)
+            .count();
+        assert_eq!(
+            entity_count_before, entity_count_after,
+            "reuse → yeni entity YOK"
+        );
+    }
+
+    #[test]
+    fn candidate_not_accepted_rejects() {
+        // Candidate node (Candidate status, Accepted değil).
+        let mut store = InMemoryAnchorStore::new();
+        let candidate = ConceptNode {
+            id: ConceptNodeId("CodeEntityCandidate:c.rs".into()),
+            canonical: "c.rs".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Candidate, // Accepted değil
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(candidate);
+        store.seed_trusted(&seed).unwrap();
+        store
+            .seed_code_identity_bindings_trusted(&[crate::anchoring::types::CodeIdentityBinding {
+                node_id: ConceptNodeId("CodeEntityCandidate:c.rs".into()),
+                identity_key: insensitive_key("c.rs"),
+            }])
+            .unwrap();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:c.rs".into());
+        // compile Accepted olmadığı için basis view error verir (NotPromotableFrom store'dan).
+        let err = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap_err();
+        // Store hatası sarmalanmış gelir (ResolutionError::Store).
+        assert!(
+            matches!(err, ResolutionError::Store(_)),
+            "Candidate status compile reject — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn already_resolved_candidate_rejects() {
+        // R6: candidate başına ≤1 outgoing ResolvesTo.
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        // İlk resolve → Created.
+        let basis1 = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis1,
+                NonEmptyExplanation::new("first").unwrap(),
+            )
+            .unwrap();
+        // İkinci resolve → R6 AlreadyResolved (store step 8; basis compile Reuse üretir ama
+        // apply_resolution step 8 outgoing ResolvesTo var → reject).
+        let basis2 = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let err = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis2,
+                NonEmptyExplanation::new("second").unwrap(),
+            )
+            .unwrap_err();
+        // Store-level AlreadyResolved → ResolutionError::Store sarmalı.
+        assert!(
+            matches!(err, ResolutionError::Store(_)),
+            "R6 already resolved reject — got {err:?}"
+        );
+    }
+
+    #[test]
+    fn every_failure_leaves_store_unchanged() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        // Stale basis: basis compile et, sonra node canonical değiştir → digest mismatch.
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        store.graph_mut().node_mut(&candidate_id).unwrap().canonical = "changed.rs".into();
+        let before = store.node_count().unwrap() + store.edge_count().unwrap();
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let _err = session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap_err();
+        let after = store.node_count().unwrap() + store.edge_count().unwrap();
+        assert_eq!(before, after, "failure leaves graph unchanged");
+    }
+
+    #[test]
+    fn seed_bindings_rejects_wrong_kind() {
+        let mut store = InMemoryAnchorStore::new();
+        // Concept node (CodeEntityCandidate/CodeEntity değil).
+        let node = ConceptNode {
+            id: ConceptNodeId("Concept:X".into()),
+            canonical: "X".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::Concept,
+            decision_status: DecisionStatus::Candidate,
+            position_family: PositionFamily::ConceptualIntent,
+        };
+        let mut seed = GraphSeed::default();
+        seed.concepts.push(node);
+        store.seed_trusted(&seed).unwrap();
+        let err = store
+            .seed_code_identity_bindings_trusted(&[crate::anchoring::types::CodeIdentityBinding {
+                node_id: ConceptNodeId("Concept:X".into()),
+                identity_key: insensitive_key("x"),
+            }])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::anchoring::store::StoreError::BindingWrongKind { .. }
+        ));
+    }
+
+    #[test]
+    fn seed_bindings_rejects_duplicate_binding() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        // Aynı node'ya ikinci binding → duplicate.
+        let err = store
+            .seed_code_identity_bindings_trusted(&[crate::anchoring::types::CodeIdentityBinding {
+                node_id: ConceptNodeId("CodeEntityCandidate:src/auth.rs".into()),
+                identity_key: insensitive_key("src/auth.rs"),
+            }])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::anchoring::store::StoreError::DuplicateBinding(_)
+        ));
+    }
+
+    /// Snapshot restore validation: resolution records + bindings INV-C16 triangulation.
+    #[test]
+    fn snapshot_restore_validates_resolution_triangulation() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        // Export → restore → validation geçerli.
+        let snapshot = store.export_snapshot();
+        let restored = InMemoryAnchorStore::restore_snapshot(snapshot).expect("restore valid");
+        assert_eq!(
+            restored.resolution_ledger().len(),
+            1,
+            "resolution record restore edildi"
+        );
+    }
+
+    #[test]
+    fn deterministic_export_ordering() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        let snap1 = store.export_snapshot();
+        let snap2 = store.export_snapshot();
+        assert_eq!(snap1, snap2, "deterministic export");
+        // code_identity_bindings sorted by node_id.
+        let binding_ids: Vec<_> = snap1
+            .code_identity_bindings
+            .iter()
+            .map(|b| &b.node_id.0)
+            .collect();
+        let mut sorted = binding_ids.clone();
+        sorted.sort();
+        assert_eq!(binding_ids, sorted, "bindings sorted by node_id");
     }
 }

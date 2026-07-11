@@ -62,4 +62,8 @@ fn type_level_invariants_compile_fail() {
     // semantiğini değil construction boundary'yi korur).
     t.compile_fail("tests/compile_fail/supersede_application_opacity_literal.rs");
     t.compile_fail("tests/compile_fail/supersede_application_opacity_deserialize.rs");
+
+    // PR E — INV-C16 (ResolutionApplication: literal + Deserialize engelli)
+    t.compile_fail("tests/compile_fail/c16_resolution_application_literal.rs");
+    t.compile_fail("tests/compile_fail/c16_resolution_application_deserialize.rs");
 }
