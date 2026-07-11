@@ -276,21 +276,27 @@ pub(crate) fn project_candidate_nodes(
 }
 
 /// Bridge run output — tek assembler (pub(crate), tüm parçalar).
-/// N2: --analyze davranış sözleşmesi — InvalidMetric durumunda candidate seeding dahil
-/// tamamen düşer (tutarlılık > kullanılabilirlik).
+/// N2: --analyze davranış sözleşmesi — InvalidMetric/EvidenceProjection durumunda candidate
+/// seeding dahil tamamen düşer (tutarlılık > kullanılabilirlik).
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeRunOutput {
     pub(crate) candidate_seed: AnalysisCandidateSeed,
     pub(crate) identity_index: AnalysisProjectionIndex,
     pub(crate) graph_report: BridgeRunReport,
     pub(crate) metric_projection: crate::metric_projection::AnalysisMetricProjection,
+    pub(crate) evidence_projection: crate::evidence_projection::EvidenceProjectionOutput,
 }
 
-/// Tam analysis bridge — tek assembler (R1 tek türetim + metric projection).
-/// N7: MetricProjectionError BridgeError::MetricProjection'a map.
+/// Tam analysis bridge — tek assembler (R1 tek türetim + metric projection + evidence projection).
+/// N7: MetricProjectionError/EvidenceProjectionError BridgeError'a map.
+///
+/// # Temporal nondeterminism
+/// `project_analysis` wall-clock okumaz. Temporal nondeterminism yalnız caller'ın verdiği
+/// `evidence_context.measured_at` değeridir (tur 3 P3 — deterministic test için inject).
 pub(crate) fn project_analysis(
     analysis: &AnalysisResult,
     policy: PathCasePolicy,
+    evidence_context: crate::evidence_projection::EvidenceProjectionContext,
 ) -> Result<BridgeRunOutput, BridgeError> {
     let scheme = AnalysisIdentityScheme::PathV1;
     let candidate_proj = project_candidate_nodes(analysis, policy, scheme)?;
@@ -299,11 +305,17 @@ pub(crate) fn project_analysis(
         &candidate_proj.identity_index,
     )
     .map_err(BridgeError::MetricProjection)?;
+    let evidence_projection = crate::evidence_projection::project_observed_evidence(
+        &metric_projection.metrics,
+        evidence_context,
+    )
+    .map_err(BridgeError::EvidenceProjection)?;
     Ok(BridgeRunOutput {
         candidate_seed: candidate_proj.candidate_seed,
         identity_index: candidate_proj.identity_index,
         graph_report: candidate_proj.graph_report,
         metric_projection,
+        evidence_projection,
     })
 }
 
@@ -353,6 +365,8 @@ pub enum BridgeError {
     DuplicateAnalysisNodeIdentity { analysis_node_id: NodeId },
     #[error("metric projection error: {0}")]
     MetricProjection(#[from] crate::metric_projection::MetricProjectionError),
+    #[error("evidence projection error: {0}")]
+    EvidenceProjection(#[from] crate::evidence_projection::EvidenceProjectionError),
 }
 
 /// Analysis seed validation hatası (O5).
@@ -371,9 +385,19 @@ pub enum AnalysisSeedError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence_projection::EvidenceProjectionContext;
     use osp_analyzer::contract::SemanticCoverage;
     use osp_core::space::{Node, NodeClassification, NodeId, NodeRole, Space};
     use std::collections::HashMap;
+
+    /// Deterministik test timestamp (temporal nondeterminism YOK — inject).
+    const TEST_MEASURED_AT: u64 = 1_700_000_000;
+
+    fn test_evidence_context() -> EvidenceProjectionContext {
+        EvidenceProjectionContext {
+            measured_at: TEST_MEASURED_AT,
+        }
+    }
 
     /// Synthetic AnalysisResult builder — test fixture (module_metrics TreeSitter ile).
     fn analysis_result(nodes: Vec<(NodeId, &str, NodeClassification, NodeRole)>) -> AnalysisResult {
@@ -429,7 +453,7 @@ mod tests {
             (3, "src/util.rs", NodeClassification::Production, NodeRole::Utility),
         ]);
         let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         assert_eq!(bridge.candidate_seed.entities().len(), 3);
         assert_eq!(bridge.graph_report.projected_modules, 3);
         assert_eq!(bridge.graph_report.skipped_non_module, 0);
@@ -447,7 +471,7 @@ mod tests {
             (1, "src/Payment.rs", NodeClassification::Production, NodeRole::Core),
         ]);
         let bridge =
-            project_analysis(&analysis, PathCasePolicy::AsciiCaseInsensitive).unwrap();
+            project_analysis(&analysis, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
         let drafts = bridge.candidate_seed.clone().into_drafts();
         assert_eq!(drafts.len(), 1);
         // NodeId identity_key'den (case-folded).
@@ -465,9 +489,9 @@ mod tests {
             (1, "src/payment.cs", NodeClassification::Production, NodeRole::Core),
         ]);
         let bridge_a =
-            project_analysis(&a, PathCasePolicy::AsciiCaseInsensitive).unwrap();
+            project_analysis(&a, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
         let bridge_b =
-            project_analysis(&b, PathCasePolicy::AsciiCaseInsensitive).unwrap();
+            project_analysis(&b, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
         let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
         let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         // GraphSeed'e dönüştür (canonical + digest karşılaştırması için).
@@ -510,9 +534,9 @@ mod tests {
             (1, "src/payment.rs", NodeClassification::Test, NodeRole::Support),
         ]);
         let bridge_a =
-            project_analysis(&a, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&a, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let bridge_b =
-            project_analysis(&b, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&b, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
         let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         assert_eq!(drafts_a[0].id(), drafts_b[0].id()); // aynı NodeId
@@ -580,7 +604,7 @@ mod tests {
             semantic_coverage: SemanticCoverage::none("testhead".into()),
             diagnostics: vec![],
         };
-        let err = project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap_err();
+        let err = project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap_err();
         assert!(matches!(err, BridgeError::MissingNodePath { node_id: 42 }));
     }
 
@@ -592,7 +616,7 @@ mod tests {
             (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
         ]);
         let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let drafts = bridge.candidate_seed.clone().into_drafts();
         // Tüm drafts Candidate (INV-C5 — analysis_code_entity constructor baked).
         let graph_seed = crate::graph_seed_builder::GraphSeedBuilder::build(drafts).unwrap();
@@ -610,7 +634,7 @@ mod tests {
     fn empty_analysis_accepted() {
         let analysis = analysis_result(vec![]);
         let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         assert!(bridge.candidate_seed.is_empty());
         assert_eq!(bridge.graph_report.projected_modules, 0);
     }
@@ -623,7 +647,7 @@ mod tests {
             (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
         ]);
         let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let report = &bridge.graph_report;
         // repository_head Option<String> — wall_clock/local_path YOK.
         let display = format!("{report}");
@@ -641,9 +665,9 @@ mod tests {
             ])
         };
         let bridge_a =
-            project_analysis(&analysis(), PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis(), PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let bridge_b =
-            project_analysis(&analysis(), PathCasePolicy::CaseSensitive).unwrap();
+            project_analysis(&analysis(), PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         // Node identities bit-equivalent (deterministic sort).
         assert_eq!(bridge_a.candidate_seed, bridge_b.candidate_seed);
     }

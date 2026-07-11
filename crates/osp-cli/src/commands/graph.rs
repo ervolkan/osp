@@ -11,6 +11,7 @@ use osp_core::anchoring::store::InMemoryAnchorStore;
 
 use crate::analysis_bridge::project_analysis;
 use crate::canonical_identity::PathCasePolicy;
+use crate::evidence_projection::EvidenceProjectionContext;
 use crate::graph_seed_builder::{GraphSeedBuilder, GraphSeedNodeDraft};
 use crate::seed_file::CandidateSeedFile;
 use crate::store_io::{read_persisted_store, write_persisted_store, PersistedStore, StoreLock};
@@ -139,15 +140,19 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
             .path_case
             .map(Into::into)
             .unwrap_or(PathCasePolicy::AsciiCaseInsensitive);
-        let bridge_output = project_analysis(&analysis, policy)
+        // Evidence projection context — wall-clock inject (fail-closed; store mutation'dan önce).
+        let evidence_context = EvidenceProjectionContext {
+            measured_at: now_unix_secs()?,
+        };
+        let bridge_output = project_analysis(&analysis, policy, evidence_context)
             .map_err(|e| anyhow::anyhow!("analysis bridge projection failed: {e}"))?;
         if bridge_output.candidate_seed.is_empty() {
             eprintln!("warning: analysis produced no projectable Module nodes");
         }
-        // Metric projection özeti (stderr — N2: "not yet evidence").
+        // Metric projection özeti (stderr — draft admission counts).
         let mp = &bridge_output.metric_projection;
         eprintln!(
-            "Code metrics projected (not yet evidence): {}",
+            "Code metric drafts admitted: {}",
             mp.report.projected_axis_values
         );
         eprintln!(
@@ -156,7 +161,15 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
             mp.report.skipped_heuristic,
             mp.report.skipped_zero_confidence
         );
-        eprintln!("Evidence construction: deferred");
+        // Evidence projection özeti (stderr — tur 2 dürüst consumer beyanı).
+        let ep = &bridge_output.evidence_projection.report;
+        eprintln!("Evidence construction: completed");
+        eprintln!("Evidence objects: {}", ep.evidence_objects_created);
+        eprintln!(
+            "Partial evidence objects: {}",
+            ep.partial_evidence_objects
+        );
+        eprintln!("Evidence runtime consumer: none in graph init");
         eprintln!("Evidence persistence: disabled");
         eprintln!("{}", bridge_output.graph_report);
         bridge_output.candidate_seed.into_drafts()
@@ -287,4 +300,17 @@ pub fn run_graph_validate(args: GraphValidateArgs) -> anyhow::Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Unix epoch saniye — wall-clock (PR D evidence projection `measured_at`).
+///
+/// **Fail-closed** (tur 3 P2): sistem saati epoch öncesi olduğunda `measured_at=0` üretmek
+/// evidence provenance açısından yanlış (geçerli ama aşırı eski evidence). Clock failure
+/// `Result` olarak yukarı taşınır; store mutation'dan **önce** gerçekleşir (non-destructive
+/// validation düzeni korunur).
+fn now_unix_secs() -> anyhow::Result<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| anyhow::anyhow!("system clock is before UNIX_EPOCH: {error}"))
 }

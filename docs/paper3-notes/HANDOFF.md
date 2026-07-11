@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection TAMAM)
 
-> **Tarih:** 2026-07-11 (`feat/core-axis-evidence-model` dalı — PR C implementasyonu)
-> **Dal:** `feat/core-axis-evidence-model` (main `798d18d` üstünde)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** TAMAM. Altı yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR D (provider + gate/scorer wiring), arXiv v1.4.
+> **Tarih:** 2026-07-11 (`feat/evidence-projection-wiring` dalı — PR D implementasyonu)
+> **Dal:** `feat/evidence-projection-wiring` (main `d7f61bc` üstünde — PR #58 merged; plan tur 4 commit `b5b55f8`)
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** TAMAM. Yedi yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam compatibility proof). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR E (structural relation projection), persistence milestone (PR G), entity-promotion/identity milestone (CodeEntityCandidate → CodeEntity transition; ImplementedBy gate evidence presence), arXiv v1.4.
 
 ---
 
@@ -14,8 +14,8 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 552 test** (PR C: 538→552 +14 axis-granular evidence model);
-**26 compile-fail** (PR C: 24→26 — `c6_observed_physical_metrics_literal` + `c6_observed_physical_metrics_deserialize` + `c6_intent` rename); **workspace total ~987** (osp-desktop hariç); **0 regression**.
+**osp-core lib: 552 test**; **osp-cli: 121 unit** (PR D: 108→121 +13 evidence_projection);
+**26 compile-fail** (değişmedi — PR D compile-fail eklemedi); **workspace total ~1001** (osp-desktop hariç); **0 regression**.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR #48 — ne yapıldı (bu oturumda)
@@ -111,10 +111,11 @@ kapsamlar karışmasın (PR #49 754 vs PR #50 762 tutarsızlığı ders).
 
 | Kapsam | Sayı |
 |---|---|
-| osp-core lib unit tests | 552 (PR C sonrası 538 + 14 axis-granular evidence model) |
-| compile-fail cases (trybuild) | 26 (PR C: 24→26 — collection literal + deserialize) |
-| workspace cargo-test (osp-desktop hariç) | ~987 passed |
-| yeni axis-granular evidence unit tests | 14 |
+| osp-core lib unit tests | 552 (PR C sonrası) |
+| osp-cli unit tests | 121 (PR D sonrası 108 + 13 evidence_projection) |
+| compile-fail cases (trybuild) | 26 (PR D eklemedi — osp-cli-only) |
+| workspace cargo-test (osp-desktop hariç) | ~1001 passed |
+| yeni evidence_projection unit tests | 13 (6 happy-path + 2 wiring proof + 5 defensive) |
 | downstream crate tests (cli/mcp/analyzer/spike) | yeşil |
 
 1. Mutlu yol (authority_level==Operator internal issuance kanıtı)
@@ -319,21 +320,95 @@ Plan 5 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
 
 ## Sıradaki işler
 
-### Provider + gate/scorer wiring (PR D — sonraki milestone)
-- `InMemoryCodeEvidenceProvider` PR B metric draft'lardan beslenir (PR C evidence modeli
-  tamamlandı — `ObservedPhysicalMetrics` hazır). Gate/scorer'a `&dyn CodeEvidenceProvider` inject.
-  CLI→core adopt: AxisSet/MetricAxisValue/MetricCoverage → core PhysicalAxisValue/EvidenceCoverage.
-  `PhysicalCodeMetricAxis` reuse (canonical predicate_lowering.rs). PR D indivisible (conversion +
-  provider + wiring + guard update + stderr flip).
-- `measured_at` PR D interface: wall-clock kaynağı.
-
-### Structural relation projection (PR E)
+### Structural relation projection (PR E — sonraki milestone)
 - `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik
   sözleşme tasarımı. ConceptEdgeKind mapping, INV-C7 explanation, Candidate lane.
+
+### Persistence milestone (PR G)
+- `PersistedObservedCodeEvidence` schema version + validated restore + latest/history politikası
+  + deterministic ordering + upsert/append semantics + snapshot integration + corruption tests.
+  `ObservedCodeEvidence` Deserialize VERİLMEZ — serde-friendly persisted DTO `try_restore()`.
+  PR D evidence production hazır (in-memory); PR G evidence zamanlar arasında güvenli taşır.
+
+### Anchoring consumer gap (future)
+- Production consumer henüz yok — `AnchorPipeline::run_with_source` çağıran anchoring/ingest/evaluate
+  CLI surface future work. PR D compatibility proof (in-crate unit test) seam çalıştığını kanıtlar;
+  production consumer ayrı milestone.
 
 ### ObservedEntityRefresh (PR F — F-yeni future)
 - Incremental store'da representation change audit transition (case-only rename →
   aynı NodeId, farklı canonical/digest). Supersede değil; `ObservedEntityRefresh`.
+
+## Evidence projection + in-process wiring proof (PR D) — ne yapıldı (bu dalda)
+
+PR D — CLI metric draft'larını (`ProjectedCodeMetric`) core evidence'a (`ObservedCodeEvidence` via
+`ObservedPhysicalMetrics`) dönüştürür. Yeni `evidence_projection.rs` modülü — draft→evidence
+conversion'ın **tek** sahibi. **Production path:** `graph init --analyze` evidence üretir +
+diagnostics yazar (provider construct YOK — production consumer yok). **Compatibility proof:**
+in-crate unit test evidence → provider → `ExpectedImplementation` scorer seam'ini kanıtlar
+(review tur 5 P1 düzeltme: production `CodeEntityCandidate:` namespace; `ImplementedBy` gate
+evidence presence entity-promotion/identity milestone'una kalır).
+
+### Mimari (4 tur plan review sonucu, implementation-ready)
+- **`evidence_projection.rs` tek conversion boundary:** `project_observed_evidence(metrics, context)`
+  → `EvidenceProjectionOutput`. Source-scan ownership guard bunu doğrular (`ObservedPhysicalMetric::new`/
+  `ObservedPhysicalMetrics::try_new`/`ObservedCodeEvidence::new` yalnız bu modülde).
+- **Anti-corruption map:** CLI `PhysicalCodeAxis` → core `PhysicalCodeMetricAxis` (5 variant exhaustive;
+  "adopt" DEĞİL — CLI enum korunur).
+- **Newtype dönüşümü:** `MetricConfidence` → `EvidenceStrength` (InvalidStrength), `MetricCoverage` →
+  `EvidenceCoverage` (InvalidCoverage), `MetricAxisValue.get()` → raw `f64` (duplicate validation YOK;
+  core constructor kendi validation'ını yapar).
+- **Zero coverage reject (tur 4 karar 3):** `coverage=0, strength>0` → `ZeroCoverage { node_id, axis }`.
+  PR B confidence formülü (coverage içerir) + zero-confidence omission ile tutarsız → conversion reject.
+- **`measured_at` inject:** `EvidenceProjectionContext { measured_at }` caller'dan; `project_analysis`
+  wall-clock okumaz (temporal nondeterminism yalnız caller). `now_unix_secs() -> anyhow::Result<u64>`
+  fail-closed (tur 3 P2).
+- **Production vs compatibility ayrımı (tur 2 net sınır + tur 5 P1 düzeltme):**
+  - Production: `graph init` evidence + diagnostics (`CodeEntityCandidate:` namespace; provider YOK).
+  - Compatibility proof: in-crate unit test — `ExpectedImplementation` scorer seam (production
+    `CodeEntityCandidate:` ID + provider → `code_evidence_score > 0`). `ImplementedBy` gate evidence
+    presence **entity-promotion/identity milestone'una kalır** (CodeEntityCandidate → CodeEntity
+    transition gerekir; prefix değişikliği R1 tek-kimlik yaklaşımını deler).
+- **Report input yüzeyiyle uyumlu:** `input_metric_values`/`evidence_objects_created`/`partial_evidence_objects`
+  (distinct_nodes/empty-skip YOK — input yalnız emit edilmiş metric'leri görür).
+
+### Typed error model
+`EvidenceProjectionError`: InvalidStrength / ZeroCoverage / InvalidCoverage / InvalidObservation /
+InvalidCollection. Node/axis context korunur (anyhow YOK). `BridgeError::EvidenceProjection` sarar.
+
+### Guard matrisi (tur 3 ownership guard)
+- metric_projection.rs deny korunur (ObservedCodeEvidence/PhysicalCodeVector YOK).
+- **Yeni ownership guard:** core evidence construction token'ları yalnız evidence_projection.rs'de
+  (`std::fs` recursive, yeni dep YOK).
+
+### Testler (0 regression)
+- osp-cli unit: 108 → 121 (+13 evidence_projection: 6 happy-path + 2 ExpectedImplementation scorer
+  seam compatibility proof + 5 defensive contract-drift)
+- İki factory: validated (`projected_metric_for_tests`) happy-path + unchecked forged
+  (`projected_metric_unchecked_for_contract_tests`) defensive testler.
+- Workspace total ~1001 (osp-desktop hariç); 0 regression.
+
+### Persistence KAPSAM DIŞI
+PR D evidence production + in-memory provider wiring tamamlar. Store'a persist EDİLMEZ —
+`ObservedCodeEvidence` Serialize-only (PR C); persistence kendi restore modelini gerektirir (PR G).
+Stderr dürüst: "Evidence runtime consumer: none in graph init" + "Evidence persistence: disabled".
+
+### HANDOFF bullet'leri (PR D sonrası)
+- **Entity-promotion/identity milestone (review tur 5 P1):** production bridge `CodeEntityCandidate:<path>`
+  üretir; `ImplementedBy` gate `CodeEntity:<name>` (operator-promoted) arar. `CodeEntityCandidate → CodeEntity`
+  identity transition/mapping sözleşmesi gerekir (prefix değişikliği R1 tek-kimlik yaklaşımını deler).
+  PR D `ExpectedImplementation` scorer seam'i kanıtlar; `ImplementedBy` gate evidence presence bu
+  milestone'ın sonrası.
+- **Anchoring consumer gap:** production consumer (`AnchorPipeline::run_with_source` çağıran CLI surface)
+  henüz yok. Compatibility proof seam çalıştığını kanıtlar; production consumer ayrı milestone.
+- **Persistence milestone (PR G):** `PersistedObservedCodeEvidence` DTO + `try_restore()` + schema
+  version + latest/history + deterministic ordering + upsert/append + snapshot integration + corruption
+  tests. `ObservedCodeEvidence` Deserialize VERİLMEZ.
+- **EvidenceSource abstraction (future):** `fresh analysis` (PR D) → `validated persisted DTO` (PR G).
+  Consumer değişmez; provider'ı besleyen source değişir.
+- **`measured_at` policy:** PR D `now_unix_secs()` fail-closed Result inject; PR G wall-clock source policy.
+- **run-metadata.json frozen/current debt:** stratum 22 vs cumulative_trybuild_context 26 tutarsızlığı
+  ayrı cleanup PR (tur 3 P3-10).
 
 ## Core axis-granular evidence model (PR C) — ne yapıldı (bu dalda)
 
@@ -580,11 +655,11 @@ en değerli çıktı bu oldu.
 
 ## Commit durumu
 
-✅ **Faz 8b + CLI `osp review` (accept/reject/supersede) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence TAMAM.**
-- main: `798d18d` (PR #57 merged — analysis metric projection; 2 review turu: injectivity/declared-axes + private constructor/projected-axes/doc counts).
-- PR C: `feat/core-axis-evidence-model` dalı (main `798d18d` üstünde) — core axis-granular evidence model; 4 tur plan review implementation-ready.
-- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup + paper3 artifact); PR #53 (CLI accept/reject); PR #54 (CLI supersession surface); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection); **PR C (axis-granular evidence model)**.
-- **552 lib test** + **26 compile-fail** + **osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards** + **osp-mcp +2 INV-C11** yeşil.
+✅ **Faz 8b + CLI `osp review` (accept/reject/supersede) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence + PR D evidence projection TAMAM.**
+- main: `d7f61bc` (PR #58 merged — PR C axis-granular evidence model; 3 review turu).
+- PR D: `feat/evidence-projection-wiring` dalı (main `b5b55f8` üstünde) — evidence projection + in-process wiring proof; 4 tur plan review implementation-ready.
+- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup); PR #53 (CLI accept/reject); PR #54 (CLI supersession); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection); **PR C (axis-granular evidence model)**; **PR D (evidence projection + wiring proof)**.
+- **osp-core 552 lib** + **osp-cli 121 unit** + **26 compile-fail** + **21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards** + **osp-mcp +2 INV-C11** yeşil.
 
 ## Yayın durumu (v1.3 → v1.4 adayı)
 

@@ -421,6 +421,74 @@ pub(crate) fn project_code_metrics(
     Ok(AnalysisMetricProjection { metrics, report })
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Test factory'ler (PR D — evidence_projection.rs testleri için)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// İki factory: validated (happy-path) + unchecked forged (defensive contract-drift testleri).
+// Production constructor DEĞİL — yalnız `#[cfg(test)]`. evidence_projection.rs in-crate testleri
+// ProjectedCodeMetric private field'ları construct edemediği için bu factory'lere ihtiyaç duyar.
+
+/// Validated factory — happy-path testler için. Mevcut validated newtype'ları kullanır
+/// (`MetricAxisValue::new`, `MetricConfidence::new`, `MetricCoverage::new`). Invalid input
+/// panic eder (test yanlış yazılmış).
+#[cfg(test)]
+pub(crate) fn projected_metric_for_tests(
+    node_id: osp_core::anchoring::types::ConceptNodeId,
+    axis: PhysicalCodeAxis,
+    value: f64,
+    source: ObservedCodeMetricSource,
+    confidence: f64,
+    coverage: f64,
+) -> ProjectedCodeMetric {
+    ProjectedCodeMetric {
+        node_id,
+        axis,
+        value: MetricAxisValue::new(value)
+            .expect("projected_metric_for_tests value must be in [0,1]"),
+        provenance: ProjectedMetricProvenance {
+            source,
+            confidence: MetricConfidence::new(confidence)
+                .expect("projected_metric_for_tests confidence must be in [0,1]"),
+            coverage: MetricCoverage::new(coverage)
+                .expect("projected_metric_for_tests coverage must be in [0,1]"),
+        },
+    }
+}
+
+/// Unchecked forged factory — defensive conversion error testleri için.
+///
+/// **Intentionally bypasses PR B validation** to simulate cross-version or contract-drift
+/// input at the PR D boundary. Tuple newtype alanlarını aynı modül içinde doğrudan kurar
+/// (validation bypass). Yalnız defensive conversion error testleri için kullanılır;
+/// happy-path testleri bu factory'yi KULLANMAZ.
+#[cfg(test)]
+pub(crate) fn projected_metric_unchecked_for_contract_tests(
+    node_id: osp_core::anchoring::types::ConceptNodeId,
+    axis: PhysicalCodeAxis,
+    value: f64,
+    source: ObservedCodeMetricSource,
+    confidence: f64,
+    coverage: f64,
+) -> ProjectedCodeMetric {
+    // SAFETY: test-only; bypass validation to forge contract-drift input (range-dışı value/
+    // confidence/coverage, zero coverage + positive strength, vb.). Production constructor
+    // (project_code_metrics) bu değerleri asla üretmez; bu factory PR D boundary defense testleri için.
+    ProjectedCodeMetric {
+        node_id,
+        axis,
+        value: MetricAxisValue::new(value)
+            .unwrap_or(MetricAxisValue(std::f64::NAN)), // forged — NaN bile geçebilir
+        provenance: ProjectedMetricProvenance {
+            source,
+            confidence: MetricConfidence::new(confidence)
+                .unwrap_or(MetricConfidence(confidence)), // forged — raw değer
+            coverage: MetricCoverage::new(coverage)
+                .unwrap_or(MetricCoverage(coverage)), // forged — raw değer
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
