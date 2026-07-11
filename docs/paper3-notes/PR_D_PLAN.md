@@ -1,40 +1,47 @@
 # PR D Plan — Evidence Projection + In-Process Wiring Proof (yeni oturum için)
 
-> **Dal:** `feat/evidence-projection-wiring` (main `d7f61bc` üstünde — PR #58 merged)
+> **Dal:** `feat/evidence-projection-wiring` (main `47fe53b` üstünde — PR D PLAN commit)
 > **Scope:** osp-cli only (osp-core untouched — PR C evidence model hazır)
-> **2 tur plan review sonucu: implementation-ready**
+> **3 tur plan review sonucu: implementation-ready**
 
 ## Özet
 
 CLI metric drafts (`ProjectedCodeMetric`) → core evidence (`ObservedCodeEvidence` via
 `ObservedPhysicalMetrics`) conversion. Yeni `evidence_projection.rs` modülü (draft→evidence
 boundary). **Production path:** `graph init --analyze` evidence üretir + diagnostics yazar.
-**Compatibility proof:** integration test evidence → `InMemoryCodeEvidenceProvider` →
-`AnchorGateContext` → scorer/gate seam'in çalıştığını kanıtlar (production consumer DEĞİL).
+**Compatibility proof:** in-crate unit test evidence → `InMemoryCodeEvidenceProvider` →
+`AnchorGateContext` → scorer seam'in çalıştığını kanıtlar (production consumer DEĞİL).
 **Persistence KAPSAM DIŞI** — ayrı milestone (PR G); PR C Serialize-only sınırı persistence için
 kendi restore modelini gerektirir.
 
-## Review tur 2 kararları (4 zorunlu düzeltme)
+## Review tur 3 kararları (2 bloklayıcı + 2 P2 zorunlu + 6 mekanik)
 
-Plan tur 1'de iki bloklayıcı tutarsızlık vardı; tur 2'de düzeltildi:
+Plan tur 2'de iki bloklayıcı test-topolojisi problemi vardı; tur 3'te düzeltildi:
 
-1. **P1 — Provider production path'te kullanılmıyor:** `graph init` `AnchorPipeline`/scorer/gate
-   çalıştırmıyor. Provider production path'te construct edilip drop edilir → yanıltıcı. **Çözüm:**
-   production path evidence + diagnostics üretir; provider construction **integration test**'e
-   taşınır (compatibility proof).
-2. **P1 — Empty-node report mümkün değil:** `project_observed_evidence(metrics: &[...])` yalnız
-   emit edilmiş metric'leri görür. Tüm axis'leri skip edilen node `metrics` slice'ında yok.
-   `distinct_nodes` / empty-node skip / `ObservedPhysicalMetricsError::Empty` unreachable. **Çözüm:**
-   report sadeleştirildi (input semantiğiyle uyumlu).
-3. **P2 — Error model eksik + duplicate validation:** `EvidenceStrength::new` hatası için varyant
-   yoktu; `PhysicalAxisValue::new` core constructor'da zaten tekrarlanıyordu. **Çözüm:**
-   `InvalidStrength` varyantı eklendi; duplicate value validation kaldırıldı (core constructor'a bırakıldı).
-4. **P2 — Review provider gap yanlış consumer:** review CLI operator transition yüzeyi; anchoring
-   scorer/gate pipeline'ı çalıştırmıyor. **Çözüm:** "anchoring consumer gap" olarak yeniden adlandırıldı.
+1. **Bloklayıcı 1 — Integration test private modüllere erişemez:** `osp-cli` binary-only crate
+   (`lib.rs` YOK); `tests/*.rs` private `project_analysis`/`ProjectedCodeMetric` factory'sine erişemez.
+   **Çözüm:** compatibility proof in-crate `#[cfg(test)] mod tests`'e taşındı (evidence_projection.rs
+   veya analysis_bridge.rs içinde). `analyze_bridge_flow.rs` binary CLI diagnostics integration test
+   olarak kalır.
+2. **Bloklayıcı 2 — "scorer + gate" iddia kanıtlanamaz:** gate `find_evidence()` yalnız `ImplementedBy`
+   candidate'ında çağırır; dış CLI kodu `ExtractedAnchorCandidate`/`AnchorCandidate` construct edemez
+   (`pub(crate)`). **Çözüm:** test adı `evidence_projection_feeds_pipeline_scorer`'a daraltıldı
+   (provider lookup + minimum strength + code_evidence_score > 0 kanıtlanabilir). Gate evidence
+   branch davranışı osp-core gate testlerinin sorumluluğunda kalır.
+3. **P2 — Defensive error testleri validated factory ile üretilemez:** newtype'lar `[0,1]` doğruluyor;
+   `rejects_invalid_strength/coverage` testleri geçersiz input üretemez. **Çözüm:** iki factory —
+   validated (`projected_metric_for_tests`) happy-path için + unchecked forged
+   (`projected_metric_unchecked_for_contract_tests`) defensive conversion error testleri için.
+4. **P2 — Clock fail-open:** `unwrap_or(0)` sistem saati epoch öncesi olduğunda `measured_at=0`
+   üretir → geçerli ama aşırı eski evidence. **Çözüm:** `now_unix_secs() -> anyhow::Result<u64>`
+   (fail-closed); clock failure store mutation'dan önce.
+
+Mekanik düzeltmeler: main.rs mod declaration, derive zinciri, MetricScalarViolation alias, "map"
+vs "adopt" netleştirme, uygulama sırası düzeltme, run-metadata.json untouched.
 
 ---
 
-## Üretim + compatibility ayrımı (tur 2 net sınırı)
+## Üretim + compatibility ayrımı (tur 3 net sınırı)
 
 ### Production path (`graph init --analyze`)
 ```
@@ -45,14 +52,16 @@ AnalysisResult → project_code_metrics → ProjectedCodeMetric[]
 ```
 **Provider construct EDİLMEZ** — production consumer (`AnchorPipeline`) bu command'da yok.
 
-### Compatibility proof (integration test)
+### Compatibility proof (in-crate unit test — tur 3 bloklayıcı 1)
 ```
 EvidenceProjectionOutput.evidence
   → InMemoryCodeEvidenceProvider::from_evidence
   → AnchorGateContext::with_code_evidence
-  → AnchorPipeline::run_with_source (scorer + gate)
+  → AnchorPipeline::run_with_source (scorer seam — code_evidence_score > 0)
 ```
-Bu integration test seam'in çalıştığını kanıtlar; production consumer DEĞİL.
+Bu in-crate unit test **scorer seam**'in çalıştığını kanıtlar. Gate `ImplementedBy` evidence
+presence branch davranışı osp-core'un mevcut gate testlerinin sorumluluğunda kalır (dış CLI kodu
+`ExtractedAnchorCandidate`/`AnchorCandidate` construct edemez — `pub(crate)`).
 
 ### Out-of-scope
 ```
@@ -81,6 +90,7 @@ pub(crate) struct EvidenceProjectionContext {
     pub(crate) measured_at: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EvidenceProjectionOutput {
     pub(crate) evidence: Vec<ObservedCodeEvidence>,
     pub(crate) report: EvidenceProjectionReport,
@@ -89,6 +99,7 @@ pub(crate) struct EvidenceProjectionOutput {
 /// Report — input yüzeyiyle uyumlu (tur 2 P1 düzeltme).
 /// Conversion yalnız emit edilmiş metric'leri görür. Hiç projected metric'i olmayan analysis
 /// node'ları bu boundary'nin dışında kalır ve doğal olarak provider lookup'ında bulunmaz.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EvidenceProjectionReport {
     pub(crate) input_metric_values: usize,
     pub(crate) evidence_objects_created: usize,
@@ -109,7 +120,8 @@ pub(crate) fn project_observed_evidence(
 
 **Sorumluluklar:**
 1. `ConceptNodeId` bazında group (deterministik sıra — sort by `node_id.0`).
-2. CLI `PhysicalCodeAxis` → core `PhysicalCodeMetricAxis` map (5 variant exhaustive).
+2. CLI `PhysicalCodeAxis` → core `PhysicalCodeMetricAxis` **anti-corruption map** (tur 3 P3-8 —
+   "adopt" DEĞİL; explicit conversion, CLI enum korunur). 5 variant exhaustive.
 3. Newtype dönüşümü — **duplicate validation YOK** (tur 2 P2 düzeltme):
    - `metric.provenance().confidence().get()` → `EvidenceStrength::new(...)` (InvalidStrength)
    - `metric.provenance().coverage().get()` → `EvidenceCoverage::new(...)` (InvalidCoverage)
@@ -124,29 +136,40 @@ pub(crate) fn project_observed_evidence(
 **`measured_at` içeride üretilmez** — context'ten inject (test deterministic + replay).
 `project_analysis` wall-clock okumaz; temporal nondeterminism yalnız caller'ın verdiği `measured_at`.
 
-### Typed error model (tur 2 P2 düzeltme — InvalidStrength eklendi, InvalidAxisValue kaldırıldı)
+### Typed error model (tur 3 P2-7 — MetricScalarViolation alias netleştirme)
+
+İki ayrı `MetricScalarViolation` var: CLI (`crate::metric_projection::MetricScalarViolation`) ve
+core (`osp_core::anchoring::MetricScalarViolation`). Alias ile ayrıştırılır:
 
 ```rust
+use osp_core::anchoring::MetricScalarViolation as CoreMetricScalarViolation;
+// CLI draft MetricScalarViolation conversion'da kullanılmaz (draft validation zaten tamam).
+
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub(crate) enum EvidenceProjectionError {
     /// EvidenceStrength dönüşümü hatası (defensive contract-drift — projection confidence'ı
     /// zaten [0,1] doğruluyor, ama typed conversion sınırında eksiksiz olmalı).
+    #[error("{node_id} {axis:?} axis EvidenceStrength geçersiz: {source}")]
     InvalidStrength {
         node_id: ConceptNodeId,
         axis: PhysicalCodeAxis,
         source: EvidenceStrengthOutOfRange,
     },
+    #[error("{node_id} {axis:?} axis EvidenceCoverage geçersiz: {source}")]
     InvalidCoverage {
         node_id: ConceptNodeId,
         axis: PhysicalCodeAxis,
-        source: MetricScalarViolation,
+        source: CoreMetricScalarViolation,  // core tipi (EvidenceCoverage::new'den)
     },
     /// ObservedPhysicalMetric::new hatası (InvalidValue + ZeroStrength dahil; core constructor
     /// axis/value context zaten taşıyor — InvalidAxisValue ayrı varyant YOK).
+    #[error("{node_id} {axis:?} axis observation contract mismatch: {source}")]
     InvalidObservation {
         node_id: ConceptNodeId,
         axis: PhysicalCodeAxis,
         source: ObservedPhysicalMetricError,
     },
+    #[error("{node_id} collection contract mismatch: {source}")]
     InvalidCollection {
         node_id: ConceptNodeId,
         source: ObservedPhysicalMetricsError,
@@ -159,7 +182,7 @@ pub(crate) enum EvidenceProjectionError {
 ### B. `analysis_bridge.rs` — orchestrator (conversion implementation YOK)
 
 ```rust
-// BridgeRunOutput + evidence_projection field
+// BridgeRunOutput + evidence_projection field (derive zinciri: EvidenceProjectionOutput/Report Debug+Clone)
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeRunOutput {
     pub(crate) candidate_seed: AnalysisCandidateSeed,
@@ -187,16 +210,17 @@ pub(crate) fn project_analysis(
 
 ### C. `commands/graph.rs` — clock + diagnostics (conversion YOK, provider construct YOK)
 
-- `now_unix_secs()` helper (`std::time::SystemTime` — chrono yok; `engine.rs:920-925` pattern):
+- `now_unix_secs()` helper — **fail-closed** (tur 3 P2-4 düzeltme):
   ```rust
-  fn now_unix_secs() -> u64 {
+  fn now_unix_secs() -> anyhow::Result<u64> {
       std::time::SystemTime::now()
           .duration_since(std::time::UNIX_EPOCH)
-          .map(|d| d.as_secs())
-          .unwrap_or(0)
+          .map(|duration| duration.as_secs())
+          .map_err(|error| anyhow::anyhow!("system clock is before UNIX_EPOCH: {error}"))
   }
   ```
-- `EvidenceProjectionContext { measured_at: now_unix_secs() }` inject → `project_analysis`.
+  Clock failure store mutation'dan **önce** gerçekleşir (non-destructive validation düzeni korunur).
+- `EvidenceProjectionContext { measured_at: now_unix_secs()? }` inject → `project_analysis`.
 - **Stderr flip (tur 2 dürüst consumer beyanı):**
   ```
   Evidence construction: completed
@@ -205,11 +229,11 @@ pub(crate) fn project_analysis(
   Evidence runtime consumer: none in graph init
   Evidence persistence: disabled
   ```
-- **Provider construct YOK** production path'te — integration test'te (E maddesi).
+- **Provider construct YOK** production path'te — in-crate unit test'te (E maddesi).
 
 ### D. Guard matrisi (`architecture_guards.rs`) — ownership guard (tur 2 P3 güçlendirme)
 
-Mevcut guard korunur + yeni **ownership guard** eklenir (substring denial'dan daha güçlü):
+Mevcut guard korunur + yeni **ownership guard** eklenir:
 
 ```rust
 // Mevcut — korunur (metric_projection.rs core evidence YOK)
@@ -232,31 +256,52 @@ fn core_evidence_construction_owned_by_evidence_projection() {
 
 Bu guard alias/helper ile aşılabilir ama ownership iddiasını doğrudan ifade eder.
 
-### E. Integration test — compatibility proof (tur 2 P1 — provider production path'te değil)
+### E. In-crate compatibility proof (tur 3 bloklayıcı 1 — `tests/*.rs` DEĞİL)
 
-`crates/osp-cli/tests/evidence_wiring_proof.rs` (yeni) veya `analyze_bridge_flow.rs` içinde yeni test:
+`crates/osp-cli/src/evidence_projection.rs` `#[cfg(test)] mod tests` içinde (binary-only crate —
+`tests/*.rs` private modüllere erişemez):
 
 ```rust
-#[test]
-fn evidence_projection_feeds_pipeline_scorer_and_gate() {
-    // analysis → project_analysis → evidence_projection.evidence
-    // → InMemoryCodeEvidenceProvider::from_evidence
-    // → AnchorGateContext::with_code_evidence
-    // → AnchorPipeline::run_with_source (veya direkt scorer.score + gate.decide)
-    // Assert: provider lookup code_entity_id → Some; evidence_strength > 0.
+#[cfg(test)]
+mod tests {
+    // ...
+    /// Compatibility proof: evidence → provider → pipeline scorer seam.
+    /// Gate ImplementedBy evidence presence branch davranışı osp-core gate testlerinde kalır
+    /// (dış CLI kodu ExtractedAnchorCandidate construct edemez — pub(crate)).
+    #[test]
+    fn evidence_projection_feeds_pipeline_scorer() {
+        // projected_metric_for_tests ile evidence üret
+        // → InMemoryCodeEvidenceProvider::from_evidence
+        // → AnchorGateContext::with_code_evidence
+        // → AnchorPipeline::run_with_source (veya direkt scorer.score)
+        // Assert: provider lookup code_entity_id → Some; minimum strength > 0;
+        //         candidate code_evidence_score > 0.
+    }
 }
 ```
 
-Bu **compatibility proof** — production consumer DEĞİL. PR açıklaması bunu "in-process wiring
-proof" olarak adlandırır; production consumer'ın henüz bulunmadığı dürüstçe belirtilir.
+Bu **compatibility proof** — production consumer DEĞİL. "Feeds pipeline scorer" iddiası
+kanıtlanabilir (public API). "Reaches gate evidence branch" ayrı bir iddiadır (osp-core sorumluluğu).
+
+### F. `analyze_bridge_flow.rs` — binary CLI diagnostics integration test (mevcut rol korunur)
+
+Stderr assertion lockstep update (tur 3 bloklayıcı 1 — bu test `tests/*.rs` binary invocation):
+```
+"Code metrics projected (not yet evidence)" → kaldır
+"Evidence construction: deferred" → "Evidence construction: completed"
+"Evidence runtime consumer: none in graph init" → yeni assertion
+"Evidence persistence: disabled" → korunur
+```
 
 ---
 
-## Test stratejisi (tur 2 P3 — factory + minimum matris)
+## Test stratejisi (tur 3 P2-3 — iki factory + minimum matris)
 
-### Test factory (tur 2 P3 — `ProjectedCodeMetric` private fields)
+### İki test factory (tur 3 P2-3)
 
-`metric_projection.rs` içine `#[cfg(test)]` factory (production constructor DEĞİL):
+`metric_projection.rs` içine iki `#[cfg(test)]` factory (production constructor DEĞİL):
+
+**1. Validated factory (happy-path testler için):**
 ```rust
 #[cfg(test)]
 pub(crate) fn projected_metric_for_tests(
@@ -269,22 +314,37 @@ pub(crate) fn projected_metric_for_tests(
 ) -> ProjectedCodeMetric
 ```
 Mevcut validated newtype'ları kullanır (`MetricAxisValue::new`, `MetricConfidence::new`,
-`MetricCoverage::new`). Bu sayede `evidence_projection.rs` testleri 5 axis'i (Entropy/WitnessDepth
-dahil) kapsayabilir — synthetic `AnalysisResult` yalnız analyzer'ın ürettiği 3 axis'i (Coupling/
-Cohesion/Instability) verir.
+`MetricCoverage::new`). 5 axis'i (Entropy/WitnessDepth dahil) kapsar.
+
+**2. Unchecked forged factory (defensive conversion error testleri için — tur 3 P2-3):**
+```rust
+/// Intentionally bypasses PR B validation to simulate cross-version or
+/// contract-drift input at the PR D boundary.
+#[cfg(test)]
+pub(crate) fn projected_metric_unchecked_for_contract_tests(
+    node_id: ConceptNodeId,
+    axis: PhysicalCodeAxis,
+    value: f64,
+    source: ObservedCodeMetricSource,
+    confidence: f64,
+    coverage: f64,
+) -> ProjectedCodeMetric
+```
+Tuple newtype alanlarını aynı modül içinde doğrudan kurar (validation bypass). Yalnız defensive
+conversion error testleri için. Happy-path testleri forged factory KULLANMAZ.
 
 ### Minimum test matrisi
 ```
-groups_metrics_by_node_deterministically
-maps_all_five_axis_variants_exhaustively         // Coupling/Cohesion/Instability/Entropy/WitnessDepth
-preserves_mixed_provenance                        // TreeSitter + Scip aynı node
-uses_injected_measured_at                         // TEST_MEASURED_AT = 1_700_000_000
-creates_partial_evidence_for_three_axes           // analyzer 3 axis → partial
-rejects_invalid_strength_with_context             // InvalidStrength { node_id, axis, source }
-rejects_invalid_coverage_with_context             // InvalidCoverage
-defensively_handles_observation_contract_mismatch // InvalidObservation (core constructor hatası)
-empty_metric_slice_produces_empty_output          // input_metric_values=0, evidence_objects=0
-provider_wiring_proof_reaches_scorer_and_gate     // integration test (E maddesi)
+groups_metrics_by_node_deterministically              // validated factory
+maps_all_five_axis_variants_exhaustively              // validated factory (Coupling/Cohesion/Instability/Entropy/WitnessDepth)
+preserves_mixed_provenance                            // validated factory (TreeSitter + Scip aynı node)
+uses_injected_measured_at                             // validated factory (TEST_MEASURED_AT = 1_700_000_000)
+creates_partial_evidence_for_three_axes               // validated factory (analyzer 3 axis → partial)
+empty_metric_slice_produces_empty_output              // validated factory (input_metric_values=0)
+evidence_projection_feeds_pipeline_scorer             // in-crate compatibility proof (E maddesi)
+rejects_invalid_strength_with_context                 // forged factory (defensive contract-drift)
+rejects_invalid_coverage_with_context                 // forged factory (defensive contract-drift)
+defensively_handles_observation_contract_mismatch     // forged factory (defensive contract-drift)
 ```
 
 ---
@@ -293,44 +353,47 @@ provider_wiring_proof_reaches_scorer_and_gate     // integration test (E maddesi
 
 1. `evidence_projection.rs` yeni modül — draft→evidence conversion tek sahibi
 2. metric_projection.rs durur (draft üretir), core evidence YOK (guard korunur)
-3. `PhysicalCodeAxis` → `PhysicalCodeMetricAxis` map (CLI→core adopt, 5 variant exhaustive)
+3. `PhysicalCodeAxis` → `PhysicalCodeMetricAxis` **anti-corruption map** (tur 3: "adopt" DEĞİL)
 4. `MetricConfidence` → `EvidenceStrength` (re-validate, InvalidStrength varyantı)
-5. `MetricCoverage` → `EvidenceCoverage` (re-validate, InvalidCoverage varyantı)
+5. `MetricCoverage` → `EvidenceCoverage` (re-validate, InvalidCoverage varyantı — CoreMetricScalarViolation alias)
 6. `MetricAxisValue.get()` → raw `f64` (duplicate validation YOK; core constructor'a bırak)
-7. `measured_at` context'ten inject (wall-clock graph.rs'de, deterministic test)
-8. Report input yüzeyiyle uyumlu (input_metric_values / evidence_objects_created / partial; distinct_nodes/empty-skip YOK)
+7. `measured_at` context'ten inject (wall-clock graph.rs'de fail-closed Result, deterministic test)
+8. Report input yüzeyiyle uyumlu (input_metric_values / evidence_objects_created / partial)
 9. Production path: evidence + diagnostics (provider construct YOK)
-10. Compatibility proof: integration test provider → scorer/gate seam
+10. Compatibility proof: **in-crate unit test** (tur 3: `tests/*.rs` DEĞİL) — scorer seam
 11. Stderr flip: "deferred" → "completed"; "consumer: none in graph init" (dürüst)
-12. analyze_bridge_flow.rs stderr assertion update (lockstep)
-13. Guard matrisi: metric_projection.rs deny korunur + ownership guard yeni (evidence_projection.rs tek sahibi)
-14. Persistence KAPSAM DIŞI (store'a yazma YOK; store schema büyütme YOK; ObservedCodeEvidence Deserialize YOK)
+12. analyze_bridge_flow.rs stderr assertion update (lockstep) — binary CLI diagnostics
+13. Guard matrisi: metric_projection.rs deny korunur + ownership guard yeni
+14. Persistence KAPSAM DIŞI (store'a yazma YOK; store schema büyütme YOK; Deserialize YOK)
 15. osp-core untouched (PR C evidence model hazır)
-16. Typed error (anyhow YOK) — node/axis context korunur; InvalidStrength dahil
-17. Test factory (`projected_metric_for_tests`) + minimum test matrisi (9 test)
+16. Typed error (anyhow YOK) — node/axis context korunur; InvalidStrength dahil; MetricScalarViolation alias
+17. İki test factory (validated + unchecked forged) + minimum test matrisi (10 test)
+18. main.rs mod declaration (`mod evidence_projection;`) (tur 3 P2-5)
+19. Derive zinciri: EvidenceProjectionOutput/Report Debug+Clone+PartialEq (tur 3 P2-6)
 
 ---
 
-## Uygulama sırası
+## Uygulama sırası (tur 3 P3-9 — factory önce, test bağımlılığı doğru)
 
-1. `evidence_projection.rs` (types + `project_observed_evidence` + typed error + unit testler)
-2. `projected_metric_for_tests` factory (`metric_projection.rs` `#[cfg(test)]`)
+0. `main.rs` — `mod evidence_projection;` declaration (tur 3 P2-5)
+1. `metric_projection.rs` — iki `#[cfg(test)]` factory (validated + unchecked forged)
+2. `evidence_projection.rs` (types + `project_observed_evidence` + typed error + derive zinciri + unit testler + in-crate compatibility proof)
 3. `analysis_bridge.rs` (`BridgeRunOutput` + `BridgeError::EvidenceProjection` + orchestrator)
-4. `commands/graph.rs` (clock helper + context inject + stderr flip — provider YOK)
+4. `commands/graph.rs` (fail-closed clock helper + context inject + stderr flip — provider YOK)
 5. `architecture_guards.rs` (metric_projection.rs deny korunur + ownership guard yeni)
-6. `evidence_wiring_proof.rs` integration test (compatibility proof)
-7. `analyze_bridge_flow.rs` (stderr assertion lockstep update)
-8. Workspace validation (`RUSTFLAGS="-D warnings" cargo test --workspace --exclude osp-desktop`)
-9. Doküman/count updates (HANDOFF/STATUS/run-metadata — frozen/current ayrımı)
+6. `analyze_bridge_flow.rs` (stderr assertion lockstep update — binary CLI diagnostics)
+7. Workspace validation (`RUSTFLAGS="-D warnings" cargo test --workspace --exclude osp-desktop`)
+8. Doküman/count updates (HANDOFF/STATUS/run-metadata — frozen/current ayrımı)
 
 ---
 
-## Doküman güncellemeleri (frozen/current ayrımı — tur 2 P3)
+## Doküman güncellemeleri (frozen/current ayrımı — tur 2 P3 + tur 3 P3-10)
 
 - **run-metadata.md:** yalnız **Current protocol metadata** güncellenir (osp-cli test counts,
   evidence_projection.rs boundary). **Frozen snapshot değişmez.**
-- **run-metadata.json:** frozen snapshot olduğu için değişmez (`cumulative_trybuild_context: 26`
-  korunur — PR D compile-fail eklemez).
+- **run-metadata.json:** **untouched** — PR D bu karma frozen/current metadata yüzeyini değiştirmez
+  (tur 3 P3-10: mevcut JSON stratum 22 / cumulative_trybuild_context 26 tutarsızlığı borç olarak kalır;
+  PR D compile-fail eklemediği için JSON'a dokunmaz).
 - **STATUS.md:** osp-cli test counts + Faz 8b/PR D completion.
 - **HANDOFF.md:** PR D completion entry + PR E/G/F roadmap güncelleme.
 
@@ -348,8 +411,10 @@ provider_wiring_proof_reaches_scorer_and_gate     // integration test (E maddesi
 - **EvidenceSource abstraction (future):** `EvidenceSource = fresh analysis` (PR D) →
   `EvidenceSource = validated persisted DTO` (PR G). Consumer değişmez; provider'ı besleyen source değişir.
 - **v1.4 pending paper edits:** evidence_projection.rs boundary + compatibility proof semantics.
-- **`measured_at` policy:** PR D `now_unix_secs()` inject; PR G wall-clock source (NTP/system) policy.
+- **`measured_at` policy:** PR D `now_unix_secs()` fail-closed Result inject; PR G wall-clock source (NTP/system) policy.
+- **run-metadata.json frozen/current debt:** stratum 22 vs cumulative_trybuild_context 26 tutarsızlığı
+  ayrı cleanup PR (tur 3 P3-10).
 
 ---
 
-## run-metadata: current protocol — osp-cli test counts update; frozen snapshot 26 unchanged.
+## run-metadata: current protocol — osp-cli test counts update; run-metadata.json untouched.
