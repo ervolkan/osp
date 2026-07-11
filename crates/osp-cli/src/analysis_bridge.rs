@@ -1,3 +1,6 @@
+// Test + CLI integration tamamlanana kadar dead-code.
+#![allow(dead_code)]
+
 //! Analysis → candidate bridge — AnalysisResult → AnalysisCandidateSeed (identity-only).
 //!
 //! Saf projeksiyon: analyzer tarafından gözlemlenen fiziksel modül kimliğini Concept
@@ -18,7 +21,7 @@ use std::collections::BTreeMap;
 
 use osp_analyzer::contract::AnalysisResult;
 use osp_core::anchoring::types::{ConceptNodeId, ConceptNodeKind};
-use osp_core::space::NodeKind;
+use osp_core::space::{NodeId, NodeKind};
 
 use crate::canonical_identity::{CanonicalCodeIdentity, CanonicalIdentityError, PathCasePolicy};
 use crate::graph_seed_builder::GraphSeedNodeDraft;
@@ -49,21 +52,33 @@ impl AnalysisIdentityScheme {
     }
 }
 
-/// Code entity candidate — identity-only (M1).
+/// Code entity candidate — identity-only (M1) + pre-derived ConceptNodeId (R1).
+/// ID tek noktada türetilir (project_candidate_nodes); into_drafts scheme almaz.
 /// classification/role/aliases/kind/family YOK — ConceptNode taşımıyor (semantic drift).
-/// typed attribute expansion geldiğinde ayrı uçtan-uca PR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeEntityCandidate {
     identity: CanonicalCodeIdentity,
+    concept_node_id: ConceptNodeId,  // R1: pre-derived, scheme-parametre YOK
 }
 
 impl CodeEntityCandidate {
-    pub fn new(identity: CanonicalCodeIdentity) -> Self {
-        Self { identity }
+    /// Private constructor — R1 structural invariant: yalnız `project_candidate_nodes`
+    /// (aynı modül) üretici. identity + concept_node_id tutarlılığı caller convention değil
+    /// type boundary ile korunur. Test modülü aynı modül olduğu için erişebilir.
+    fn new(identity: CanonicalCodeIdentity, concept_node_id: ConceptNodeId) -> Self {
+        Self { identity, concept_node_id }
     }
 
-    pub fn into_identity(self) -> CanonicalCodeIdentity {
-        self.identity
+    pub fn into_parts(self) -> (CanonicalCodeIdentity, ConceptNodeId) {
+        (self.identity, self.concept_node_id)
+    }
+
+    pub fn identity(&self) -> &CanonicalCodeIdentity {
+        &self.identity
+    }
+
+    pub fn concept_node_id(&self) -> &ConceptNodeId {
+        &self.concept_node_id
     }
 }
 
@@ -122,38 +137,93 @@ impl AnalysisCandidateSeed {
         self.entities.is_empty()
     }
 
-    /// Draft'lara dönüştür (graph mutation için) — F-yeni identity-durum sözleşmesi.
-    pub(crate) fn into_drafts(self, scheme: AnalysisIdentityScheme) -> Vec<GraphSeedNodeDraft> {
+    /// Draft'lara dönüştür (graph mutation için) — R1: scheme almaz, ID hazır taşınır.
+    pub(crate) fn into_drafts(self) -> Vec<GraphSeedNodeDraft> {
         self.entities
             .into_iter()
             .map(|entity| {
-                let (display_path, identity_key) = entity.into_identity().into_parts();
+                let (identity, concept_node_id) = entity.into_parts();
                 GraphSeedNodeDraft::analysis_code_entity(
-                    scheme.derive_node_id(ConceptNodeKind::CodeEntityCandidate, &identity_key),
-                    display_path, // canonical = gözlemlenen yazım (case korunur)
+                    concept_node_id,           // R1: pre-derived
+                    identity.display_path().to_owned(), // canonical = gözlemlenen yazım
                 )
             })
             .collect()
     }
 }
 
-/// Saf projeksiyon: AnalysisResult → AnalysisCandidateSeed (graph mutation yok).
-///
-/// Yalnızca Module node'ları projekte edilir (kriter 1). Her Module → CodeEntityCandidate
-/// (identity-only). INV-C5 (Candidate), INV-C2 (PhysicalCode).
-pub fn project_analysis(
+/// AnalysisProjectionIndex — analyzer NodeId → ConceptNodeId lookup (R1: tek türetim).
+/// PR B metric projection bunu tüketir; scheme/policy almaz.
+#[derive(Debug, Clone, Default)]
+pub struct AnalysisProjectionIndex {
+    by_analysis_node: BTreeMap<NodeId, ConceptNodeId>,
+}
+
+impl AnalysisProjectionIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert — duplicate analysis NodeId key → error (source key uniqueness).
+    /// NOT injective on ConceptNodeId value: many-to-one (two NodeId → same ConceptNodeId)
+    /// is allowed at index level; detected downstream by DuplicateProjectedAxis in metric projection.
+    /// Production candidate seed dedup (try_new) catches this before metric projection in assembler path.
+    fn insert(
+        &mut self,
+        analysis_node_id: NodeId,
+        concept_node_id: ConceptNodeId,
+    ) -> Result<(), BridgeError> {
+        if self
+            .by_analysis_node
+            .insert(analysis_node_id, concept_node_id)
+            .is_some()
+        {
+            return Err(BridgeError::DuplicateAnalysisNodeIdentity { analysis_node_id });
+        }
+        Ok(())
+    }
+
+    /// ConceptNodeId lookup — PR B metric projection bunu çağırır.
+    pub fn concept_node_id_for(&self, analysis_node_id: NodeId) -> Option<ConceptNodeId> {
+        self.by_analysis_node.get(&analysis_node_id).cloned()
+    }
+
+    /// Test constructor — production insert sınırını kullanır (C4).
+    #[cfg(test)]
+    pub fn for_tests(
+        entries: impl IntoIterator<Item = (NodeId, ConceptNodeId)>,
+    ) -> Result<Self, BridgeError> {
+        let mut index = Self::new();
+        for (analysis_node_id, concept_node_id) in entries {
+            index.insert(analysis_node_id, concept_node_id)?;
+        }
+        Ok(index)
+    }
+}
+
+/// Node projection iç ara sonuç — project_candidate_nodes çıktısı.
+#[derive(Debug, Clone)]
+pub(crate) struct CandidateProjectionOutput {
+    pub(crate) candidate_seed: AnalysisCandidateSeed,
+    pub(crate) identity_index: AnalysisProjectionIndex,
+    pub(crate) graph_report: BridgeRunReport,
+}
+
+/// Node projection — tek türetim noktası (R1). ID bir kez üretilir, hem entity'ye hem index'e.
+pub(crate) fn project_candidate_nodes(
     analysis: &AnalysisResult,
     policy: PathCasePolicy,
-) -> Result<(AnalysisCandidateSeed, BridgeRunReport), BridgeError> {
-    let scheme = AnalysisIdentityScheme::PathV1;
+    scheme: AnalysisIdentityScheme,
+) -> Result<CandidateProjectionOutput, BridgeError> {
     let mut entities: Vec<CodeEntityCandidate> = Vec::new();
+    let mut identity_index = AnalysisProjectionIndex::new();
     let mut projected_modules = 0usize;
     let mut skipped_non_module = 0usize;
     let mut classifications_observed: BTreeMap<String, usize> = BTreeMap::new();
     let mut roles_observed: BTreeMap<String, usize> = BTreeMap::new();
 
     // Deterministik node sırası (NodeId ascending — HashMap traversal random).
-    let mut node_ids: Vec<u64> = analysis.space.nodes.keys().copied().collect();
+    let mut node_ids: Vec<NodeId> = analysis.space.nodes.keys().copied().collect();
     node_ids.sort();
 
     for node_id in node_ids {
@@ -173,19 +243,23 @@ pub fn project_analysis(
         // Canonical identity üret (lexical normalizasyon + case fold).
         let identity = CanonicalCodeIdentity::new(path, policy)?;
 
+        // R1: ID tek noktada türetilir — hem entity'ye hem index'e.
+        let concept_node_id =
+            scheme.derive_node_id(ConceptNodeKind::CodeEntityCandidate, identity.identity_key());
+        identity_index.insert(node_id, concept_node_id.clone())?;
+
         // Metadata observable (BridgeRunReport) — graph'a DÖNÜŞMEZ (M1).
-        // String key (Debug) → deterministic serialization (NodeClassification Ord değil).
         *classifications_observed
             .entry(format!("{:?}", node.classification))
             .or_default() += 1;
         *roles_observed.entry(format!("{:?}", node.role)).or_default() += 1;
 
-        entities.push(CodeEntityCandidate::new(identity));
+        entities.push(CodeEntityCandidate::new(identity, concept_node_id));
         projected_modules += 1;
     }
 
-    let seed = AnalysisCandidateSeed::try_new(entities)?;
-    let report = BridgeRunReport {
+    let candidate_seed = AnalysisCandidateSeed::try_new(entities)?;
+    let graph_report = BridgeRunReport {
         identity_scheme: scheme,
         path_case_policy: policy,
         repository_head: Some(analysis.semantic_coverage.repo_head.clone()),
@@ -194,7 +268,43 @@ pub fn project_analysis(
         classifications_observed,
         roles_observed,
     };
-    Ok((seed, report))
+    Ok(CandidateProjectionOutput {
+        candidate_seed,
+        identity_index,
+        graph_report,
+    })
+}
+
+/// Bridge run output — tek assembler (pub(crate), tüm parçalar).
+/// N2: --analyze davranış sözleşmesi — InvalidMetric durumunda candidate seeding dahil
+/// tamamen düşer (tutarlılık > kullanılabilirlik).
+#[derive(Debug, Clone)]
+pub(crate) struct BridgeRunOutput {
+    pub(crate) candidate_seed: AnalysisCandidateSeed,
+    pub(crate) identity_index: AnalysisProjectionIndex,
+    pub(crate) graph_report: BridgeRunReport,
+    pub(crate) metric_projection: crate::metric_projection::AnalysisMetricProjection,
+}
+
+/// Tam analysis bridge — tek assembler (R1 tek türetim + metric projection).
+/// N7: MetricProjectionError BridgeError::MetricProjection'a map.
+pub(crate) fn project_analysis(
+    analysis: &AnalysisResult,
+    policy: PathCasePolicy,
+) -> Result<BridgeRunOutput, BridgeError> {
+    let scheme = AnalysisIdentityScheme::PathV1;
+    let candidate_proj = project_candidate_nodes(analysis, policy, scheme)?;
+    let metric_projection = crate::metric_projection::project_code_metrics(
+        analysis,
+        &candidate_proj.identity_index,
+    )
+    .map_err(BridgeError::MetricProjection)?;
+    Ok(BridgeRunOutput {
+        candidate_seed: candidate_proj.candidate_seed,
+        identity_index: candidate_proj.identity_index,
+        graph_report: candidate_proj.graph_report,
+        metric_projection,
+    })
 }
 
 /// Bridge run report — semantic seed DIŞI (F2). stderr'e basılır, persisted değil,
@@ -239,6 +349,10 @@ pub enum BridgeError {
     CanonicalIdentity(#[from] CanonicalIdentityError),
     #[error("analysis seed error: {0}")]
     Seed(#[from] AnalysisSeedError),
+    #[error("duplicate analysis node identity mapping for node {analysis_node_id}")]
+    DuplicateAnalysisNodeIdentity { analysis_node_id: NodeId },
+    #[error("metric projection error: {0}")]
+    MetricProjection(#[from] crate::metric_projection::MetricProjectionError),
 }
 
 /// Analysis seed validation hatası (O5).
@@ -261,10 +375,11 @@ mod tests {
     use osp_core::space::{Node, NodeClassification, NodeId, NodeRole, Space};
     use std::collections::HashMap;
 
-    /// Synthetic AnalysisResult builder — test fixture.
+    /// Synthetic AnalysisResult builder — test fixture (module_metrics TreeSitter ile).
     fn analysis_result(nodes: Vec<(NodeId, &str, NodeClassification, NodeRole)>) -> AnalysisResult {
         let mut space = Space::default();
         let mut node_paths = HashMap::new();
+        let mut module_metrics = HashMap::new();
         for (id, path, classification, role) in nodes {
             space.nodes.insert(
                 id,
@@ -278,10 +393,19 @@ mod tests {
                 },
             );
             node_paths.insert(id, path.to_string());
+            // PR B: her Module için geçerli ModuleMetrics (TreeSitter, conf>0).
+            module_metrics.insert(
+                id,
+                osp_analyzer::contract::ModuleMetrics {
+                    coupling: osp_core::coords::MetricValue::tree_sitter(0.5, 1.0),
+                    cohesion: osp_core::coords::MetricValue::tree_sitter(0.7, 1.0),
+                    instability: osp_core::coords::MetricValue::tree_sitter(0.3, 1.0),
+                },
+            );
         }
         AnalysisResult {
             space,
-            module_metrics: HashMap::new(),
+            module_metrics,
             node_paths,
             node_semantics: HashMap::new(),
             node_witnesses: HashMap::new(),
@@ -304,15 +428,15 @@ mod tests {
             (2, "src/user.rs", NodeClassification::Production, NodeRole::Adapter),
             (3, "src/util.rs", NodeClassification::Production, NodeRole::Utility),
         ]);
-        let (seed, report) =
+        let bridge =
             project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
-        assert_eq!(seed.entities().len(), 3);
-        assert_eq!(report.projected_modules, 3);
-        assert_eq!(report.skipped_non_module, 0);
+        assert_eq!(bridge.candidate_seed.entities().len(), 3);
+        assert_eq!(bridge.graph_report.projected_modules, 3);
+        assert_eq!(bridge.graph_report.skipped_non_module, 0);
         // Deterministic sort (identity_key ascending).
-        assert_eq!(seed.entities()[0].identity.display_path(), "src/payment.rs");
-        assert_eq!(seed.entities()[1].identity.display_path(), "src/user.rs");
-        assert_eq!(seed.entities()[2].identity.display_path(), "src/util.rs");
+        assert_eq!(bridge.candidate_seed.entities()[0].identity().display_path(), "src/payment.rs");
+        assert_eq!(bridge.candidate_seed.entities()[1].identity().display_path(), "src/user.rs");
+        assert_eq!(bridge.candidate_seed.entities()[2].identity().display_path(), "src/util.rs");
     }
 
     // ── NodeId identity_keyden; canonical display_path (F-yeni) ───────────────
@@ -322,14 +446,12 @@ mod tests {
         let analysis = analysis_result(vec![
             (1, "src/Payment.rs", NodeClassification::Production, NodeRole::Core),
         ]);
-        let (seed, _) =
+        let bridge =
             project_analysis(&analysis, PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let drafts = seed.into_drafts(AnalysisIdentityScheme::PathV1);
+        let drafts = bridge.candidate_seed.clone().into_drafts();
         assert_eq!(drafts.len(), 1);
         // NodeId identity_key'den (case-folded).
         assert_eq!(drafts[0].id().0, "CodeEntityCandidate:src/payment.rs");
-        // canonical display_path (case korunur).
-        // (canonical private accessor yok — via GraphSeed doğrulanır integration'da)
     }
 
     #[test]
@@ -342,12 +464,12 @@ mod tests {
         let b = analysis_result(vec![
             (1, "src/payment.cs", NodeClassification::Production, NodeRole::Core),
         ]);
-        let (seed_a, _) =
+        let bridge_a =
             project_analysis(&a, PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let (seed_b, _) =
+        let bridge_b =
             project_analysis(&b, PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let drafts_a = seed_a.into_drafts(AnalysisIdentityScheme::PathV1);
-        let drafts_b = seed_b.into_drafts(AnalysisIdentityScheme::PathV1);
+        let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
+        let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         // GraphSeed'e dönüştür (canonical + digest karşılaştırması için).
         let graph_a = crate::graph_seed_builder::GraphSeedBuilder::build(drafts_a).unwrap();
         let graph_b = crate::graph_seed_builder::GraphSeedBuilder::build(drafts_b).unwrap();
@@ -387,16 +509,16 @@ mod tests {
         let b = analysis_result(vec![
             (1, "src/payment.rs", NodeClassification::Test, NodeRole::Support),
         ]);
-        let (seed_a, report_a) =
+        let bridge_a =
             project_analysis(&a, PathCasePolicy::CaseSensitive).unwrap();
-        let (seed_b, report_b) =
+        let bridge_b =
             project_analysis(&b, PathCasePolicy::CaseSensitive).unwrap();
-        let drafts_a = seed_a.into_drafts(AnalysisIdentityScheme::PathV1);
-        let drafts_b = seed_b.into_drafts(AnalysisIdentityScheme::PathV1);
+        let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
+        let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         assert_eq!(drafts_a[0].id(), drafts_b[0].id()); // aynı NodeId
         // Report farklı (metadata observable, graph değil).
-        assert_ne!(report_a.classifications_observed, report_b.classifications_observed);
-        assert_ne!(report_a.roles_observed, report_b.roles_observed);
+        assert_ne!(bridge_a.graph_report.classifications_observed, bridge_b.graph_report.classifications_observed);
+        assert_ne!(bridge_a.graph_report.roles_observed, bridge_b.graph_report.roles_observed);
     }
 
     // ── O5: error-matrix ──────────────────────────────────────────────────────
@@ -404,13 +526,11 @@ mod tests {
     #[test]
     fn duplicate_canonical_same_key_same_display() {
         // Aynı identity_key + aynı display → DuplicateCanonical.
+        let id1 = CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap();
+        let id2 = CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap();
         let entities = vec![
-            CodeEntityCandidate::new(
-                CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap(),
-            ),
-            CodeEntityCandidate::new(
-                CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap(),
-            ),
+            CodeEntityCandidate::new(id1, ConceptNodeId("CodeEntityCandidate:src/x.rs".into())),
+            CodeEntityCandidate::new(id2, ConceptNodeId("CodeEntityCandidate:src/x.rs".into())),
         ];
         let err = AnalysisCandidateSeed::try_new(entities).unwrap_err();
         assert!(matches!(err, AnalysisSeedError::DuplicateCanonical { .. }));
@@ -419,15 +539,11 @@ mod tests {
     #[test]
     fn case_collision_same_key_different_display() {
         // Aynı identity_key (ascii-insensitive) + farklı display → CaseCollision.
+        let id1 = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
+        let id2 = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
         let entities = vec![
-            CodeEntityCandidate::new(
-                CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive)
-                    .unwrap(),
-            ),
-            CodeEntityCandidate::new(
-                CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive)
-                    .unwrap(),
-            ),
+            CodeEntityCandidate::new(id1, ConceptNodeId("CodeEntityCandidate:src/payment.cs".into())),
+            CodeEntityCandidate::new(id2, ConceptNodeId("CodeEntityCandidate:src/payment.cs".into())),
         ];
         let err = AnalysisCandidateSeed::try_new(entities).unwrap_err();
         assert!(matches!(err, AnalysisSeedError::CaseCollision { .. }));
@@ -475,9 +591,9 @@ mod tests {
         let analysis = analysis_result(vec![
             (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
         ]);
-        let (seed, _) =
+        let bridge =
             project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
-        let drafts = seed.into_drafts(AnalysisIdentityScheme::PathV1);
+        let drafts = bridge.candidate_seed.clone().into_drafts();
         // Tüm drafts Candidate (INV-C5 — analysis_code_entity constructor baked).
         let graph_seed = crate::graph_seed_builder::GraphSeedBuilder::build(drafts).unwrap();
         for node in &graph_seed.code_entities {
@@ -493,10 +609,10 @@ mod tests {
     #[test]
     fn empty_analysis_accepted() {
         let analysis = analysis_result(vec![]);
-        let (seed, report) =
+        let bridge =
             project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
-        assert!(seed.is_empty());
-        assert_eq!(report.projected_modules, 0);
+        assert!(bridge.candidate_seed.is_empty());
+        assert_eq!(bridge.graph_report.projected_modules, 0);
     }
 
     // ── Determinism (F2) ──────────────────────────────────────────────────────
@@ -506,8 +622,9 @@ mod tests {
         let analysis = analysis_result(vec![
             (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
         ]);
-        let (_, report) =
+        let bridge =
             project_analysis(&analysis, PathCasePolicy::CaseSensitive).unwrap();
+        let report = &bridge.graph_report;
         // repository_head Option<String> — wall_clock/local_path YOK.
         let display = format!("{report}");
         assert!(display.contains("scheme=analysis-path-v1"));
@@ -523,11 +640,11 @@ mod tests {
                 (2, "src/apple.rs", NodeClassification::Production, NodeRole::Adapter),
             ])
         };
-        let (seed_a, _) =
+        let bridge_a =
             project_analysis(&analysis(), PathCasePolicy::CaseSensitive).unwrap();
-        let (seed_b, _) =
+        let bridge_b =
             project_analysis(&analysis(), PathCasePolicy::CaseSensitive).unwrap();
         // Node identities bit-equivalent (deterministic sort).
-        assert_eq!(seed_a, seed_b);
+        assert_eq!(bridge_a.candidate_seed, bridge_b.candidate_seed);
     }
 }

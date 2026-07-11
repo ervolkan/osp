@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~950 workspace test (osp-desktop hariç, CLI: osp-core 538 lib, osp-cli 92 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 8 analyze_bridge_flow, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~967 workspace test (osp-desktop hariç, CLI: osp-core 538 lib, osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -179,10 +179,10 @@ cargo test --workspace --exclude osp-desktop
 - osp-core: 538 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 568; 24 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 92 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 8 analyze_bridge_flow integration
+- osp-cli: 108 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~950 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
+- **Toplam: ~967 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

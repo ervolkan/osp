@@ -46,7 +46,7 @@
 | INV-C15 production invocation | `SupersedeSession` (PR #50) — crate-private authority issuer + parametresiz `supersede()` + token içeride mint |
 | **Restore-validated persistence (CLI)** | `AnchorStoreSnapshot::restore_snapshot` — graph schema + node uniqueness + edge endpoints + record→node/status forward integrity + dense audit_seq (union unique + {1..N} + ==N) + INV-C15 üç yönlü triangulation (committed edge ↔ record ↔ status, lane-sensitive, cycle absence). paper3 "known gap" cümlesi evaluated path için kapatıldı. |
 | **INV-C11 surface classification (CLI)** | MCP = agent-facing (review/supersede authority yok, static regression test); `osp review` CLI = operator-facing (session expose eder — INV-T2 attribution, auth deployment boundary). |
-| **Operator review testleri** | osp-core lib 538 (503 + 23 AnchorStoreSnapshot + 12 supersede-preview predicates); osp-cli 92 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 8 analyze_bridge_flow integration; osp-mcp +2 INV-C11 |
+| **Operator review testleri** | osp-core lib 538 (503 + 23 AnchorStoreSnapshot + 12 supersede-preview predicates); osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards integration; osp-mcp +2 INV-C11 |
 
 > **Taksonomi notu (Review PR #48/#49):** P1-P3 lowering invariant'ları da type-enforced'dur
 > (trybuild katmanında, strata tablosu (1) ile tutarlı). "13 type-enforced = 10 genesis + 3 lowering";

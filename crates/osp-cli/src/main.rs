@@ -17,6 +17,7 @@ mod canonical_identity;
 mod commands;
 mod graph_seed_builder;
 mod errors;
+mod metric_projection;
 mod mock_llm;
 mod review_session;
 mod seed_file;

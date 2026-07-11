@@ -319,24 +319,64 @@ Plan 5 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
 
 ## Sıradaki işler
 
-### Analysis evidence projection (PR B — sonraki milestone)
-- `ObservedCodeEvidence` projection (INV-C6): coupling/cohesion/instability MetricValue,
-  metric_source Scip/TreeSitter. Codebase'te "future osp-analyzer bridge" için public
-  constructor zaten hazır (code_evidence.rs). Ayrı epistemik sözleşme.
+### Core axis-granular evidence model (PR C — sonraki milestone)
+- `ObservedCodeEvidence.physical_vector → observations` (axis-granular). Mevcut 5-axis
+  zorunlu PhysicalCodeVector → axis-granular observation. StaticAnalyzer varyant + stale doc.
+  MetricConfidence/AxisValue → EvidenceStrength mapping. MetricCoverage newtype. NodeId gerçek newtype.
 
-### Structural relation projection (PR C)
+### Provider + gate/scorer wiring (PR D)
+- `InMemoryCodeEvidenceProvider` PR B metric draft'lardan beslenir (PR C evidence modeli sonrası).
+  Gate/scorer'a `&dyn CodeEvidenceProvider` inject.
+
+### Structural relation projection (PR E)
 - `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik
   sözleşme tasarımı. ConceptEdgeKind mapping, INV-C7 explanation, Candidate lane.
 
-### ConceptNode attribute expansion (PR D)
-- classification/role typed attribute (ConceptNode taşımıyor şu an). Analysis bridge
-  metadata şu an BridgeRunReport observable (graph'a DÖNÜŞMEZ).
-
-### ObservedEntityRefresh (PR E — F-yeni future)
+### ObservedEntityRefresh (PR F — F-yeni future)
 - Incremental store'da representation change audit transition (case-only rename →
   aynı NodeId, farklı canonical/digest). Supersede değil; `ObservedEntityRefresh`.
 
-## CLI `osp graph init --analyze` — ne yapıldı (bu dalda)
+## CLI `osp graph init --analyze` metric projection (PR B) — ne yapıldı (bu dalda)
+
+Analysis metric projection — axis-granular metric draft (NOT core evidence). PR A node
+identity projection'a metric projection eklendi.
+
+### Mimari (4 tur plan review sonucu)
+- **R1 tek türetim:** `CodeEntityCandidate` pre-derived `ConceptNodeId` taşır; `into_drafts(self)`
+  scheme almaz. `AnalysisProjectionIndex` (NodeId→ConceptNodeId) `project_candidate_nodes` içinde
+  üretilir; `project_code_metrics` tüketir (scheme/policy YOK).
+- **C1 doğrulama sırası:** value → confidence → coverage doğrulama source admission'dan ÖNCE.
+  Placeholder + NaN → InvalidMetric error (sessiz skip YOK).
+- **C3 validated newtype'lar:** MetricAxisValue/MetricConfidence/MetricCoverage — type invariant.
+- **AxisSet(u8) bitset:** 5-elemanlı sabit alan, BTreeSet/Ord gerektirmez.
+- **INV-C6:** core'un tam evidence/vector tipi ÜRETİLMEZ (entropy/witness_depth üretilmez,
+  zero-fill YOK). Source-scan CI guard (N1 dosya disiplini).
+
+### N2 sözleşme cümlesi
+PR B sonrası `--analyze`, kullanılmayan metrik çıktısı için bile metrik geçerliliğine
+bağıdır (tutarlılık > kullanılabilirlik).
+
+### Yeni dosyalar
+- **`metric_projection.rs`** — PhysicalCodeAxis + AxisSet + MetricAxisValue/Confidence/Coverage
+  newtype + ProjectedCodeMetric (private) + project_code_metrics (C1 doğrulama sırası).
+  16 unit test.
+- **`tests/architecture_guards.rs`** — metric_projection.rs'te tam evidence/vector adları
+  yorumda bile yok (C2+N1 source-scan).
+
+### Model uyuşmazlığı notu
+Mevcut `ObservedCodeEvidence` (5-axis zorunlu PhysicalCodeVector) ile analyzer (3 axis)
+arasında uyuşmazlık. PR B projection seam'de durur (metric draft, evidence değil);
+PR C core axis-granular evidence model.
+
+### Çoktan bire normatif
+PR A many-to-one identity collision, PR B'de metric aggregation'a dönüştürülmez;
+aynı (ConceptNodeId, axis) → DuplicateProjectedAxis error.
+
+### Testler (0 regression)
+- osp-cli unit: 92 → 108 (+16 metric_projection)
+- architecture_guards: 1 (yeni); analyze_bridge_flow: 9 (metric summary assertions)
+
+## CLI `osp graph init --analyze` — ne yapıldı (PR A dalında)
 
 Analysis → candidate bridge (PR A) — HANDOFF "Sıradaki işler" milestone kapandı.
 Analysis `Module` node'ları → `CodeEntityCandidate` ConceptNode (Candidate lane, INV-C5/INV-C2).

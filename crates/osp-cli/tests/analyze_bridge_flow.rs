@@ -46,7 +46,10 @@ fn analyze_init_creates_candidate_store() {
         ])
         .assert()
         .success()
-        .stdout(contains("Graph initialized"));
+        .stdout(contains("Graph initialized"))
+        .stderr(contains("Code metrics projected (not yet evidence)"))
+        .stderr(contains("Evidence construction: deferred"))
+        .stderr(contains("Evidence persistence: disabled"));
 
     // `osp graph status` → candidates: 3.
     let status_out = Command::cargo_bin("osp")

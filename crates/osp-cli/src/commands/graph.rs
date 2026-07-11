@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use clap::{Args, ArgGroup};
 use osp_core::anchoring::store::InMemoryAnchorStore;
 
-use crate::analysis_bridge::{project_analysis, AnalysisIdentityScheme};
+use crate::analysis_bridge::project_analysis;
 use crate::canonical_identity::PathCasePolicy;
 use crate::graph_seed_builder::{GraphSeedBuilder, GraphSeedNodeDraft};
 use crate::seed_file::CandidateSeedFile;
@@ -139,13 +139,27 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
             .path_case
             .map(Into::into)
             .unwrap_or(PathCasePolicy::AsciiCaseInsensitive);
-        let (seed, report) = project_analysis(&analysis, policy)
+        let bridge_output = project_analysis(&analysis, policy)
             .map_err(|e| anyhow::anyhow!("analysis bridge projection failed: {e}"))?;
-        if seed.is_empty() {
+        if bridge_output.candidate_seed.is_empty() {
             eprintln!("warning: analysis produced no projectable Module nodes");
         }
-        eprintln!("{report}"); // stderr — stdout'a karışmasın
-        seed.into_drafts(AnalysisIdentityScheme::PathV1)
+        // Metric projection özeti (stderr — N2: "not yet evidence").
+        let mp = &bridge_output.metric_projection;
+        eprintln!(
+            "Code metrics projected (not yet evidence): {}",
+            mp.report.projected_axis_values
+        );
+        eprintln!(
+            "Metrics omitted: placeholder={}, heuristic={}, zero-confidence={}",
+            mp.report.skipped_placeholder,
+            mp.report.skipped_heuristic,
+            mp.report.skipped_zero_confidence
+        );
+        eprintln!("Evidence construction: deferred");
+        eprintln!("Evidence persistence: disabled");
+        eprintln!("{}", bridge_output.graph_report);
+        bridge_output.candidate_seed.into_drafts()
     } else {
         // ArgGroup guaranteed exactly one; unreachable.
         anyhow::bail!("either --seed <json> or --analyze <repo> required");

@@ -1,3 +1,6 @@
+// Test + CLI integration tamamlanana kadar dead-code.
+#![allow(dead_code)]
+
 //! Canonical code identity — repository-relative path identity model.
 //!
 //! Analysis bridge'in fiziksel modül kimlik katmanı. İki ayrı kavram:
