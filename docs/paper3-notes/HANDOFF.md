@@ -345,6 +345,11 @@ kılar; gate/scorer ayrımı korunur ama korunan kenar durum yok.
 - **Uniform [0,1] newtype'lar:** `PhysicalAxisValue` + `EvidenceCoverage` + `MetricScalarViolation`
   (NonFinite/BelowMinimum/AboveMaximum). `PhysicalAxisValue::new(value)` axis parametresi YOK —
   axis context `ObservedPhysicalMetricError::InvalidValue { axis, value, violation }` seviyesinde.
+  **Plan sapması (R1 review notu):** plan metninde bu skalar newtype'lar Serialize-only
+  olarak tasarlanmıştı; implementasyon `NormalizedMetricThreshold` desenini izleyerek **validating
+  custom Deserialize** ekledi. Bilinçli iyileştirme — skalar deserialize constructor'dan geçer
+  (range-dışı forged edilemez), asıl INV-C6 sınırı (metric/koleksiyon/evidence Deserialize'sız)
+  korunur ve yeni `c6_observed_physical_metrics_deserialize` fixture'ı bunu kanıtlar.
 - **`PhysicalCodeMetricAxis` reuse:** mevcut enum (predicate_lowering.rs:113 canonical) + `sort_order()`.
   İkinci enum YOK. (Placement note: neutral modüle taşıma future cleanup.)
 - **`ObservedPhysicalMetric` (private fields):** `new(axis, value, source, strength, coverage) → Result`.
