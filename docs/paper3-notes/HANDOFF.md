@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI accept/reject + supersession + rich preview TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection TAMAM)
 
-> **Tarih:** 2026-07-09 (main `f3dacd7` — PR #55 merged)
+> **Tarih:** 2026-07-11 (main `798d18d` — PR #57 merged)
 > **Dal:** `main` (clean)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) TAMAM. Üç session yüzeyi kapandı: `OperatorReviewSession` (accept/reject) + `SupersedeSession` (supersede) + `supersede-preview` read-only rich query (lineage DAG + structural eligibility + fail-closed I/O). osp-core'a üç read-only domain accessor (incoming/compatibility/cycle) + currentness `is_current_mainline()` — apply_supersede delegasyonları 12-step precedence'i korur. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı (accept/reject/supersede/preview implemented and integration-tested). Sırada: analysis → candidate bridge, arXiv v1.4.
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) TAMAM. Beş yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR C (core axis-granular evidence model), PR D (provider + gate/scorer wiring), arXiv v1.4.
 
 ---
 
@@ -520,10 +520,10 @@ en değerli çıktı bu oldu.
 
 ## Commit durumu
 
-✅ **Faz 8b epistemik çekirdek + CLI `osp review` (accept/reject/supersede) + rich SupersedePreview + Analysis → candidate bridge TAMAM.**
-- main: `f3dacd7` (PR #55 merged). Bu dal: `feat/cli-analysis-bridge` (PR #56 adayı).
-- Faz 8b PR #48-51 merged (epistemik çekirdek); PR #52 (stale cleanup + paper3 artifact); PR #53 (CLI accept/reject); PR #54 (CLI supersession surface); PR #55 (rich SupersedePreview); PR #56 adayı (analysis bridge).
-- **538 lib test** + **24 compile-fail** + **osp-cli 92 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 8 analyze_bridge_flow** + **osp-mcp +2 INV-C11** yeşil.
+✅ **Faz 8b + CLI `osp review` (accept/reject/supersede) + rich SupersedePreview + Analysis bridge + Metric projection TAMAM.**
+- main: `798d18d` (PR #57 merged — analysis metric projection; 2 review turu: injectivity/declared-axes + private constructor/projected-axes/doc counts).
+- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup + paper3 artifact); PR #53 (CLI accept/reject); PR #54 (CLI supersession surface); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection).
+- **538 lib test** + **24 compile-fail** + **osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards** + **osp-mcp +2 INV-C11** yeşil.
 
 ## Yayın durumu (v1.3 → v1.4 adayı)
 
