@@ -6,6 +6,15 @@
 //! gerçek `ObservedCodeEvidence` object döndürürse kabul eder (Not 5 — `evidence_strength > 0`
 //! tek başına açmaz; gerçek object gerekir).
 //!
+//! # Not 5 güçlenme (PR C)
+//! Önceki modelde "evidence object var, `confidence=0`" temsil edilebiliyordu ve
+//! gate (object presence) / scorer (strength > 0) ayrımı bu kenar duruma dayanıyordu.
+//! PR C axis-granular modeli zero-strength reject uygular (`ObservedPhysicalMetric::new`
+//! strength=0 → error), bu yüzden "strength=0 evidence" artık oluşamaz. Gate hâlâ object
+//! presence kontrolü yapar, scorer hâlâ `minimum_observed_strength()` skalarını kullanır;
+//! ama korunmuş kenar durum ortadan kalktı — gate/scorer ayrımı korunur, korumaya gerek
+//! kalmaz.
+//!
 //! # D7-abstraction (osp-core analyzer-agnostic)
 //! [`AnchorStore`] (Faz 3) gibi, `CodeEvidenceProvider` de `osp-core`'u analyzer-agnostic
 //! tutar. Gerçek `osp-analyzer` bridge'i (symbol index) ayrı bir PR'da / crate'te impl
@@ -47,7 +56,14 @@ pub enum CodeEvidenceError {
 /// - `find_evidence` → [`AnchorGate`] `ImplementedBy` için **evidence object varlığını**
 ///   kontrol eder. Sadece `evidence_strength > 0` ImplementedBy açmaz; gerçek object olmalı.
 /// - `evidence_strength` → [`AnchorScorer`](crate::anchoring::scorer::AnchorScorer)
-///   `code_evidence_score` (weight 0.10) için skalar gücü döndürür.
+///   `code_evidence_score` (weight 0.10) için skalar gücü döndürür (PR C:
+///   `minimum_observed_strength()` — normative min-over-axes).
+///
+/// # Not 5 güçlenme (PR C)
+/// Önceki modelde "evidence object var, `confidence=0`" temsil edilebiliyordu ve
+/// gate (object presence) / scorer (strength > 0) ayrımı bu kenar duruma dayanıyordu.
+/// PR C axis-granular modeli zero-strength reject uygular, bu yüzden "strength=0 evidence"
+/// artık oluşamaz. Gate/scorer ayrımı korunur ama korunan kenar durum yok.
 ///
 /// # Object-safe
 /// Associated `Error` yerine tek concrete [`CodeEvidenceError`] → `&dyn CodeEvidenceProvider`
@@ -129,7 +145,7 @@ impl CodeEvidenceProvider for InMemoryCodeEvidenceProvider {
         code_entity_id: &ConceptNodeId,
     ) -> Result<EvidenceStrength, CodeEvidenceError> {
         Ok(match self.evidence.get(code_entity_id) {
-            Some(ev) => ev.confidence(),
+            Some(ev) => ev.observations().minimum_observed_strength(),
             None => EvidenceStrength::zero(),
         })
     }
@@ -141,18 +157,88 @@ mod tests {
     //! empty provider backward-compat, ObservedCodeEvidence constructor validasyon.
 
     use super::*;
+    use crate::anchoring::PhysicalCodeMetricAxis;
     use crate::anchoring::types::{
-        EvidenceStrength, ObservedCodeEvidence, ObservedCodeMetricSource, PhysicalCodeVector,
+        EvidenceCoverage, EvidenceStrength, ObservedCodeEvidence, ObservedCodeMetricSource,
+        ObservedPhysicalMetric, ObservedPhysicalMetrics,
     };
+
+    /// auth_service observation'ları — entropy/witness **representative normalized**
+    /// (PR C: 1.1/5.0 raw → 0.52/0.68). Eski `PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0)`
+    /// raw hatası düzeltildi; 5 eksende de uniform [0,1].
+    fn auth_service_observations() -> ObservedPhysicalMetrics {
+        let strength = EvidenceStrength::new(0.85).unwrap();
+        let coverage = EvidenceCoverage::new(1.0).unwrap();
+        let scip = ObservedCodeMetricSource::Scip;
+        ObservedPhysicalMetrics::try_new(vec![
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Coupling,
+                0.42,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Cohesion,
+                0.78,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Instability,
+                0.30,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Entropy,
+                0.52,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::WitnessDepth,
+                0.68,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+        ])
+        .unwrap()
+    }
 
     fn auth_service_evidence() -> ObservedCodeEvidence {
         ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:AuthService".into()),
-            PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0),
-            ObservedCodeMetricSource::Scip,
-            EvidenceStrength::new(0.85).unwrap(),
+            auth_service_observations(),
             1_700_000_000,
         )
+    }
+
+    /// Tek-eksen observation helper (builder-pattern overwrite testi için).
+    fn single_axis_observations(
+        axis: PhysicalCodeMetricAxis,
+        value: f64,
+        source: ObservedCodeMetricSource,
+        strength: EvidenceStrength,
+    ) -> ObservedPhysicalMetrics {
+        ObservedPhysicalMetrics::try_new(vec![ObservedPhysicalMetric::new(
+            axis,
+            value,
+            source,
+            strength,
+            EvidenceCoverage::new(1.0).unwrap(),
+        )
+        .unwrap()])
+        .unwrap()
     }
 
     #[test]
@@ -176,18 +262,24 @@ mod tests {
 
         let ev = p.find_evidence(&id).unwrap().expect("evidence mevcut");
         assert_eq!(ev.code_entity_id(), &id);
-        assert_eq!(ev.metric_source(), ObservedCodeMetricSource::Scip);
-        assert_eq!(ev.confidence().get(), 0.85);
         assert_eq!(ev.measured_at(), 1_700_000_000);
-        // PhysicalVector korundu (INV-C2 PhysicalCode family)
-        assert_eq!(ev.physical_vector().cohesion, 0.78);
+        // PR C: axis-granular observations. Cohesion axis değeri korundu (0.78).
+        let cohesion = ev
+            .observations()
+            .values()
+            .iter()
+            .find(|o| o.axis() == PhysicalCodeMetricAxis::Cohesion)
+            .expect("Cohesion axis mevcut");
+        assert_eq!(cohesion.value().get(), 0.78);
+        assert_eq!(cohesion.source(), ObservedCodeMetricSource::Scip);
     }
 
     #[test]
-    fn evidence_strength_matches_confidence_when_present() {
+    fn evidence_strength_matches_minimum_observed_when_present() {
         let p = InMemoryCodeEvidenceProvider::from_evidence(vec![auth_service_evidence()]);
         let id = ConceptNodeId("CodeEntity:AuthService".into());
-        // Not 5: strength = confidence (provider skalar görüş)
+        // Not 5 (PR C): strength = minimum_observed_strength (normative min-over-axes).
+        // auth_service tüm eksenlerde 0.85 strength → min 0.85.
         assert_eq!(p.evidence_strength(&id).unwrap().get(), 0.85);
     }
 
@@ -206,18 +298,25 @@ mod tests {
 
     #[test]
     fn with_evidence_builder_pattern_overwrites() {
+        // Değer seti 2 (0.1..1.0) + değer seti 3 (witness 9.0→0.9 soft-norm).
         let ev1 = ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:X".into()),
-            PhysicalCodeVector::new(0.1, 0.2, 0.3, 0.4, 1.0),
-            ObservedCodeMetricSource::TreeSitter,
-            EvidenceStrength::new(0.5).unwrap(),
+            single_axis_observations(
+                PhysicalCodeMetricAxis::Coupling,
+                0.1,
+                ObservedCodeMetricSource::TreeSitter,
+                EvidenceStrength::new(0.5).unwrap(),
+            ),
             100,
         );
         let ev2 = ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:X".into()),
-            PhysicalCodeVector::new(0.9, 0.8, 0.7, 0.6, 9.0),
-            ObservedCodeMetricSource::Scip,
-            EvidenceStrength::new(0.95).unwrap(),
+            single_axis_observations(
+                PhysicalCodeMetricAxis::Coupling,
+                0.9,
+                ObservedCodeMetricSource::Scip,
+                EvidenceStrength::new(0.95).unwrap(),
+            ),
             200,
         );
         let p = InMemoryCodeEvidenceProvider::empty()
@@ -225,12 +324,15 @@ mod tests {
             .with_evidence(ev2);
         let id = ConceptNodeId("CodeEntity:X".into());
         let found = p.find_evidence(&id).unwrap().unwrap();
-        assert_eq!(
-            found.metric_source(),
-            ObservedCodeMetricSource::Scip,
-            "overwrite → son evidence kazanır"
-        );
-        assert_eq!(found.confidence().get(), 0.95);
+        // overwrite → son evidence kazanır (Coupling axis Scip source).
+        let coupling = found
+            .observations()
+            .values()
+            .iter()
+            .find(|o| o.axis() == PhysicalCodeMetricAxis::Coupling)
+            .unwrap();
+        assert_eq!(coupling.source(), ObservedCodeMetricSource::Scip);
+        assert_eq!(found.observations().minimum_observed_strength().get(), 0.95);
     }
 
     #[test]
@@ -250,10 +352,23 @@ mod tests {
     fn observed_code_evidence_accessors() {
         let ev = auth_service_evidence();
         assert_eq!(ev.code_entity_id().0, "CodeEntity:AuthService");
-        assert_eq!(ev.metric_source(), ObservedCodeMetricSource::Scip);
-        assert_eq!(ev.confidence().get(), 0.85);
         assert_eq!(ev.measured_at(), 1_700_000_000);
-        assert_eq!(ev.physical_vector().coupling, 0.42);
+        // PR C: axis-granular observations. Coupling axis değeri 0.42, source Scip.
+        let coupling = ev
+            .observations()
+            .values()
+            .iter()
+            .find(|o| o.axis() == PhysicalCodeMetricAxis::Coupling)
+            .unwrap();
+        assert_eq!(coupling.value().get(), 0.42);
+        assert_eq!(coupling.source(), ObservedCodeMetricSource::Scip);
+        assert_eq!(coupling.strength().get(), 0.85);
+        assert_eq!(coupling.coverage().get(), 1.0);
+        // minimum_observed_strength = 0.85 (tüm eksenlerde 0.85).
+        assert_eq!(
+            ev.observations().minimum_observed_strength().get(),
+            0.85
+        );
     }
 
     #[test]

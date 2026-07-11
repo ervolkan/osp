@@ -1,15 +1,11 @@
-error[E0451]: fields `code_entity_id`, `physical_vector`, `metric_source`, `confidence` and `measured_at` of struct `ObservedCodeEvidence` are private
-  --> tests/compile_fail/c6_observed_evidence_literal.rs:13:9
+error[E0451]: fields `code_entity_id`, `observations` and `measured_at` of struct `ObservedCodeEvidence` are private
+  --> tests/compile_fail/c6_observed_evidence_literal.rs:29:9
    |
-12 |     let _evidence = ObservedCodeEvidence {
+28 |     let _evidence = ObservedCodeEvidence {
    |                     -------------------- in this type
-13 |         code_entity_id: ConceptNodeId("CodeEntity:X".into()),
+29 |         code_entity_id: ConceptNodeId("CodeEntity:X".into()),
    |         ^^^^^^^^^^^^^^ private field
-14 |         physical_vector: PhysicalCodeVector::new(0.1, 0.2, 0.3, 0.4, 1.0),
-   |         ^^^^^^^^^^^^^^^ private field
-15 |         metric_source: ObservedCodeMetricSource::Scip,
-   |         ^^^^^^^^^^^^^ private field
-16 |         confidence: EvidenceStrength::one(),
-   |         ^^^^^^^^^^ private field
-17 |         measured_at: 0,
+30 |         observations,
+   |         ^^^^^^^^^^^^ private field
+31 |         measured_at: 0,
    |         ^^^^^^^^^^^ private field

@@ -41,7 +41,7 @@
 | ↳ runtime atomic transition invariant (INV-C15, Faz 8b PR #49 atomik + PR #50 production invocation) | 1 |
 | **Toplam type-enforced** (genesis + lowering) | **13** |
 | **Toplam runtime-asserted** | **2** (C14 projection + C15 transition) |
-| Compile-fail test count | 24 (değişmedi) |
+| Compile-fail test count | 26 (PR C: c6_observed_physical_metrics_literal + deserialize eklendi, c6_intent rename) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |
 | INV-C15 production invocation | `SupersedeSession` (PR #50) — crate-private authority issuer + parametresiz `supersede()` + token içeride mint |
 | **Restore-validated persistence (CLI)** | `AnchorStoreSnapshot::restore_snapshot` — graph schema + node uniqueness + edge endpoints + record→node/status forward integrity + dense audit_seq (union unique + {1..N} + ==N) + INV-C15 üç yönlü triangulation (committed edge ↔ record ↔ status, lane-sensitive, cycle absence). paper3 "known gap" cümlesi evaluated path için kapatıldı. |
@@ -56,7 +56,7 @@
 
 | Stratum | Amaç | Kanıt | Test |
 |---|---|---|---|
-| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-P1..P3 + supersede opacity (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant + 2 supersede opacity boundary (24 cumulative compile-fail) | `tests/anchoring_typelevel.rs` |
+| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-P1..P3 + supersede opacity (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant + 2 supersede opacity boundary (26 cumulative compile-fail — PR C axis-granular collection) | `tests/anchoring_typelevel.rs` |
 | **(2) Golden fixture conformance** | 13 fixture pipeline davranışı | `anchoring_mvp.rs` + `anchoring_fixtures.rs` | `cargo test -p osp-core --test anchoring_mvp` |
 | **(3) Held-out adversarial** | 5 cümle totoloji-olmayan RQ1 | `held-out-adversarial-fixtures.json` | `paper3_heldout.rs` |
 | **(4) E2E binding chain replay** | Uçtan uca zincir; Step 6 REAL promotion (Faz 8a) | `e2e-binding-chain-replay.json` | `paper3_evidence.rs` |

@@ -625,20 +625,64 @@ fn anchor_mvp_fix_011_implemented_by_accepted_with_provider() {
     // Faz 4 pozitif yol: provider + evidence object → ImplementedBy kabul.
     use osp_core::anchoring::code_evidence::InMemoryCodeEvidenceProvider;
     use osp_core::anchoring::types::{
-        ConceptNodeId, EvidenceStrength, ObservedCodeEvidence, ObservedCodeMetricSource,
-        PhysicalCodeVector,
+        ConceptNodeId, EvidenceCoverage, EvidenceStrength, ObservedCodeEvidence,
+        ObservedCodeMetricSource, ObservedPhysicalMetric, ObservedPhysicalMetrics,
     };
+    use osp_core::anchoring::PhysicalCodeMetricAxis;
 
     let f = load_fixture("fix_011_implemented_by_with_evidence");
     let pipeline = AnchorPipeline::default_pipeline();
     let store = InMemoryAnchorStore::with_seed(graph_seed_from_given(&f.given));
 
     // Patch 6: explicit ObservedCodeEvidence seed (GraphSeed.code_entities yeterli değil).
+    // PR C: axis-granular observations. entropy/witness representative normalized
+    // (1.1/5.0 raw → 0.52/0.68). 5 eksende de uniform [0,1].
+    let strength = EvidenceStrength::new(0.85).unwrap();
     let evidence = ObservedCodeEvidence::new(
         ConceptNodeId("CodeEntity:AuthService".into()),
-        PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0),
-        ObservedCodeMetricSource::Scip,
-        EvidenceStrength::new(0.85).unwrap(),
+        ObservedPhysicalMetrics::try_new(vec![
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Coupling,
+                0.42,
+                ObservedCodeMetricSource::Scip,
+                strength,
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Cohesion,
+                0.78,
+                ObservedCodeMetricSource::Scip,
+                strength,
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Instability,
+                0.30,
+                ObservedCodeMetricSource::Scip,
+                strength,
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Entropy,
+                0.52,
+                ObservedCodeMetricSource::Scip,
+                strength,
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::WitnessDepth,
+                0.68,
+                ObservedCodeMetricSource::Scip,
+                strength,
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+        ])
+        .unwrap(),
         1_700_000_000,
     );
     let provider = InMemoryCodeEvidenceProvider::from_evidence(vec![evidence]);

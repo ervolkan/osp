@@ -4,8 +4,8 @@
 //! Faz 1 §11: "ConceptPacket, AnchorCandidate, AnchorPlan, PositionSnapshot tipleri".
 
 use crate::anchoring::{
-    AnchorDecisionKind, ConceptEdgeKind, ConceptPacketType, DecisionStatus, PositionFamily,
-    ThresholdBand,
+    AnchorDecisionKind, ConceptEdgeKind, ConceptPacketType, DecisionStatus, PhysicalCodeMetricAxis,
+    PositionFamily, ThresholdBand,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -290,21 +290,456 @@ impl std::fmt::Display for EvidenceStrengthOutOfRange {
 
 impl std::error::Error for EvidenceStrengthOutOfRange {}
 
-/// Bir CodeEntity için observed (ölçülmüş) kod kanıtı (INV-C6 — Patch 1/2/5).
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR C — Axis-granular evidence: PhysicalAxisValue + EvidenceCoverage + collection
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// INV-C6 axis-granular modeli (PR C). `ObservedCodeEvidence` artık tek bir
+// `PhysicalCodeVector` + tek `confidence` taşımaz; her Paper 1 ekseni için ayrı
+// observation taşır (`ObservedPhysicalMetrics`). Bu:
+//
+//   1. Per-axis provenance — Coupling TreeSitter, Cohesion Scip aynı evidence içinde.
+//   2. Per-axis strength + coverage.
+//   3. Uniform [0,1] validation — `PhysicalAxisValue::new(value)` tüm 5 eksende
+//      normalize değeri range-check eder (raw entropy/witness_depth ENJEKSİYONU
+//      type-level engelli).
+//   4. Zero-strength reject — `ObservedPhysicalMetric::new` strength=0 reject eder.
+//      "Evidence var ama strength=0" artık temsil edilemez → korunmuş kenar durum yok.
+//   5. Normative `minimum_observed_strength()` policy — provider bunu kullanır.
+
+/// Uniform `[0,1]` normalize physical axis değeri (PR C — tüm 5 eksende normalize).
+///
+/// `EvidenceStrength` (INV-C6) / `ScalarSimilarity` (INV-C1) / `NormalizedMetricThreshold`
+/// (INV-P2) paterni: private inner f64, `is_finite() + (0.0..=1.0)`, custom serde
+/// (constructor bypass engelli).
+///
+/// # Neden axis parametresi YOK
+/// `new(value)` sadece değeri validate eder; axis context `ObservedPhysicalMetric`
+/// seviyesinde `ObservedPhysicalMetricError::InvalidValue { axis, .. }` ile verilir.
+/// Bu, validation logic'ini tek yerde tutar (DRY) ve error context'ini caller'da
+/// zenginleştirir.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicalAxisValue(f64);
+
+impl PhysicalAxisValue {
+    /// `[0,1]` range-check + finiteness. NaN, ±∞, negatif, >1 → `MetricScalarViolation`.
+    pub fn new(value: f64) -> Result<Self, MetricScalarViolation> {
+        if !value.is_finite() {
+            return Err(MetricScalarViolation::NonFinite);
+        }
+        if value < 0.0 {
+            return Err(MetricScalarViolation::BelowMinimum);
+        }
+        if value > 1.0 {
+            return Err(MetricScalarViolation::AboveMaximum);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn zero() -> Self {
+        Self(0.0)
+    }
+
+    pub fn one() -> Self {
+        Self(1.0)
+    }
+
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+}
+
+impl serde::Serialize for PhysicalAxisValue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PhysicalAxisValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        PhysicalAxisValue::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Uniform `[0,1]` evidence coverage (PR C — per-axis coverage).
+///
+/// `PhysicalAxisValue` ile aynı validation paterni; semantik olarak farklı (ölçüm
+/// coverage'sı, axis değeri değil) → ayrı newtype. Upstream confidence zaten
+/// coverage içerir; bu değer per-axis zenginleştirme içindir.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EvidenceCoverage(f64);
+
+impl EvidenceCoverage {
+    /// `[0,1]` range-check + finiteness. NaN, ±∞, negatif, >1 → `MetricScalarViolation`.
+    pub fn new(value: f64) -> Result<Self, MetricScalarViolation> {
+        if !value.is_finite() {
+            return Err(MetricScalarViolation::NonFinite);
+        }
+        if value < 0.0 {
+            return Err(MetricScalarViolation::BelowMinimum);
+        }
+        if value > 1.0 {
+            return Err(MetricScalarViolation::AboveMaximum);
+        }
+        Ok(Self(value))
+    }
+
+    pub fn zero() -> Self {
+        Self(0.0)
+    }
+
+    pub fn one() -> Self {
+        Self(1.0)
+    }
+
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+}
+
+impl serde::Serialize for EvidenceCoverage {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EvidenceCoverage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = f64::deserialize(deserializer)?;
+        EvidenceCoverage::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `[0,1]` skalar newtype violation sebebi (`PhysicalAxisValue` + `EvidenceCoverage`).
+///
+/// Üç ayrı variant hatayı self-documenting yapar ve caller'ın axis context
+/// (`InvalidValue { axis, value, violation }`) ile zenginleştirmesine olanak tanır.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricScalarViolation {
+    /// NaN veya ±∞.
+    NonFinite,
+    /// `< 0.0`.
+    BelowMinimum,
+    /// `> 1.0`.
+    AboveMaximum,
+}
+
+impl std::fmt::Display for MetricScalarViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonFinite => write!(f, "non-finite (NaN/±∞)"),
+            Self::BelowMinimum => write!(f, "0.0 altında"),
+            Self::AboveMaximum => write!(f, "1.0 üstünde"),
+        }
+    }
+}
+
+impl std::error::Error for MetricScalarViolation {}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ObservedPhysicalMetric — per-axis observation (PR C)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Tek bir Paper 1 ekseni için observed (ölçülmüş) değer + provenance (PR C).
+///
+/// # INV-C6 axis-granular yapısal garanti
+/// - **Private field'lar + public smart constructor `new`**: external crate struct literal
+///   construct edemez (trybuild `c6_observed_physical_metrics_literal`). İnvariant'lar
+///   constructor içinde korunur.
+/// - **`value: PhysicalAxisValue`** (uniform `[0,1]`): raw entropy/witness_depth enjeksiyonu
+///   type-level engelli — `PhysicalAxisValue::new` range-check yapar.
+/// - **`strength: EvidenceStrength` + zero-strength reject**: `strength=0` →
+///   `ZeroStrength { axis }`. "Evidence var ama strength=0" temsil edilemez → gate/scorer
+///   ayrımı korunur ama korunmuş kenar durum (Not 5 güçlenme) yok.
+///
+/// # Not 5 güçlenme
+/// Önceki modelde "evidence object var, `confidence=0`" temsil edilebiliyordu ve
+/// gate (object presence) / scorer (strength > 0) ayrımı bu kenar duruma dayanıyordu.
+/// Zero-strength reject bunu imkansız kılar: gate object presence kontrolünü hala yapar
+/// ama artık "strength=0 evidence" hiç oluşamaz.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ObservedPhysicalMetric {
+    axis: PhysicalCodeMetricAxis,
+    value: PhysicalAxisValue,
+    source: ObservedCodeMetricSource,
+    strength: EvidenceStrength,
+    coverage: EvidenceCoverage,
+}
+
+impl ObservedPhysicalMetric {
+    /// Public smart constructor — value `[0,1]` validation + strength > 0 reject.
+    ///
+    /// # Hatalar
+    /// - `InvalidValue { axis, value, violation }`: `value` `[0,1]` dışı veya non-finite.
+    /// - `ZeroStrength { axis }`: `strength` `EvidenceStrength::zero()` (0.0).
+    ///
+    /// Not: `EvidenceStrength::new(0.0).is_ok()` boundary geçerlidir (newtype aralıkta),
+    /// ama `ObservedPhysicalMetric` seviyesinde 0 strength observation reject edilir.
+    pub fn new(
+        axis: PhysicalCodeMetricAxis,
+        value: f64,
+        source: ObservedCodeMetricSource,
+        strength: EvidenceStrength,
+        coverage: EvidenceCoverage,
+    ) -> Result<Self, ObservedPhysicalMetricError> {
+        let value = PhysicalAxisValue::new(value).map_err(|violation| {
+            ObservedPhysicalMetricError::InvalidValue {
+                axis,
+                value,
+                violation,
+            }
+        })?;
+        if strength.get() == 0.0 {
+            return Err(ObservedPhysicalMetricError::ZeroStrength { axis });
+        }
+        Ok(Self {
+            axis,
+            value,
+            source,
+            strength,
+            coverage,
+        })
+    }
+
+    /// Bu observation'ın ekseni.
+    pub fn axis(&self) -> PhysicalCodeMetricAxis {
+        self.axis
+    }
+
+    /// Normalize edilmiş axis değeri `[0,1]`.
+    pub fn value(&self) -> PhysicalAxisValue {
+        self.value
+    }
+
+    /// Metric kaynağı (INV-C6 — observed provenance).
+    pub fn source(&self) -> ObservedCodeMetricSource {
+        self.source
+    }
+
+    /// Per-axis kanıt gücü `[0,1]` (zero-strength reject ile > 0 garanti).
+    pub fn strength(&self) -> EvidenceStrength {
+        self.strength
+    }
+
+    /// Per-axis ölçüm coverage'sı `[0,1]`.
+    pub fn coverage(&self) -> EvidenceCoverage {
+        self.coverage
+    }
+}
+
+/// `ObservedPhysicalMetric` constructor hatası (axis/value context).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ObservedPhysicalMetricError {
+    /// `value` `[0,1]` dışı veya non-finite.
+    #[error("{axis:?} axis değeri {value} geçersiz: {violation}")]
+    InvalidValue {
+        axis: PhysicalCodeMetricAxis,
+        value: f64,
+        violation: MetricScalarViolation,
+    },
+    /// `strength` 0.0 — zero-strength observation temsil edilemez.
+    #[error("{axis:?} axis için zero-strength observation reject (Not 5 güçlenme)")]
+    ZeroStrength { axis: PhysicalCodeMetricAxis },
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ObservedPhysicalMetrics — validated per-axis collection (PR C)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Non-empty, unique-axis, deterministic-order per-axis observation collection (PR C).
+///
+/// # INV-C6 yapısal garanti
+/// - **Private `Vec` + `try_new`**: external crate literal construct edemez
+///   (trybuild `c6_observed_physical_metrics_literal`). İnvariant'lar constructor içinde
+///   korunur.
+/// - **Non-empty**: `Empty` → error. "Hiç observation yok" collection seviyesinde engelli.
+/// - **Unique axis**: `DuplicateAxis { axis }` → error. Aynı eksende iki observation yok.
+/// - **Deterministic order**: `sort_order()`'a göre sıralı → `missing_axes()` ve
+///   `try_to_physical_vector()` deterministik.
+///
+/// # Serialize-only
+/// `Deserialize` YOK — `ObservedPhysicalMetric` Deserialize'a sahip değildir (field'lar
+/// private + zero-strength invariant) ve collection'un da sahip olmaması gerekir (serde
+/// ile bypass engeli). Diskten reconstruct edip INV-C6 boundary'yi delmek imkansız.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ObservedPhysicalMetrics {
+    values: Vec<ObservedPhysicalMetric>,
+}
+
+impl ObservedPhysicalMetrics {
+    /// Non-empty + unique-axis + deterministic-order validation.
+    ///
+    /// # Hatalar
+    /// - `Empty`: boş vec.
+    /// - `DuplicateAxis { axis }`: aynı eksende iki observation.
+    ///
+    /// Sıralama: `PhysicalCodeMetricAxis::sort_order()`'a göre (Coupling→Cohesion→
+    /// Instability→Entropy→WitnessDepth). Bu, `missing_axes()` ve `try_to_physical_vector()`
+    /// çıktılarını deterministik yapar.
+    pub fn try_new(
+        values: Vec<ObservedPhysicalMetric>,
+    ) -> Result<Self, ObservedPhysicalMetricsError> {
+        if values.is_empty() {
+            return Err(ObservedPhysicalMetricsError::Empty);
+        }
+        // Duplicate axis kontrolü (sort öncesi, sıra bağımsız).
+        let mut seen: Vec<PhysicalCodeMetricAxis> = Vec::with_capacity(values.len());
+        for v in &values {
+            if seen.contains(&v.axis) {
+                return Err(ObservedPhysicalMetricsError::DuplicateAxis { axis: v.axis });
+            }
+            seen.push(v.axis);
+        }
+        // Deterministic sort by sort_order.
+        let mut values = values;
+        values.sort_by_key(|v| v.axis.sort_order());
+        Ok(Self { values })
+    }
+
+    /// Tüm observation'lar (sort_order sıralı).
+    pub fn values(&self) -> &[ObservedPhysicalMetric] {
+        &self.values
+    }
+
+    /// Bu eksende observation var mı?
+    pub fn contains(&self, axis: PhysicalCodeMetricAxis) -> bool {
+        self.values.iter().any(|v| v.axis == axis)
+    }
+
+    /// Sort-order sıralı iterator (ExactSizeIterator — len biliniyor).
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &ObservedPhysicalMetric> {
+        self.values.iter()
+    }
+
+    /// Mevcut olmayan eksneler (sort_order sıralı, deterministik).
+    ///
+    /// Missing axes are absent, not zero-strength observations. Bu, "eksik eksen =
+    /// ölçülmemiş" semantiğini korur; `try_to_physical_vector()` missing → error döner
+    /// (zero-fill YOK).
+    pub fn missing_axes(&self) -> Vec<PhysicalCodeMetricAxis> {
+        let present: std::collections::HashSet<PhysicalCodeMetricAxis> =
+            self.values.iter().map(|v| v.axis).collect();
+        let all = [
+            PhysicalCodeMetricAxis::Coupling,
+            PhysicalCodeMetricAxis::Cohesion,
+            PhysicalCodeMetricAxis::Instability,
+            PhysicalCodeMetricAxis::Entropy,
+            PhysicalCodeMetricAxis::WitnessDepth,
+        ];
+        all.into_iter()
+            .filter(|a| !present.contains(a))
+            .collect()
+    }
+
+    /// Normative min-over-axes strength policy (PR C — provider bunu kullanır).
+    ///
+    /// Mevcut eksneler arasındaki **minimum** `EvidenceStrength`. Coverage katılmaz
+    /// (upstream confidence zaten coverage içerir — double-counting engeli). Missing
+    /// axes are absent, not zero-strength observations (eksik eksen min'i düşürmez).
+    ///
+    /// Zero-strength reject guarantee'si nedeniyle dönen değer her zaman > 0.
+    pub fn minimum_observed_strength(&self) -> EvidenceStrength {
+        // Zero-strength reject (ObservedPhysicalMetric::new) + non-empty (try_new) →
+        // min her zaman (0,1] aralığında; EvidenceStrength::new unwrap güvenli.
+        let min = self
+            .values
+            .iter()
+            .map(|v| v.strength().get())
+            .fold(f64::INFINITY, f64::min);
+        EvidenceStrength::new(min).expect(
+            "minimum_observed_strength: zero-strength reject + non-empty invariant \
+             delinmiş — min her zaman (0,1] aralığında olmalı",
+        )
+    }
+
+    /// All-5-axes → `PhysicalCodeVector`; missing → error (zero-fill YOK).
+    ///
+    /// Missing axes deterministik `sort_order` sırasında (`missing_axes()` ile aynı).
+    /// Bu, "eksik ölçüm = sıfır varsay" hatasını imkansız kılar: ya 5 eksende de
+    /// ölçüm var (PhysicalCodeVector üretilebilir) ya da eksik açık belirtilir.
+    pub fn try_to_physical_vector(&self) -> Result<PhysicalCodeVector, IncompletePhysicalVector> {
+        let missing = self.missing_axes();
+        if !missing.is_empty() {
+            return Err(IncompletePhysicalVector { missing });
+        }
+        // 5 axes present — value'ları topla.
+        let mut coupling = 0.0;
+        let mut cohesion = 0.0;
+        let mut instability = 0.0;
+        let mut entropy = 0.0;
+        let mut witness_depth = 0.0;
+        for v in &self.values {
+            match v.axis {
+                PhysicalCodeMetricAxis::Coupling => coupling = v.value.get(),
+                PhysicalCodeMetricAxis::Cohesion => cohesion = v.value.get(),
+                PhysicalCodeMetricAxis::Instability => instability = v.value.get(),
+                PhysicalCodeMetricAxis::Entropy => entropy = v.value.get(),
+                PhysicalCodeMetricAxis::WitnessDepth => witness_depth = v.value.get(),
+            }
+        }
+        Ok(PhysicalCodeVector::new(
+            coupling,
+            cohesion,
+            instability,
+            entropy,
+            witness_depth,
+        ))
+    }
+}
+
+/// `ObservedPhysicalMetrics::try_new` hatası.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum ObservedPhysicalMetricsError {
+    /// Boş vec — en az bir observation gerekli.
+    #[error("ObservedPhysicalMetrics boş olamaz (en az bir axis observation gerekli)")]
+    Empty,
+    /// Aynı eksende iki observation.
+    #[error("{axis:?} axis duplicate — aynı eksende iki observation olamaz")]
+    DuplicateAxis { axis: PhysicalCodeMetricAxis },
+}
+
+/// `try_to_physical_vector` missing-axes hatası (zero-fill YOK).
+///
+/// Private `missing` + accessor — `missing()` deterministik `sort_order` sıralı.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompletePhysicalVector {
+    missing: Vec<PhysicalCodeMetricAxis>,
+}
+
+impl IncompletePhysicalVector {
+    /// Missing eksneler (sort_order sıralı, deterministik).
+    pub fn missing(&self) -> &[PhysicalCodeMetricAxis] {
+        &self.missing
+    }
+}
+
+impl std::fmt::Display for IncompletePhysicalVector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PhysicalCodeVector incomplete — missing axes: {:?}",
+            self.missing
+        )
+    }
+}
+
+impl std::error::Error for IncompletePhysicalVector {}
+
+/// Bir CodeEntity için observed (ölçülmüş) kod kanıtı (INV-C6 — Patch 1/2/5, PR C).
 ///
 /// # INV-C6 yapısal garanti
 /// - **Private field'lar + public smart constructor `new`** (Patch 1): dışarıdan struct
 ///   literal construct edilemez (trybuild `c6_observed_evidence_literal`); ama **gelecekteki
 ///   osp-analyzer bridge crate'i `new(...)` çağırabilir** (`pub(crate)` DEĞİL — dış provider
 ///   geçerli evidence üretebilir). İnvariant'lar constructor içinde korunur.
+/// - **`observations: ObservedPhysicalMetrics`** (PR C): axis-granular observation
+///   collection. Her Paper 1 ekseni ayrı `ObservedPhysicalMetric` (per-axis provenance +
+///   strength + coverage). Tek bir `PhysicalCodeVector` + tek `confidence` yerine.
 /// - **`ObservedCodeMetricSource` typed enum** (Patch 2): `MetricSource::Placeholder`/
 ///   `Heuristic` imkansız — sadece gözlemlenmiş kaynaklar.
-/// - **`confidence: EvidenceStrength`** (Not 2): çak `f64` değil, range-checked newtype.
 /// - **Serialize-only** (Not 3): `Deserialize` YOK — diskten evidence reconstruct edip
 ///   INV-C6 boundary'yi bypass etmeyi engeller (PR30 serde boundary paterni).
-/// - **`physical_vector: PhysicalCodeVector`**: PhysicalCode family (INV-C2). Intent
-///   (`ConceptualIntentVector`) buraya TYPE-LEVEL verilmez (trybuild
-///   `c6_intent_carries_physical_vector`).
 ///
 /// # Observed ≠ Accepted (Patch 5)
 /// Bu evidence bir CodeEntity'nin *ölçülmüş fiziksel yapısını* taşır. Node'un graph
@@ -313,30 +748,25 @@ impl std::error::Error for EvidenceStrengthOutOfRange {}
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ObservedCodeEvidence {
     code_entity_id: ConceptNodeId,
-    physical_vector: PhysicalCodeVector,
-    metric_source: ObservedCodeMetricSource,
-    confidence: EvidenceStrength,
+    observations: ObservedPhysicalMetrics,
     /// Unix epoch saniye (chrono bağımlılığı yok — Faz 1 stratejisi).
     measured_at: u64,
 }
 
 impl ObservedCodeEvidence {
-    /// Public smart constructor — invariant'lar burada korunur (Patch 1).
+    /// Public smart constructor — invariant'lar `ObservedPhysicalMetrics::try_new`'de
+    /// korunur (Patch 1 + PR C). Caller valid bir collection geçmelidir.
     ///
     /// Dış crate (osp-analyzer bridge, test) geçerli observed evidence üretebilir; ama
     /// field'lar private olduğu için struct literal ile *geçersiz* evidence enjekte edemez.
     pub fn new(
         code_entity_id: ConceptNodeId,
-        physical_vector: PhysicalCodeVector,
-        metric_source: ObservedCodeMetricSource,
-        confidence: EvidenceStrength,
+        observations: ObservedPhysicalMetrics,
         measured_at: u64,
     ) -> Self {
         Self {
             code_entity_id,
-            physical_vector,
-            metric_source,
-            confidence,
+            observations,
             measured_at,
         }
     }
@@ -346,19 +776,9 @@ impl ObservedCodeEvidence {
         &self.code_entity_id
     }
 
-    /// Ölçülen fiziksel yapı (Paper 1 eksenleri, INV-C2 PhysicalCode family).
-    pub fn physical_vector(&self) -> &PhysicalCodeVector {
-        &self.physical_vector
-    }
-
-    /// Metric kaynağı (INV-C6 — observed provenance).
-    pub fn metric_source(&self) -> ObservedCodeMetricSource {
-        self.metric_source
-    }
-
-    /// Kanıt güven katsayısı `[0,1]` (EvidenceStrength newtype).
-    pub fn confidence(&self) -> EvidenceStrength {
-        self.confidence
+    /// Axis-granular observation collection (PR C — per-axis provenance/strength/coverage).
+    pub fn observations(&self) -> &ObservedPhysicalMetrics {
+        &self.observations
     }
 
     /// Ölçüm zaman damgası (Unix epoch saniye).
@@ -1545,6 +1965,295 @@ mod tests {
         assert_eq!(parsed["packet_id"], "pkt:valid");
         assert_eq!(parsed["decision"], "TentativeLink");
         assert!(parsed["candidates"].is_array());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PR C — Axis-granular evidence model unit testleri
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Test helper: tek-eksen ObservedPhysicalMetric.
+    fn single_metric(
+        axis: PhysicalCodeMetricAxis,
+        value: f64,
+        strength: f64,
+    ) -> ObservedPhysicalMetric {
+        ObservedPhysicalMetric::new(
+            axis,
+            value,
+            ObservedCodeMetricSource::Scip,
+            EvidenceStrength::new(strength).unwrap(),
+            EvidenceCoverage::new(1.0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn physical_axis_value_range_check_uniform() {
+        // Uniform [0,1]: tüm 5 eksende aynı validation.
+        assert!(PhysicalAxisValue::new(0.0).is_ok());
+        assert!(PhysicalAxisValue::new(0.52).is_ok()); // entropy normalize
+        assert!(PhysicalAxisValue::new(1.0).is_ok());
+        // Boundary violations
+        assert_eq!(
+            PhysicalAxisValue::new(1.1).unwrap_err(),
+            MetricScalarViolation::AboveMaximum
+        );
+        assert_eq!(
+            PhysicalAxisValue::new(-0.01).unwrap_err(),
+            MetricScalarViolation::BelowMinimum
+        );
+        assert_eq!(
+            PhysicalAxisValue::new(f64::NAN).unwrap_err(),
+            MetricScalarViolation::NonFinite
+        );
+        assert_eq!(
+            PhysicalAxisValue::new(f64::INFINITY).unwrap_err(),
+            MetricScalarViolation::NonFinite
+        );
+    }
+
+    #[test]
+    fn evidence_coverage_range_check() {
+        assert!(EvidenceCoverage::new(0.0).is_ok());
+        assert!(EvidenceCoverage::new(0.5).is_ok());
+        assert!(EvidenceCoverage::new(1.0).is_ok());
+        assert!(EvidenceCoverage::new(1.01).is_err());
+        assert!(EvidenceCoverage::new(-0.1).is_err());
+        assert!(EvidenceCoverage::new(f64::NAN).is_err());
+    }
+
+    #[test]
+    fn observed_physical_metric_zero_strength_reject() {
+        // Zero-strength reject: strength=0 → ZeroStrength { axis }.
+        let err = ObservedPhysicalMetric::new(
+            PhysicalCodeMetricAxis::Coupling,
+            0.42,
+            ObservedCodeMetricSource::Scip,
+            EvidenceStrength::new(0.0).unwrap(), // boundary geçerli newtype
+            EvidenceCoverage::new(1.0).unwrap(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ObservedPhysicalMetricError::ZeroStrength {
+                axis: PhysicalCodeMetricAxis::Coupling
+            }
+        );
+    }
+
+    #[test]
+    fn observed_physical_metric_invalid_value_axis_context() {
+        // InvalidValue axis/value context: entropy 1.1 → AboveMaximum.
+        let err = ObservedPhysicalMetric::new(
+            PhysicalCodeMetricAxis::Entropy,
+            1.1,
+            ObservedCodeMetricSource::Scip,
+            EvidenceStrength::one(),
+            EvidenceCoverage::new(1.0).unwrap(),
+        )
+        .unwrap_err();
+        match err {
+            ObservedPhysicalMetricError::InvalidValue {
+                axis,
+                value,
+                violation,
+            } => {
+                assert_eq!(axis, PhysicalCodeMetricAxis::Entropy);
+                assert_eq!(value, 1.1);
+                assert_eq!(violation, MetricScalarViolation::AboveMaximum);
+            }
+            other => panic!("InvalidValue bekleniyordu, got {other:?}"),
+        }
+        // entropy 0.52 → Ok (representative normalized).
+        assert!(single_metric(PhysicalCodeMetricAxis::Entropy, 0.52, 0.85).value().get() - 0.52
+            < 1e-9);
+    }
+
+    #[test]
+    fn evidence_strength_new_zero_boundary_unchanged() {
+        // EvidenceStrength::new(0.0).is_ok() boundary test dokunulmaz (0 newtype aralıkta geçerli).
+        // Zero-strength reject ObservedPhysicalMetric seviyesinde.
+        assert!(EvidenceStrength::new(0.0).is_ok());
+        assert_eq!(EvidenceStrength::new(0.0).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn observed_physical_metrics_try_new_rejects_empty() {
+        assert_eq!(
+            ObservedPhysicalMetrics::try_new(vec![]).unwrap_err(),
+            ObservedPhysicalMetricsError::Empty
+        );
+    }
+
+    #[test]
+    fn observed_physical_metrics_try_new_rejects_duplicate_axis() {
+        // Aynı eksende iki observation → DuplicateAxis.
+        let err = ObservedPhysicalMetrics::try_new(vec![
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.4, 0.8),
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.5, 0.7),
+        ])
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ObservedPhysicalMetricsError::DuplicateAxis {
+                axis: PhysicalCodeMetricAxis::Coupling
+            }
+        );
+    }
+
+    #[test]
+    fn observed_physical_metrics_try_new_sorts_by_sort_order() {
+        // Reverse-order input → deterministic sort_order sıralı çıktı.
+        let metrics = ObservedPhysicalMetrics::try_new(vec![
+            single_metric(PhysicalCodeMetricAxis::WitnessDepth, 0.2, 0.8),
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.4, 0.8),
+            single_metric(PhysicalCodeMetricAxis::Entropy, 0.3, 0.8),
+        ])
+        .unwrap();
+        let axes: Vec<_> = metrics.values().iter().map(|o| o.axis()).collect();
+        assert_eq!(
+            axes,
+            vec![
+                PhysicalCodeMetricAxis::Coupling,
+                PhysicalCodeMetricAxis::Entropy,
+                PhysicalCodeMetricAxis::WitnessDepth,
+            ]
+        );
+        // iter ExactSizeIterator.
+        assert_eq!(metrics.iter().len(), 3);
+        // contains.
+        assert!(metrics.contains(PhysicalCodeMetricAxis::Coupling));
+        assert!(!metrics.contains(PhysicalCodeMetricAxis::Cohesion));
+    }
+
+    #[test]
+    fn observed_physical_metrics_minimum_strength_heterogeneous() {
+        // Heterojen pin: [0.9, 0.6, 0.8] → min 0.6.
+        let metrics = ObservedPhysicalMetrics::try_new(vec![
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.4, 0.9),
+            single_metric(PhysicalCodeMetricAxis::Cohesion, 0.4, 0.6),
+            single_metric(PhysicalCodeMetricAxis::Instability, 0.4, 0.8),
+        ])
+        .unwrap();
+        assert!((metrics.minimum_observed_strength().get() - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn observed_physical_metrics_minimum_strength_single_axis() {
+        // Single axis: 0.8 → 0.8.
+        let metrics = ObservedPhysicalMetrics::try_new(vec![single_metric(
+            PhysicalCodeMetricAxis::Coupling,
+            0.4,
+            0.8,
+        )])
+        .unwrap();
+        assert!((metrics.minimum_observed_strength().get() - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn try_to_physical_vector_succeeds_all_five_axes() {
+        // 5 axes present → Ok(PhysicalCodeVector).
+        let metrics = ObservedPhysicalMetrics::try_new(vec![
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.42, 0.85),
+            single_metric(PhysicalCodeMetricAxis::Cohesion, 0.78, 0.85),
+            single_metric(PhysicalCodeMetricAxis::Instability, 0.30, 0.85),
+            single_metric(PhysicalCodeMetricAxis::Entropy, 0.52, 0.85),
+            single_metric(PhysicalCodeMetricAxis::WitnessDepth, 0.68, 0.85),
+        ])
+        .unwrap();
+        let pv = metrics.try_to_physical_vector().expect("5 axes → Ok");
+        assert!((pv.coupling - 0.42).abs() < 1e-9);
+        assert!((pv.cohesion - 0.78).abs() < 1e-9);
+        assert!((pv.instability - 0.30).abs() < 1e-9);
+        assert!((pv.entropy - 0.52).abs() < 1e-9);
+        assert!((pv.witness_depth - 0.68).abs() < 1e-9);
+    }
+
+    #[test]
+    fn try_to_physical_vector_fails_missing_axes_deterministic() {
+        // 3 axes present → missing [Entropy, WitnessDepth] (sort_order sıralı).
+        let metrics = ObservedPhysicalMetrics::try_new(vec![
+            single_metric(PhysicalCodeMetricAxis::Instability, 0.30, 0.85),
+            single_metric(PhysicalCodeMetricAxis::Coupling, 0.42, 0.85),
+            single_metric(PhysicalCodeMetricAxis::Cohesion, 0.78, 0.85),
+        ])
+        .unwrap();
+        let err = metrics.try_to_physical_vector().unwrap_err();
+        assert_eq!(
+            err.missing(),
+            &[
+                PhysicalCodeMetricAxis::Entropy,
+                PhysicalCodeMetricAxis::WitnessDepth,
+            ]
+        );
+        // missing_axes() ile aynı deterministik sıra.
+        assert_eq!(err.missing(), metrics.missing_axes().as_slice());
+    }
+
+    #[test]
+    fn shape_compatibility_mixed_provenance() {
+        // 3-axis mixed provenance (Coupling TreeSitter + Cohesion Scip + Instability TreeSitter)
+        // → sort_order + missing [Entropy, WitnessDepth].
+        let ts = ObservedCodeMetricSource::TreeSitter;
+        let scip = ObservedCodeMetricSource::Scip;
+        let metrics = ObservedPhysicalMetrics::try_new(vec![
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Instability,
+                0.30,
+                ts,
+                EvidenceStrength::new(0.7).unwrap(),
+                EvidenceCoverage::new(0.9).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Coupling,
+                0.42,
+                ts,
+                EvidenceStrength::new(0.8).unwrap(),
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Cohesion,
+                0.78,
+                scip,
+                EvidenceStrength::new(0.9).unwrap(),
+                EvidenceCoverage::new(1.0).unwrap(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        // Per-axis provenance preserved.
+        assert_eq!(metrics.values()[0].source(), ts); // Coupling (sort_order 0)
+        assert_eq!(metrics.values()[1].source(), scip); // Cohesion (sort_order 1)
+        assert_eq!(metrics.values()[2].source(), ts); // Instability (sort_order 2)
+        // Missing deterministik.
+        assert_eq!(
+            metrics.missing_axes(),
+            vec![
+                PhysicalCodeMetricAxis::Entropy,
+                PhysicalCodeMetricAxis::WitnessDepth,
+            ]
+        );
+        // min = 0.7 (Instability).
+        assert!((metrics.minimum_observed_strength().get() - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn observed_physical_metric_accessors() {
+        let m = ObservedPhysicalMetric::new(
+            PhysicalCodeMetricAxis::Coupling,
+            0.42,
+            ObservedCodeMetricSource::Scip,
+            EvidenceStrength::new(0.85).unwrap(),
+            EvidenceCoverage::new(0.95).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(m.axis(), PhysicalCodeMetricAxis::Coupling);
+        assert!((m.value().get() - 0.42).abs() < 1e-9);
+        assert_eq!(m.source(), ObservedCodeMetricSource::Scip);
+        assert!((m.strength().get() - 0.85).abs() < 1e-9);
+        assert!((m.coverage().get() - 0.95).abs() < 1e-9);
     }
 }
 

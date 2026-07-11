@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-05 (Paper 3 v1.3 public manuscript — arXiv editorial pass tamam, Zenodo yolunda)
+> **Son güncelleme:** 2026-07-11 (Paper 3 v1.3 public manuscript + PR C core axis-granular evidence model — arXiv editorial pass tamam, Zenodo yolunda)
 > **Detaylı roadmap:** [`roadmap/paper2-roadmap.md`](roadmap/paper2-roadmap.md)
 > **Invariant spec:** [`spec/invariants.md`](spec/invariants.md)
 > **MCP tasarım:** [`spec/mcp-design.md`](spec/mcp-design.md)
@@ -35,8 +35,8 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 ## Paper 3 (Genesis Layer / Concept Anchoring) Durumu
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
-tightening + arXiv editorial pass tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~967 workspace test (osp-desktop hariç, CLI: osp-core 538 lib, osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+tightening + arXiv editorial pass + PR C axis-granular evidence model tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
+için draft deposit bekliyor. **~987 workspace test (osp-desktop hariç, CLI: osp-core 552 lib, osp-cli 108 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -69,7 +69,7 @@ için draft deposit bekliyor. **~967 workspace test (osp-desktop hariç, CLI: os
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
 | **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
-| **Faz 8b** | ✅ PR48-51 + CLI | PR #48 ✅ (varyant + INV-C14). PR #49 ✅ (`apply_supersede` + INV-C15 atomic). PR #50 ✅ (`SupersedeSession` + crate-private authority issuer, INV-C15 production invocation). PR #51 ✅ (`mainline_query` deterministic ordering). **CLI accept/reject** ✅ (PR #53): persistent `AnchorStoreSnapshot`, Candidate-only seed, one-shot + interactive, basis-freshness. **CLI supersession** ✅ (bu dal): `osp review supersede`, `node_digest_hex` unconditional, named `SupersedeDigests`, endpoint-specific stale, store-level typed errors (E1 downcast), yön-açık confirmation. İki session yüzeyi tamam; sıradaki: rich `SupersedePreview`, analysis bridge |
+| **Faz 8b** | ✅ PR48-51 + CLI | PR #48 ✅ (varyant + INV-C14). PR #49 ✅ (`apply_supersede` + INV-C15 atomic). PR #50 ✅ (`SupersedeSession` + crate-private authority issuer, INV-C15 production invocation). PR #51 ✅ (`mainline_query` deterministic ordering). **CLI accept/reject** ✅ (PR #53): persistent `AnchorStoreSnapshot`, Candidate-only seed, one-shot + interactive, basis-freshness. **CLI supersession** ✅ (PR #54): `osp review supersede`, `node_digest_hex` unconditional, named `SupersedeDigests`, endpoint-specific stale, store-level typed errors (E1 downcast), yön-açık confirmation. **Rich SupersedePreview** ✅ (PR #55). **Analysis bridge** ✅ (PR #56). **Metric projection** ✅ (PR #57). **PR C** ✅ (axis-granular evidence model): `ObservedPhysicalMetrics` per-axis provenance/strength/coverage, zero-strength reject, compile-fail 24→26. Sıradaki: PR D (provider + gate/scorer wiring) |
 | Faz 8c | ✅ PR47 | promote_to_accepted kaldırma (legacy path migrate) |
 
 ### Invariant'lar (15 Paper 3'e özgü + INV-T2 boundary)
@@ -77,7 +77,7 @@ için draft deposit bekliyor. **~967 workspace test (osp-desktop hariç, CLI: os
 > INV-C14 (PR #48) + INV-C15 (PR #49) eklendi.
 > 10 type-enforced genesis + 3 type-enforced lowering/translation (P1-P3) + 2 runtime (C14 projection + C15 transition) = 15.
 > Toplam type-enforced = 13 (10 genesis + 3 lowering); 2 runtime-asserted (C14, C15).
-> Compile-fail count 24 (2 supersede opacity trybuild eklendi; C14/C15 runtime-asserted).
+> Compile-fail count 26 (PR C: 24→26 — `c6_observed_physical_metrics_literal` + `c6_observed_physical_metrics_deserialize` + `c6_intent` rename; C14/C15 runtime-asserted).
 
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
 - **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)
@@ -90,8 +90,8 @@ için draft deposit bekliyor. **~967 workspace test (osp-desktop hariç, CLI: os
 
 ### Paper 3 kanıtları (Aşama 1 evidence freeze sertleştirildi)
 
-- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 24** (Faz 8a/8b trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
-- 450+ osp-core testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
+- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 26** (PR C axis-granular collection trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
+- 552 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
 - **E2E binding chain replay** (Adım 1 gerçek pipeline koşusu) — `e2e-binding-chain-replay.json`
 - **E2E rejected paths replay** (4 negatif yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted) — `e2e-rejected-paths-replay.json`
 - **§0 pre-flight canonical + marker tablosu** (6 cümle × 4 sütun, gerçek pipeline koşusu) — `paper3_evidence.rs::preflight`
@@ -163,8 +163,8 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 ## Sonraki Adım Önerisi
 
 **Paper 3 Zenodo → endorsement → arXiv.** Paper 3 v1.3 public manuscript hazır (`52cc9c9`).
-- v1.3 first-complete + Faz 8a real promotion + threat tightening + arXiv editorial TAMAM
-- **Sıradaki:** Zenodo evidence pack + P1/P2 deposit → 3 DOI → References doldur → endorsement → arXiv
+- v1.3 first-complete + Faz 8a real promotion + threat tightening + arXiv editorial + PR C axis-granular evidence model TAMAM
+- **Sıradaki:** PR D (provider + gate/scorer wiring), Zenodo evidence pack + P1/P2 deposit → 3 DOI → References doldur → endorsement → arXiv
 - Evidence pack hazır: `docs/paper3-notes/evidence-pack/` (README + MANIFEST)
 - Detaylı handoff: [`paper3-notes/HANDOFF.md`](paper3-notes/HANDOFF.md)
 
@@ -176,13 +176,13 @@ Paper 3 v1.3 public manuscript — Zenodo yolunda.
 ```
 cargo test --workspace --exclude osp-desktop
 ```
-- osp-core: 538 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 568; 24 type-level compile-fail (trybuild)
+- osp-core: 552 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 14 PR C axis-granular evidence + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 582; 26 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
 - osp-cli: 108 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 1 architecture_guards integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~967 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
+- **Toplam: ~987 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

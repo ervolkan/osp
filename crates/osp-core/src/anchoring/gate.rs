@@ -355,6 +355,9 @@ impl AnchorGate {
     ///
     /// **Not 5:** gate `find_evidence()` ile **object varlığını** kontrol eder;
     /// `evidence_strength > 0` tek başına açmaz (scorer strength kullanır, gate object).
+    /// PR C güçlenme: zero-strength reject (`ObservedPhysicalMetric::new` strength=0 →
+    /// error) "strength=0 evidence" temsil edilemez kılar, bu yüzden gate/scorer ayrımı
+    /// korunur ama korunan kenar durum ortadan kalktı.
     ///
     /// **Not 4 (sıra garantisi):** INV-C7 explanation kontrolü `decide()`'de bu metodtan
     /// ÖNCE yapılır (line 176-183). Yani pozitif ImplementedBy = evidence VAR **ve**
@@ -521,6 +524,62 @@ mod tests {
         ConceptGraph::new()
     }
 
+    /// auth_service observation'ları — entropy/witness representative normalized
+    /// (PR C: 1.1/5.0 raw → 0.52/0.68). 5 eksende de uniform [0,1].
+    fn auth_service_observations() -> crate::anchoring::types::ObservedPhysicalMetrics {
+        use crate::anchoring::PhysicalCodeMetricAxis;
+        use crate::anchoring::types::{
+            EvidenceCoverage, EvidenceStrength, ObservedPhysicalMetric, ObservedPhysicalMetrics,
+        };
+        use crate::anchoring::types::ObservedCodeMetricSource;
+        let strength = EvidenceStrength::new(0.85).unwrap();
+        let coverage = EvidenceCoverage::new(1.0).unwrap();
+        let scip = ObservedCodeMetricSource::Scip;
+        ObservedPhysicalMetrics::try_new(vec![
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Coupling,
+                0.42,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Cohesion,
+                0.78,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Instability,
+                0.30,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::Entropy,
+                0.52,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+            ObservedPhysicalMetric::new(
+                PhysicalCodeMetricAxis::WitnessDepth,
+                0.68,
+                scip,
+                strength,
+                coverage,
+            )
+            .unwrap(),
+        ])
+        .unwrap()
+    }
+
     #[test]
     fn threshold_strong() {
         let g = AnchorGate::new(glossary());
@@ -637,9 +696,7 @@ mod tests {
         );
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:AuthService".into()),
-            crate::anchoring::types::PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0),
-            crate::anchoring::types::ObservedCodeMetricSource::Scip,
-            crate::anchoring::types::EvidenceStrength::new(0.85).unwrap(),
+            auth_service_observations(),
             1_700_000_000,
         );
         let provider =
@@ -669,9 +726,7 @@ mod tests {
         );
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:AuthService".into()),
-            crate::anchoring::types::PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0),
-            crate::anchoring::types::ObservedCodeMetricSource::Scip,
-            crate::anchoring::types::EvidenceStrength::one(),
+            auth_service_observations(),
             1_700_000_000,
         );
         let provider =

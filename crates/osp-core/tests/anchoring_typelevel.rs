@@ -1,7 +1,7 @@
 //! Faz 2/4/5a type-level invariant compile-fail testleri.
 //!
-//! [`trybuild`] ile 12 INV compile-time garantiyi doğrular. Bu testler IHMAL
-//! edilemez: "invariant korunuyor" iddiasının en güçlü kanıtı — runtime testler
+//! [`trybuild`] ile type-enforced INV'lerin compile-time garanti'lerini doğrular. Bu testler
+//! IHMAL edilemez: "invariant korunuyor" iddiasının en güçlü kanıtı — runtime testler
 //! invariant'ın çalıştığını gösterir, compile-fail testler ihlalin İMKANSIZ olduğunu kanıtlar.
 //!
 //! # INV'ler
@@ -12,9 +12,11 @@
 //! - `c4_supersede_authority_construct.rs` — INV-C4: SupersedeAuthority external construct
 //! - `c8_anchorplan_deserialize.rs` — INV-C8: AnchorPlan Deserialize (Faz 3 serde boundary)
 //! - `c3_conceptgraph_deserialize.rs` — INV-C3: ConceptGraph Deserialize (Faz 3 serde boundary)
-//! - `c6_observed_evidence_literal.rs` — INV-C6: ObservedCodeEvidence literal construct (Faz 4)
-//! - `c6_intent_carries_physical_vector.rs` — INV-C6+C2: intent vector observed evidence'a (Faz 4)
+//! - `c6_observed_evidence_literal.rs` — INV-C6: ObservedCodeEvidence literal construct (Faz 4, PR C)
+//! - `c6_intent_cannot_form_observed_code_evidence.rs` — INV-C6+C2: intent observed evidence oluşturamaz (Faz 4, PR C rename)
 //! - `c6_observed_evidence_deserialize.rs` — INV-C6: ObservedCodeEvidence Deserialize (Faz 4)
+//! - `c6_observed_physical_metrics_literal.rs` — INV-C6: ObservedPhysicalMetrics literal construct (PR C)
+//! - `c6_observed_physical_metrics_deserialize.rs` — INV-C6: ObservedPhysicalMetrics Deserialize (PR C serde boundary)
 //! - `cP1_predicate_stub_literal.rs` — INV-P1: PredicateStub literal construct (Faz 5a)
 //! - `cP1_predicate_stub_deserialize.rs` — INV-P1: PredicateStub Deserialize (Faz 5a serde boundary)
 
@@ -28,10 +30,13 @@ fn type_level_invariants_compile_fail() {
     t.compile_fail("tests/compile_fail/c4_supersede_authority_construct.rs");
     t.compile_fail("tests/compile_fail/c8_anchorplan_deserialize.rs");
     t.compile_fail("tests/compile_fail/c3_conceptgraph_deserialize.rs");
-    // Faz 4 — INV-C6 (code evidence type-level)
+    // Faz 4 — INV-C6 (code evidence type-level). PR C: axis-granular model.
     t.compile_fail("tests/compile_fail/c6_observed_evidence_literal.rs");
-    t.compile_fail("tests/compile_fail/c6_intent_carries_physical_vector.rs");
+    t.compile_fail("tests/compile_fail/c6_intent_cannot_form_observed_code_evidence.rs");
     t.compile_fail("tests/compile_fail/c6_observed_evidence_deserialize.rs");
+    // PR C — INV-C6 axis-granular collection (literal + Deserialize engelli)
+    t.compile_fail("tests/compile_fail/c6_observed_physical_metrics_literal.rs");
+    t.compile_fail("tests/compile_fail/c6_observed_physical_metrics_deserialize.rs");
     // Faz 5a — INV-P1 (predicate stub type-level)
     t.compile_fail("tests/compile_fail/cP1_predicate_stub_literal.rs");
     t.compile_fail("tests/compile_fail/cP1_predicate_stub_deserialize.rs");

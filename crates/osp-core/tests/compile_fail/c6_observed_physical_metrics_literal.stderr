@@ -1,0 +1,7 @@
+error[E0451]: field `values` of struct `ObservedPhysicalMetrics` is private
+  --> tests/compile_fail/c6_observed_physical_metrics_literal.rs:11:9
+   |
+10 |     let _metrics = ObservedPhysicalMetrics {
+   |                    ----------------------- in this type
+11 |         values: Vec::new(),
+   |         ^^^^^^ private field

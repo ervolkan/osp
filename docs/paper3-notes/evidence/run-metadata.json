@@ -58,7 +58,7 @@
   "golden_fixtures": 13,
   "held_out_fixtures": 5,
   "paper3_specific_trybuild": 13,
-  "cumulative_trybuild_context": 22,
+  "cumulative_trybuild_context": 26,
   "rejected_paths": 6,
   "e2e_step6": "REAL promotion via OperatorReviewSession (Faz 8a)"
 }

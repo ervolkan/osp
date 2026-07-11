@@ -162,8 +162,11 @@ impl AnchorScorer {
     /// veya evidence bulunamazsa `0.0`.
     ///
     /// **Önemli:** scorer `evidence_strength()` *skalarını* kullanır (weight 0.10).
-    /// Gate `ImplementedBy` için ayrıca `find_evidence()` ile **object varlığını** kontrol
+    /// PR C: bu skalar `minimum_observed_strength()` — normative min-over-axes. Gate
+    /// `ImplementedBy` için ayrıca `find_evidence()` ile **object varlığını** kontrol
     /// eder — strength yüksek olsa bile object yoksa gate reject eder.
+    /// Not 5 güçlenme: zero-strength reject "strength=0 evidence" temsil edilemez kılar;
+    /// gate/scorer ayrımı korunur ama korunan kenar durum yok.
     fn code_evidence_strength(
         &self,
         target_id: &crate::anchoring::types::ConceptNodeId,
@@ -226,6 +229,27 @@ mod tests {
             kind,
             None,
         )
+    }
+
+    /// Tek-eksen observation helper (code evidence test setup).
+    fn single_axis_observations(
+        axis: crate::anchoring::PhysicalCodeMetricAxis,
+        value: f64,
+        source: crate::anchoring::types::ObservedCodeMetricSource,
+        strength: crate::anchoring::types::EvidenceStrength,
+    ) -> crate::anchoring::types::ObservedPhysicalMetrics {
+        use crate::anchoring::types::{
+            EvidenceCoverage, ObservedPhysicalMetric, ObservedPhysicalMetrics,
+        };
+        ObservedPhysicalMetrics::try_new(vec![ObservedPhysicalMetric::new(
+            axis,
+            value,
+            source,
+            strength,
+            EvidenceCoverage::new(1.0).unwrap(),
+        )
+        .unwrap()])
+        .unwrap()
     }
 
     #[test]
@@ -368,9 +392,12 @@ mod tests {
         let s = AnchorScorer::new();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:X".into()),
-            crate::anchoring::types::PhysicalCodeVector::new(0.1, 0.2, 0.3, 0.4, 1.0),
-            crate::anchoring::types::ObservedCodeMetricSource::Scip,
-            crate::anchoring::types::EvidenceStrength::one(),
+            single_axis_observations(
+                crate::anchoring::PhysicalCodeMetricAxis::Coupling,
+                0.1,
+                crate::anchoring::types::ObservedCodeMetricSource::Scip,
+                crate::anchoring::types::EvidenceStrength::one(),
+            ),
             0,
         );
         let provider =
@@ -391,13 +418,17 @@ mod tests {
 
     #[test]
     fn code_evidence_score_from_provider_strength() {
-        // Faz 4: ImplementedBy + provider → code_evidence_score = evidence_strength (Not 5).
+        // Faz 4: ImplementedBy + provider → code_evidence_score = minimum_observed_strength
+        // (Not 5 — PR C: normative min-over-axes).
         let s = AnchorScorer::new();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
             ConceptNodeId("CodeEntity:AuthService".into()),
-            crate::anchoring::types::PhysicalCodeVector::new(0.42, 0.78, 0.30, 1.1, 5.0),
-            crate::anchoring::types::ObservedCodeMetricSource::Scip,
-            crate::anchoring::types::EvidenceStrength::new(0.85).unwrap(),
+            single_axis_observations(
+                crate::anchoring::PhysicalCodeMetricAxis::Coupling,
+                0.42,
+                crate::anchoring::types::ObservedCodeMetricSource::Scip,
+                crate::anchoring::types::EvidenceStrength::new(0.85).unwrap(),
+            ),
             1_700_000_000,
         );
         let provider =

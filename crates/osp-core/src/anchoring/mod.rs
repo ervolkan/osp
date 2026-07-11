@@ -47,12 +47,14 @@ pub use store::{AnchorStoreSnapshot, SnapshotError};
 pub use types::{
     AnchorCandidate, AnchorPlan, AnchorScoreBreakdown, CanonicalRedirect, CanonicalRedirectReason,
     ConceptEdge, ConceptGraph, ConceptGraphSnapshot, ConceptNode, ConceptNodeId, ConceptNodeKind,
-    ConceptPacket, ConceptPacketId, ConceptualIntentVector, EmptyExplanation, EvidenceStrength,
-    EvidenceStrengthOutOfRange, EvidenceVector, ExtractedAnchorCandidate, GraphSeed,
-    NonEmptyExplanation, ObservedCodeEvidence, ObservedCodeMetricSource, PacketSource,
-    PersistedAnchorCandidateAudit, PersistedAnchorPlanAudit, PersistedRedirectAudit,
-    PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector, ScalarSimilarity,
-    SimilarityOutOfRange,
+    ConceptPacket, ConceptPacketId, ConceptualIntentVector, EmptyExplanation, EvidenceCoverage,
+    EvidenceStrength, EvidenceStrengthOutOfRange, EvidenceVector, ExtractedAnchorCandidate,
+    GraphSeed, IncompletePhysicalVector, MetricScalarViolation, NonEmptyExplanation,
+    ObservedCodeEvidence, ObservedCodeMetricSource, ObservedPhysicalMetric,
+    ObservedPhysicalMetricError, ObservedPhysicalMetrics, ObservedPhysicalMetricsError,
+    PacketSource, PersistedAnchorCandidateAudit, PersistedAnchorPlanAudit, PersistedRedirectAudit,
+    PhysicalAxisValue, PhysicalCodeVector, PositionSnapshot, PositionSnapshotId, PositionVector,
+    ScalarSimilarity, SimilarityOutOfRange,
 };
 // Faz 5a/5b/5.1 — predicate lowering tipleri
 pub use predicate_lowering::{
