@@ -29,6 +29,44 @@ CodeEntityCandidate:<key>  ──RESOLVES_TO──▶  CodeEntity:<derived-id>
 İki node aynı `CodeIdentityKey`'i taşır (store-owned binding), ama ayrı immutable graph
 identity'lerdir. Resolution, `DecisionStatus` acceptance lane'i ile karışmaz (D15 iki-lane).
 
+## Tur 3 review kararları (3 P1 bloklayıcı + 5 P2 — gerçek kodla eşleştirme)
+
+Tur 2 sonrası ontoloji olgun; tur 3 plan metnini mevcut kodla tam eşleştirdi:
+
+1. **P1-1 — Persistence migration gerçek envelope shape (revision + snapshot):** tur 2 planı düz
+   `PersistedStoreV1` öneriyordu; mevcut `PersistedStore` = `{ store_schema_version, revision,
+   snapshot: AnchorStoreSnapshot }` outer envelope + nested snapshot. **Düzeltme:** `AnchorStoreSnapshotV1`
+   (inner: graph + 2 ledger + audit_seq) + `PersistedStoreV1` (outer: version + revision + snapshot_v1)
+   + `PersistedStoreHeader` (yalnız version okuma) + header-based version dispatch (1→migrate, 2→direct,
+   başka→reject). `revision` korunur.
+2. **P1-2 — `CodeIdentityBinding` trusted bootstrap/ingress yolu:** tur 2 planı binding'in store'a
+   nasıl gireceğini tanımlamamıştı (`PresentedResolutionBasis::compile` binding bulamaz). **Düzeltme:**
+   `seed_code_identity_bindings_trusted` (mevcut `seed_trusted` pattern'ine paralel; node existence +
+   kind CodeEntityCandidate/CodeEntity + PhysicalCode family + duplicate + R7 validation). PR E CLI
+   çağırmaz; PR F/bridge adoption canonical core yol.
+3. **P1-3 — `CodeEntityResolutionSession::resolve` `&mut self`:** tur 2 planı `&self` öneriyordu;
+   counter `resolutions` artırmak için `&mut self` gerekli (SupersedeSession pattern review.rs:891).
+   **Düzeltme:** `&mut self` + `?Sized` + `where S::Error: ...`; `ResolutionSessionSummary` + `close(self)`.
+4. **P2-A — Case policy key equality canonicalization:** constructor AsciiCaseInsensitive için
+   `to_ascii_lowercase()` uygular (iki farklı yazım aynı key); path normalization upstream producer
+   sorumluluğunda (doc açık).
+5. **P2-B — Entity ID derivation algoritma sabitleme:** "collision imkansız" yerine "domain-separated
+   encoding; hash collision store-level material/key comparison ile fail-closed"; algoritma version
+   sabit (length-prefixed domain tag + scheme discriminant + case-policy discriminant + canonical key).
+6. **P2-C — Created entity deterministic material:** `canonical = key.canonical_key()`, `aliases = []`;
+   entity material yalnız identity key'den deterministik (işlem sırası bağımsız).
+7. **P2-D — Inactive entity politikası:** aynı key + inactive entity (Rejected/Deprecated/
+   SupersededAccepted) → `EntityNotLiveForResolution` (otomatik reopen/ikinci entity YOK).
+8. **P2-E — `ResolutionApplication` sadeleşme:** redundant `entity_id`/`identity_key`/`outcome`
+   çıkarılır; basis authoritative (tek representation).
+9. **P2-F — `ResolutionBasisView` tanımlı:** `ResolutionBasisView { candidate, identity_key, target }`
+   + `ResolutionTargetView { Create/Reuse }`; `PresentedResolutionBasis::compile` bu view'dan üretir;
+   `resolution_target_for_identity` duplicate live entity görürse `DuplicateLiveCodeEntityIdentity` fail.
+
+Mekanik: `CodeIdentityScheme` serde::Deserialize derive; test sayısı ~42 (başlık düzeltildi).
+
+---
+
 ## Tur 2 review kararları (4 P1 + 5 P2 zorunlu)
 
 1. **P1-A — `CodeIdentityKey` sahipliği:** `ConceptNode` alanı DEĞİL; store-owned
@@ -128,7 +166,10 @@ pub enum CodePathCasePolicy {
 }
 
 /// Physical code identity scheme (tur 2 P1-B — case-policy scheme'in parçası).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+/// Tur 3 mekanik: serde::Deserialize derive (CodeIdentityKey custom deserializer DTO'dan okur;
+/// scheme'in kendi smart-constructor invariantı yok).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "variant", content = "params")]
 pub enum CodeIdentityScheme {
     AnalysisPathV1 { case_policy: CodePathCasePolicy },
 }
@@ -140,25 +181,53 @@ pub enum CodeIdentityScheme {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct CodeIdentityKey {
     scheme: CodeIdentityScheme,
-    key: String,
+    key: String,  // canonicalized (tur 3 P2-A)
 }
 
 impl CodeIdentityKey {
-    /// Smart constructor — boş/whitespace/NUL/control reject (tur 2 P2-A).
+    /// Smart constructor — boş/whitespace/NUL/control reject (tur 2 P2-A) +
+    /// **case policy canonicalization** (tur 3 P2-A).
+    ///
+    /// AsciiCaseInsensitive: `to_ascii_lowercase()` uygular (iki farklı yazım aynı key).
+    /// Path structural normalization (slash/root) YAPMAZ — aldığı AnalysisPathV1 key'in zaten
+    /// upstream producer (CLI CanonicalCodeIdentity) tarafından slash/root normalization'dan
+    /// geçtiğini varsayar; yalnız scheme içindeki case policy'yi uygular.
     pub fn new(
         scheme: CodeIdentityScheme,
         key: impl Into<String>,
     ) -> Result<Self, CodeIdentityKeyError>;
 
-    /// Deterministic entity ID derivation (tur 2 nokta 4).
+    /// Canonical key (entity material için — tur 3 P2-C).
+    pub fn canonical_key(&self) -> &str;
+
+    /// Deterministic entity ID derivation (tur 2 nokta 4 + tur 3 P2-B algoritma).
     pub fn derive_entity_id(&self) -> ConceptNodeId {
         derive_resolved_code_entity_id(self)
     }
 }
 
 /// Custom Deserialize — `new()` üzerinden (tur 2 P2-A; derive bypass YOK).
-impl<'de> serde::Deserialize<'de> for CodeIdentityKey { /* DTO → new() */ }
+impl<'de> serde::Deserialize<'de> for CodeIdentityKey { /* DTO → new() + canonicalize */ }
 
+/// Deterministic CodeIdentityKey → CodeEntity ID derivation (tur 3 P2-B — algoritma sabit).
+///
+/// **Algoritma (version-tagged):**
+/// ```text
+/// algorithm: fnv1a-v1 (veya sha256-v1 — implementasyon seçer, sabit)
+/// input encoding (length-prefixed):
+///   domain tag "osp:code-entity:v1"
+///   scheme discriminant ("AnalysisPathV1")
+///   case-policy discriminant ("CaseSensitive" | "AsciiCaseInsensitive")
+///   canonical key bytes
+/// output:
+///   CodeEntity:<hex>
+/// ```
+/// **Sözleşme (tur 3 P2-B — "collision imkansız" DEĞİL):**
+/// > Scheme/policy domain-separated encoding'e katılır; aynı key deterministik olarak aynı ID'yi
+/// üretir. Hash collision ihtimali store-level material/key comparison ile fail-closed yakalanır
+/// (`EntityIdentityCollision`).
+///
+/// Debug format / enum serde metni hash input'u OLAMAZ (refactor ile değişebilir).
 fn derive_resolved_code_entity_id(key: &CodeIdentityKey) -> ConceptNodeId;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -210,13 +279,13 @@ pub enum PresentedResolutionTarget {
 }
 ```
 
-### E. `PresentedResolutionBasis` + `ResolutionApplication` (review.rs — SupersedeSession mirror)
+### E. `PresentedResolutionBasis::compile` + `ResolutionApplication` (review.rs — SupersedeSession mirror + tur 3)
 
 ```rust
 /// Resolution basis — store'dan derlenir (INV-C12 freshness). Target outcome pinlenir.
 ///
 /// Mevcut PresentedBasis::compile Candidate-only (candidate_query); Accepted source için
-/// ayrı compile yolu (tur 2 nokta 3). compile doğrular:
+/// ayrı compile yolu (tur 2 nokta 3 + tur 3 doğrulama). compile doğrular:
 ///   node exists + node_kind == CodeEntityCandidate + PhysicalCode + Accepted
 ///   + identity binding exists + target outcome (Create/Reuse)
 pub struct PresentedResolutionBasis {
@@ -228,18 +297,20 @@ pub struct PresentedResolutionBasis {
 }
 
 impl PresentedResolutionBasis {
-    /// Canonical pre-state compiler (tur 2 nokta 3). Accepted candidate için ayrı yol.
-    pub fn compile<S: AnchorStore>(
+    /// Canonical pre-state compiler (tur 2 nokta 3 + tur 3 P2-F). Accepted candidate için ayrı yol.
+    /// `resolution_basis_view` üzerinden view alır → digest/fingerprint üretir.
+    pub fn compile<S: AnchorStore + ?Sized>(
         store: &S, candidate_id: &ConceptNodeId,
-    ) -> Result<Self, ResolutionError>;
+    ) -> Result<Self, ResolutionError>
+    where
+        S::Error: std::error::Error + Send + Sync + 'static;
 }
 
 /// Opaque application — yalnız Session üretir (private fields + pub(crate) new + no Deserialize).
+/// Tur 3 P2-E sadeleşme: redundant entity_id/identity_key/outcome çıkarıldı; basis authoritative
+/// (tek representation — store defense-in-depth basis'ten okur).
 pub struct ResolutionApplication {
     candidate_id: ConceptNodeId,
-    entity_id: ConceptNodeId,
-    identity_key: CodeIdentityKey,
-    outcome: ResolutionOutcome,
     basis: PresentedResolutionBasis,
     reason: NonEmptyExplanation,
     session_id: SessionId,
@@ -268,7 +339,7 @@ pub struct ResolutionRecord {
 }
 ```
 
-### G. `CodeEntityResolutionSession` (review.rs — SupersedeSession mirror)
+### G. `CodeEntityResolutionSession` (review.rs — SupersedeSession mirror + tur 3 P1-3)
 
 ```rust
 pub struct CodeEntityResolutionSession {
@@ -278,19 +349,50 @@ pub struct CodeEntityResolutionSession {
     resolutions: u64,
 }
 
+/// Session close summary (tur 3 P1-3 — SupersedeSession pattern).
+pub struct ResolutionSessionSummary {
+    pub session_id: SessionId,
+    pub operator: OperatorId,
+    pub resolutions: u64,
+}
+
 impl CodeEntityResolutionSession {
     pub fn open_for_operator(operator: OperatorId) -> Self;
-    pub fn resolve<S: AnchorStore>(
-        &self, store: &mut S, candidate_id: ConceptNodeId,
-        basis: PresentedResolutionBasis, reason: NonEmptyExplanation,
-    ) -> Result<ResolutionRecord, ResolutionError>;
+
+    /// Atomik resolution (tur 3 P1-3 — `&mut self` counter semantics).
+    /// SupersedeSession pattern: (1) checked_add counter exhaustion, (2) opaque application üretimi,
+    /// (3) store mutation, (4) yalnız başarıdan sonra counter assignment.
+    pub fn resolve<S: AnchorStore + ?Sized>(
+        &mut self,
+        store: &mut S,
+        candidate_id: &ConceptNodeId,
+        basis: PresentedResolutionBasis,
+        reason: NonEmptyExplanation,
+    ) -> Result<ResolutionRecord, ResolutionError>
+    where
+        S::Error: std::error::Error + Send + Sync + 'static;
+
+    /// Session close (tur 3 P1-3).
+    pub fn close(self) -> ResolutionSessionSummary;
 }
 ```
 
-### H. `AnchorStore` trait yüzeyi (tur 2 P2-E)
+### H. `AnchorStore` trait yüzeyi (tur 2 P2-E + tur 3 P1-2 binding bootstrap + P2-F view)
 
 ```rust
-// Yeni trait metodları (mevcut apply_decision/apply_supersede yanına):
+/// Resolution basis view (tur 3 P2-F — tanımlı).
+pub struct ResolutionBasisView {
+    pub candidate: ConceptNode,
+    pub identity_key: CodeIdentityKey,
+    pub target: ResolutionTargetView,
+}
+
+pub enum ResolutionTargetView {
+    Create { proposed_entity_id: ConceptNodeId },
+    Reuse { entity: ConceptNode },
+}
+
+// Yeni trait metodları (mevcut apply_decision/apply_supersede/seed_trusted yanına):
 fn apply_resolution(
     &mut self, application: ResolutionApplication,
 ) -> Result<ResolutionRecord, Self::Error>;
@@ -301,9 +403,21 @@ fn resolution_basis_view(
     &self, candidate: &ConceptNodeId,
 ) -> Result<ResolutionBasisView, Self::Error>;
 
+/// N:1 reuse lookup (tur 3 P2-F — duplicate live entity fail-closed).
+/// Tek live entity → Some; duplicate live entity → `DuplicateLiveCodeEntityIdentity` error;
+/// live entity yok → None.
 fn resolution_target_for_identity(
     &self, key: &CodeIdentityKey,
-) -> Result<Option<ConceptNode>, Self::Error>;  // N:1 reuse lookup
+) -> Result<Option<ConceptNode>, Self::Error>;
+
+/// Trusted bootstrap/ingress — binding'lerin store'a ilk giriş yolu (tur 3 P1-2).
+/// Mevcut `seed_trusted` pattern'ine paralel. Validation:
+///   node mevcut + kind CodeEntityCandidate/CodeEntity + PhysicalCode family
+///   + aynı node için duplicate binding yok + entity tarafında R7 ihlali yok.
+/// PR E CLI çağırmaz; PR F/bridge adoption canonical core yol.
+fn seed_code_identity_bindings_trusted(
+    &mut self, bindings: &[CodeIdentityBinding],
+) -> Result<(), Self::Error>;
 ```
 
 ### I. `DecisionStatus::is_live_code_identity()` predicate (tur 2 P2-B)
@@ -317,12 +431,15 @@ impl DecisionStatus {
 }
 ```
 
-### J. `apply_resolution` store transition (store.rs — 14-step, tur 2 final)
+### J. `apply_resolution` store transition (store.rs — 14-step, tur 2 final + tur 3 P2-C/D/E)
 
-Lane-sensitive (candidate proposal edges hariç):
+Lane-sensitive (candidate proposal edges hariç). Tur 3 P2-E: application redundant fields
+çıkarıldı — store defense-in-depth tüm alanları basis'ten okur.
 
 ```
 1.  Basis candidate/application endpoint match (ResolutionBasisMismatch)
+    — tur 3 P2-E: application.candidate_id == basis.candidate_id (entity_id/identity_key/outcome
+      basis'ten; redundant comparison YOK)
 2.  Candidate existence
 3.  Candidate kind == CodeEntityCandidate
 4.  Candidate family == PhysicalCode
@@ -333,10 +450,18 @@ Lane-sensitive (candidate proposal edges hariç):
 9.  Recompute target selection from current state
 10. Basis-pinned Create/Reuse outcome still matches (StaleResolutionTarget)
 11. Reuse target kind/family/status/key validation (R4, R5, R7)
-12. Entity ID/material collision check (EntityIdentityCollision)
+    — tur 3 P2-D: inactive entity (Rejected/Deprecated/SupersededAccepted) → EntityNotLiveForResolution
+12. Entity ID/material collision check (EntityIdentityCollision — tur 3 P2-B fail-closed)
 13. audit_sequence checked_add (AuditSequenceExhausted)
 14. No-fallible mutation block:
-      - Created: yeni CodeEntity node (Candidate, PhysicalCode) + CodeIdentityBinding (her iki node)
+      - Created (tur 3 P2-C deterministic material):
+          entity.id              = key.derive_entity_id()
+          entity.canonical       = key.canonical_key()
+          entity.aliases         = []
+          entity.node_kind       = CodeEntity
+          entity.decision_status = Candidate
+          entity.position_family = PhysicalCode
+          + CodeIdentityBinding (her iki node)
       - Reused: CodeIdentityBinding (candidate; entity zaten sahip)
       - ConceptEdge { from: candidate, to: entity, kind: ResolvesTo,
                       decision_status: Accepted, explanation: Some(reason) }
@@ -369,61 +494,83 @@ Validation parallel to supersede section:
 
 ## osp-cli değişiklikleri (minimal persistence envelope migration)
 
-### M. `PersistedStoreV1 → PersistedStoreV2` explicit migration (tur 2 P1-F + nokta 2)
+### M. `PersistedStoreV1 → PersistedStore` explicit migration (tur 2 P1-F + tur 3 P1-1 gerçek envelope shape)
+
+Tur 3 P1-1 düzeltme: mevcut `PersistedStore` = `{ store_schema_version, revision, snapshot:
+AnchorStoreSnapshot }` outer envelope + nested snapshot (düz snapshot DEĞİL). Migration gerçek
+envelope shape'i korur — `revision` kaybı YOK.
 
 ```rust
-// store_io.rs — explicit v1/v2 envelope tipleri (#[serde(default)] DEĞİL)
+// store_io.rs — gerçek envelope shape korundu (tur 3 P1-1)
 
-/// Legacy v1 store envelope (decision + supersede ledger).
+/// Legacy v1 inner snapshot (graph + 2 ledger + audit_seq).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct PersistedStoreV1 {
+struct AnchorStoreSnapshotV1 {
     graph: ConceptGraphSnapshot,
     decision_records: Vec<DecisionRecord>,
     supersede_records: Vec<SupersedeRecord>,
     audit_sequence: u64,
 }
 
-/// Current v2 store envelope (+ resolution ledger + identity bindings).
+/// Legacy v1 outer envelope (version + revision + snapshot_v1).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PersistedStore {
-    pub graph: ConceptGraphSnapshot,
-    pub decision_records: Vec<DecisionRecord>,
-    pub supersede_records: Vec<SupersedeRecord>,
-    pub resolution_records: Vec<ResolutionRecord>,
-    pub code_identity_bindings: Vec<CodeIdentityBinding>,
-    pub audit_sequence: u64,
-    pub store_schema_version: u32,  // = 2
+struct PersistedStoreV1 {
+    store_schema_version: u32,  // = 1
+    revision: u64,
+    snapshot: AnchorStoreSnapshotV1,
 }
 
+/// Header — yalnız version okuma (tur 3 P1-1 version dispatch).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PersistedStoreHeader {
+    store_schema_version: u32,
+}
+
+/// Current v2 outer envelope (revision + snapshot v2: + resolution ledger + identity bindings).
+/// Mevcut shape korunur: { store_schema_version, revision, snapshot: AnchorStoreSnapshot }
 impl PersistedStore {
-    pub const STORE_SCHEMA_VERSION: u32 = 2;
+    pub const STORE_SCHEMA_VERSION: u32 = 2;  // v1 → v2
 }
 
-/// Explicit v1 → v2 migration (tur 2 nokta 2 — kontrollü, test edilebilir).
+/// Explicit v1 → v2 migration (tur 2 nokta 2 + tur 3 P1-1 — kontrollü, test edilebilir).
 impl TryFrom<PersistedStoreV1> for PersistedStore {
     type Error = StoreIoError;
     fn try_from(v1: PersistedStoreV1) -> Result<Self, Self::Error> {
         // v1 store yüklenirse:
-        //   code_identity_bindings = []
+        //   revision korunur (tur 3 P1-1 — kayıp YOK)
+        //   graph + decision + supersede ledger değişmeden migrate edilir
         //   resolution_records = []
+        //   code_identity_bindings = []
         //   audit_sequence mevcut değeri korunur
-        //   graph ve eski iki ledger değişmeden migrate edilir
         //   envelope store_schema_version = 2 olarak yeniden yazılır
         Ok(Self {
-            graph: v1.graph,
-            decision_records: v1.decision_records,
-            supersede_records: v1.supersede_records,
-            resolution_records: Vec::new(),
-            code_identity_bindings: Vec::new(),
-            audit_sequence: v1.audit_sequence,
             store_schema_version: Self::STORE_SCHEMA_VERSION,
+            revision: v1.revision,
+            snapshot: AnchorStoreSnapshot {
+                graph: v1.snapshot.graph,
+                decision_records: v1.snapshot.decision_records,
+                supersede_records: v1.snapshot.supersede_records,
+                resolution_records: Vec::new(),
+                code_identity_bindings: Vec::new(),
+                audit_sequence: v1.snapshot.audit_sequence,
+            },
         })
     }
 }
 ```
 
-Read path: version dispatch (v1 → TryFrom → v2 → core `restore_snapshot` validation).
-Persistence round-trip testleri: v2 write → read → restore validation; v1 read → migration → v2.
+**Read path (tur 3 P1-1 — header-based version dispatch):**
+```
+1. PersistedStoreHeader oku (yalnız store_schema_version)
+2. Version dispatch:
+     1 → PersistedStoreV1 deserialize → TryFrom → PersistedStore (v2)
+     2 → PersistedStore deserialize (direct)
+     başka → StoreIoError::UnsupportedSchemaVersion reject
+3. Core restore_snapshot validation (INV-C16 triangulation)
+```
+
+Persistence round-trip testleri: v2 write → read → restore validation; v1 read → migration → v2
+(revision preserved); header dispatch reject (unknown version).
 
 **YOK:** CLI command (`osp review resolve-code-entity`), evidence provider migration, projection.
 
@@ -471,28 +618,30 @@ Persistence round-trip testleri: v2 write → read → restore validation; v1 re
 
 ---
 
-## Test matrisi (~25)
+## Test matrisi (~42)
 
-### Identity type (5)
+### Identity type (8)
 ```
 code_identity_key_valid_construction
 code_identity_key_empty_reject
 code_identity_key_control_character_reject
 code_identity_scheme_case_policy_participates_in_equality
+code_identity_key_case_insensitive_canonicalizes  # tur 3 P2-A (Src/Auth.rs == src/auth.rs)
 code_identity_key_custom_deserialize_validates
 derive_entity_id_deterministic_same_key_same_id
 derive_entity_id_different_scheme_different_domain
 ```
 
-### Created target (4)
+### Created target (5)
 ```
 accepted_candidate_resolves_to_newly_created_entity
 entity_initial_status_pinned_candidate
+entity_material_deterministic_from_key  # tur 3 P2-C (canonical=key, aliases=[])
 resolves_to_edge_accepted_with_explanation
 record_outcome_created
 ```
 
-### Reused target (5)
+### Reused target (7)
 ```
 second_candidate_same_key_resolves_to_existing_entity
 no_duplicate_entity_created_on_reuse
@@ -500,10 +649,11 @@ record_outcome_reused
 different_key_entity_cannot_be_reused
 stale_reused_target_digest_rejects
 target_appeared_after_create_basis_rejects  # StaleResolutionTarget
-entity_identity_collision_rejects           # farklı material aynı ID
+entity_identity_collision_rejects           # tur 3 P2-B (farklı material aynı ID fail-closed)
+same_key_inactive_entity_rejects            # tur 3 P2-D (EntityNotLiveForResolution)
 ```
 
-### Failure atomikliği (6)
+### Failure atomikliği (8)
 ```
 stale_candidate_digest_rejects
 wrong_candidate_kind_rejects
@@ -515,7 +665,14 @@ audit_sequence_overflow_rejects
 every_failure_leaves_graph_bindings_ledgers_audit_seq_unchanged
 ```
 
-### Snapshot adversarial (8)
+### Bootstrap / binding ingress (3)
+```
+seed_code_identity_bindings_trusted_valid  # tur 3 P1-2
+seed_bindings_rejects_wrong_kind
+seed_bindings_rejects_duplicate_live_entity  # R7
+```
+
+### Snapshot adversarial (11)
 ```
 record_without_edge_rejects
 edge_without_record_rejects
@@ -530,11 +687,12 @@ audit_density_across_three_ledgers
 deterministic_export_ordering
 ```
 
-### Persistence migration (3)
+### Persistence migration (4)
 ```
 v1_store_migrates_to_v2_empty_resolution_ledger
 v2_store_round_trip_restore_validation
-v1_store_audit_sequence_preserved
+v1_store_revision_and_audit_sequence_preserved  # tur 3 P1-1
+header_dispatch_rejects_unknown_version        # tur 3 P1-1
 ```
 
 ### Type boundary (compile-fail, 2)
@@ -548,19 +706,29 @@ c16_resolution_application_deserialize  # Deserialize YOK
 ## Uygulama sırası
 
 0. `ConceptEdgeKind::ResolvesTo` + `is_high_stake` (mod.rs)
-1. `CodeIdentityScheme` + `CodePathCasePolicy` + `CodeIdentityKey` + `CodeIdentityKeyError` + `derive_resolved_code_entity_id` (identity.rs)
+1. `CodeIdentityScheme` (serde::Deserialize derive) + `CodePathCasePolicy` + `CodeIdentityKey`
+   (smart constructor + canonicalize tur 3 P2-A) + `CodeIdentityKeyError` + `derive_resolved_code_entity_id`
+   (tur 3 P2-B algoritma sabit) (identity.rs)
 2. `CodeIdentityBinding` (types.rs)
 3. `DecisionStatus::is_live_code_identity()` (mod.rs)
-4. `ResolutionOutcome` + `PresentedResolutionTarget` + `PresentedResolutionBasis::compile` + `ResolutionApplication` (review.rs)
-5. `ResolutionRecord` + `ResolutionError` (review.rs)
-6. `CodeEntityResolutionSession` (review.rs)
-7. `AnchorStore` trait metodları + `InMemoryAnchorStore::apply_resolution` (store.rs)
-8. `AnchorStoreSnapshot` + `code_identity_bindings` + `resolution_records` (store.rs)
-9. `validate_snapshot` INV-C16 triangulation (store.rs)
-10. `PersistedStoreV1` + `PersistedStoreV2` + `TryFrom` migration (store_io.rs)
-11. Compile-fail fixture'ları (c16_resolution_application_*)
-12. Workspace validation
-13. HANDOFF/STATUS/run-metadata güncelleme
+4. `ResolutionOutcome` + `PresentedResolutionTarget` + `ResolutionBasisView` + `ResolutionTargetView`
+   (tur 3 P2-F) (review.rs)
+5. `PresentedResolutionBasis::compile` (tur 3 P2-F view'dan) + `ResolutionApplication` (tur 3 P2-E sade)
+   (review.rs)
+6. `ResolutionRecord` + `ResolutionError` (tur 3 P2-D `EntityNotLiveForResolution` + `EntityIdentityCollision`
+   + `StaleResolutionTarget` dahil) (review.rs)
+7. `CodeEntityResolutionSession` (tur 3 P1-3 `&mut self` + `close`) + `ResolutionSessionSummary` (review.rs)
+8. `AnchorStore` trait: `apply_resolution` + `resolution_ledger` + `resolution_basis_view` +
+   `resolution_target_for_identity` (tur 3 P2-F fail-closed) + `seed_code_identity_bindings_trusted`
+   (tur 3 P1-2) (store.rs)
+9. `InMemoryAnchorStore::apply_resolution` 14-step + `seed_code_identity_bindings_trusted` impl (store.rs)
+10. `AnchorStoreSnapshot` + `code_identity_bindings` + `resolution_records` (store.rs)
+11. `validate_snapshot` INV-C16 triangulation (store.rs)
+12. `AnchorStoreSnapshotV1` + `PersistedStoreV1` + `PersistedStoreHeader` + `TryFrom<PersistedStoreV1>`
+    migration (tur 3 P1-1 gerçek envelope shape) + header-based version dispatch (store_io.rs)
+13. Compile-fail fixture'ları (c16_resolution_application_*)
+14. Workspace validation
+15. HANDOFF/STATUS/run-metadata güncelleme
 
 ---
 
