@@ -26,13 +26,16 @@ fn metric_projection_does_not_construct_complete_core_evidence() {
     );
 }
 
-/// PR D ownership: core evidence construction yalnız evidence_projection.rs'de.
+/// PR D + PR F ownership: core evidence construction yalnız evidence_projection.rs'de.
 ///
 /// Tüm CLI production source dosyalarını (`src/**/*.rs`) tara; şu token'lar yalnız
 /// `src/evidence_projection.rs`'de bulunabilir:
-/// - `ObservedPhysicalMetric::new`
-/// - `ObservedPhysicalMetrics::try_new`
-/// - `ObservedCodeEvidence::new`
+/// - `ObservedPhysicalMetric::new` (PR D — core observation constructor)
+/// - `ObservedPhysicalMetrics::try_new` (PR D — core collection constructor)
+/// - `ObservedCodeEvidence::new` (PR D — core evidence constructor)
+/// - `InMemoryCodeEvidenceSource::try_from_evidence` (PR F — key-faced source constructor)
+/// - `InMemoryCodeEvidenceSource::try_with_evidence` (PR F — key-faced source builder)
+/// - `InMemoryCodeEvidenceSource::empty` (PR F — key-faced source empty)
 ///
 /// Bu guard alias/helper ile aşılabilir ama ownership iddiasını doğrudan ifade eder.
 /// Test modülleri aynı source dosyasında bulunduğundan authorized `evidence_projection.rs`
@@ -44,6 +47,10 @@ fn core_evidence_construction_owned_by_evidence_projection() {
         "ObservedPhysicalMetric::new",
         "ObservedPhysicalMetrics::try_new",
         "ObservedCodeEvidence::new",
+        // PR F — key-faced evidence source construction (adapter arkasında tek truth source).
+        "InMemoryCodeEvidenceSource::try_from_evidence",
+        "InMemoryCodeEvidenceSource::try_with_evidence",
+        "InMemoryCodeEvidenceSource::empty",
     ];
 
     let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

@@ -343,6 +343,7 @@ pub(crate) fn project_analysis(
     .map_err(BridgeError::MetricProjection)?;
     let evidence_projection = crate::evidence_projection::project_observed_evidence(
         &metric_projection.metrics,
+        &candidate_proj.code_identity_bindings,
         evidence_context,
     )
     .map_err(BridgeError::EvidenceProjection)?;

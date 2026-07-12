@@ -73,6 +73,12 @@ pub use identity::{
     derive_resolved_code_entity_id, CodeIdentityKey, CodeIdentityKeyError, CodeIdentityScheme,
     CodePathCasePolicy,
 };
+// PR F — evidence identity layer (anti-corruption boundary)
+pub use code_evidence::{
+    CodeEvidenceSource, CodeEvidenceSourceBuildError, CodeIdentityBindingLookup,
+    CodeIdentityLookupError, InMemoryCodeEvidenceSource, ResolvedCodeEvidenceProvider,
+    ResolvedCodeIdentity,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Faz 2 primitif altyapı — sealed trait + marker tipler (crate'te ilk kullanım)

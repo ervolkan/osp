@@ -1805,6 +1805,47 @@ impl AnchorStore for InMemoryAnchorStore {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR F — CodeIdentityBindingLookup impl for InMemoryAnchorStore
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Tur 3 kesinleşme: Impl `store.rs`'te (private field'lar `graph` + `code_identity_bindings`
+// sibling modül `code_evidence.rs`'ten erişilemez). `self.graph.node()` API'si kullanılır
+// (types.rs:1598 — `pub fn node(&self, id: &ConceptNodeId) -> Option<&ConceptNode>`).
+// Yeni store accessor AÇILMAZ — anti-corruption boundary gereksiz genişlemez.
+//
+// EI5-a typed distinction:
+// - NodeNotFound: node grafta yok (structural inconsistency)
+// - Unbound: node mevcut ama binding yok (normal evidence absence)
+
+impl crate::anchoring::code_evidence::CodeIdentityBindingLookup for InMemoryAnchorStore {
+    fn resolve_code_identity(
+        &self,
+        node_id: &ConceptNodeId,
+    ) -> Result<
+        crate::anchoring::code_evidence::ResolvedCodeIdentity,
+        crate::anchoring::code_evidence::CodeIdentityLookupError,
+    > {
+        use crate::anchoring::code_evidence::{CodeIdentityLookupError, ResolvedCodeIdentity};
+
+        // Node existence — graph.node() API (types.rs:1598).
+        if self.graph.node(node_id).is_none() {
+            return Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()));
+        }
+
+        // Binding lookup — code_identity_bindings private field (store.rs:611).
+        let identity_key = self
+            .code_identity_bindings
+            .get(node_id)
+            .ok_or_else(|| CodeIdentityLookupError::Unbound(node_id.clone()))?;
+
+        Ok(ResolvedCodeIdentity::new(
+            node_id.clone(),
+            identity_key.clone(),
+        ))
+    }
+}
+
 /// Apply plan sonucu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ApplyResult {

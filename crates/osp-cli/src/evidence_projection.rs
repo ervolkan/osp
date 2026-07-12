@@ -109,6 +109,22 @@ pub(crate) enum EvidenceProjectionError {
         node_id: ConceptNodeId,
         source: ObservedPhysicalMetricsError,
     },
+    /// PR F — Duplicate code identity binding for same node (fail-fast; sessiz overwrite YOK).
+    ///
+    /// Store canonical disiplin mirror: aynı node için batch içindeki her duplicate binding reject.
+    /// Explicit index-building `BTreeMap::insert` duplicate'i yakalar.
+    #[error("duplicate code identity binding for node {node_id}")]
+    DuplicateBindingNode {
+        node_id: ConceptNodeId,
+    },
+    /// PR F — Projected metric node has no code identity binding (fail-fast reject).
+    ///
+    /// Semantik: "metric node için binding yoksa evidence üretilemez". PR D `ZeroCoverage`
+    /// pattern analog — sessiz skip YOK (tutarlılık > kullanılabilirlik).
+    #[error("projected metric node has no code identity binding: {node_id}")]
+    UnboundNode {
+        node_id: ConceptNodeId,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -188,16 +204,40 @@ fn convert_metric_to_observation(
 
 /// Draft metric'leri core evidence'a dönüştürür.
 ///
+/// **PR F migration:** Artık `bindings: &[CodeIdentityBinding]` ayrı parametre alır
+/// (R1a P0-2 — `EvidenceProjectionContext`'e KOYULMAZ, cycle yaratır). Bindings candidate
+/// projection'dan co-derived gelir (`project_analysis` içinde). Her metric node'u için
+/// matching `CodeIdentityKey` lookup edilir; bulunamazsa `UnboundNode` reject (fail-fast).
+///
 /// Input yüzeyi: `metrics` yalnız **emit edilmiş** (admitted) metric'leri içerir. Her grouped
 /// node'un en az bir metric'i vardır (`ObservedPhysicalMetricsError::Empty` unreachable).
 ///
 /// # Determinizm
 /// Node sırası `ConceptNodeId.0` lexicographic sort ile deterministik. Her node'un observation'ları
 /// `ObservedPhysicalMetrics::try_new` içinde `PhysicalCodeMetricAxis::sort_order()` ile sıralanır.
+///
+/// # Binding lookup (R1a P2-1 — O(log n))
+/// Projection başında `BTreeMap<&ConceptNodeId, &CodeIdentityKey>` kurulur (explicit
+/// index-building — duplicate fail-fast reject). Her metric node'u O(log n) lookup.
 pub(crate) fn project_observed_evidence(
     metrics: &[ProjectedCodeMetric],
+    bindings: &[osp_core::anchoring::types::CodeIdentityBinding],
     context: EvidenceProjectionContext,
 ) -> Result<EvidenceProjectionOutput, EvidenceProjectionError> {
+    // PR F — binding index kurulur (explicit insertion, duplicate fail-fast).
+    let mut bindings_by_node: std::collections::BTreeMap<&ConceptNodeId, &osp_core::anchoring::identity::CodeIdentityKey> =
+        std::collections::BTreeMap::new();
+    for binding in bindings {
+        if bindings_by_node
+            .insert(&binding.node_id, &binding.identity_key)
+            .is_some()
+        {
+            return Err(EvidenceProjectionError::DuplicateBindingNode {
+                node_id: binding.node_id.clone(),
+            });
+        }
+    }
+
     // 1. ConceptNodeId bazında group (deterministik sıra için önceden sort).
     let mut by_node: std::collections::BTreeMap<String, (ConceptNodeId, Vec<&ProjectedCodeMetric>)> =
         std::collections::BTreeMap::new();
@@ -212,6 +252,14 @@ pub(crate) fn project_observed_evidence(
     let mut partial_count = 0usize;
 
     for (_, (node_id, node_metrics)) in by_node {
+        // PR F — binding lookup (O(log n)). Metric node'u için binding bulunamazsa reject.
+        // bindings_by_node değeri `&CodeIdentityKey`; get() `Option<&&CodeIdentityKey>` döner.
+        let identity_key = *bindings_by_node.get(&node_id).ok_or_else(|| {
+            EvidenceProjectionError::UnboundNode {
+                node_id: node_id.clone(),
+            }
+        })?;
+
         // 2. Her metric'i observation'a dönüştür.
         let mut observations: Vec<ObservedPhysicalMetric> = Vec::with_capacity(node_metrics.len());
         for metric in &node_metrics {
@@ -231,9 +279,9 @@ pub(crate) fn project_observed_evidence(
             partial_count += 1;
         }
 
-        // 5. Evidence construct.
+        // 5. Evidence construct — PR F: CodeIdentityKey (ConceptNodeId değil).
         evidence.push(ObservedCodeEvidence::new(
-            node_id,
+            identity_key.clone(),
             collection,
             context.measured_at,
         ));
@@ -254,12 +302,14 @@ mod tests {
     use super::*;
     use crate::metric_projection::projected_metric_for_tests;
     use crate::metric_projection::projected_metric_unchecked_for_contract_tests;
-    use osp_core::anchoring::code_evidence::InMemoryCodeEvidenceProvider;
-    use osp_core::anchoring::pipeline::AnchorPipeline;
-    use osp_core::anchoring::types::ConceptNodeId;
-    use osp_core::anchoring::code_evidence::CodeEvidenceProvider;
+    use osp_core::anchoring::code_evidence::{
+        CodeEvidenceProvider, InMemoryCodeEvidenceSource, ResolvedCodeEvidenceProvider,
+    };
+    use osp_core::anchoring::code_evidence::{CodeIdentityBindingLookup, CodeIdentityLookupError, ResolvedCodeIdentity};
     use osp_core::anchoring::gate::AnchorGateContext;
-    use osp_core::anchoring::types::ObservedCodeMetricSource;
+    use osp_core::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+    use osp_core::anchoring::pipeline::AnchorPipeline;
+    use osp_core::anchoring::types::{CodeIdentityBinding, ConceptNodeId, ObservedCodeMetricSource};
     use osp_core::anchoring::{ConceptEdgeKind, ConceptGraph, PacketSource};
 
     /// Deterministik test timestamp.
@@ -281,6 +331,61 @@ mod tests {
 
     fn scip() -> ObservedCodeMetricSource {
         ObservedCodeMetricSource::Scip
+    }
+
+    /// PR F — test identity key üret (CaseSensitive; key olduğu gibi).
+    fn identity_key(key: &str) -> CodeIdentityKey {
+        CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            key,
+        )
+        .expect("test key geçerli")
+    }
+
+    /// PR F — node_id + identity_key binding üret.
+    fn binding(node_id: &ConceptNodeId, key: &CodeIdentityKey) -> CodeIdentityBinding {
+        CodeIdentityBinding {
+            node_id: node_id.clone(),
+            identity_key: key.clone(),
+        }
+    }
+
+    /// PR F — node_id'den key'e binding üret (key = node_id.0, test kolaylığı).
+    fn binding_for(node_id: &ConceptNodeId) -> CodeIdentityBinding {
+        binding(node_id, &identity_key(&node_id.0))
+    }
+
+    /// PR F — metrics'teki her node için binding üret (deterministik; mevcut test'ler için).
+    fn bindings_for_metrics(metrics: &[ProjectedCodeMetric]) -> Vec<CodeIdentityBinding> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = Vec::new();
+        for m in metrics {
+            if seen.insert(m.node_id().0.clone()) {
+                out.push(binding_for(m.node_id()));
+            }
+        }
+        out
+    }
+
+    /// PR F — test lookup stub — birden fazla node için binding döner (adapter wire için).
+    struct TestLookup {
+        bindings: Vec<CodeIdentityBinding>,
+    }
+    impl CodeIdentityBindingLookup for TestLookup {
+        fn resolve_code_identity(
+            &self,
+            node_id: &ConceptNodeId,
+        ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+            self.bindings
+                .iter()
+                .find(|b| &b.node_id == node_id)
+                .map(|b| {
+                    ResolvedCodeIdentity::new(b.node_id.clone(), b.identity_key.clone())
+                })
+                .ok_or_else(|| CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -316,10 +421,24 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, ctx()).unwrap();
+        let out = project_observed_evidence(
+            &metrics,
+            &[
+                binding_for(&node("CodeEntity:Zeta")),
+                binding_for(&node("CodeEntity:Alpha")),
+            ],
+            ctx(),
+        )
+        .unwrap();
         // Alpha < Zeta lexicographic → Alpha önce.
-        assert_eq!(out.evidence[0].code_entity_id(), &node("CodeEntity:Alpha"));
-        assert_eq!(out.evidence[1].code_entity_id(), &node("CodeEntity:Zeta"));
+        assert_eq!(
+            out.evidence[0].code_identity_key(),
+            &identity_key("CodeEntity:Alpha")
+        );
+        assert_eq!(
+            out.evidence[1].code_identity_key(),
+            &identity_key("CodeEntity:Zeta")
+        );
         assert_eq!(out.report.input_metric_values, 3);
         assert_eq!(out.report.evidence_objects_created, 2);
     }
@@ -369,7 +488,7 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, ctx()).unwrap();
+        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         let evidence = &out.evidence[0];
         // 5 axis → try_to_physical_vector Ok (full vector).
         let pv = evidence
@@ -405,7 +524,7 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, ctx()).unwrap();
+        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         let observations = out.evidence[0].observations().values();
         assert_eq!(observations[0].axis(), PhysicalCodeMetricAxis::Coupling);
         assert_eq!(observations[0].source(), ts());
@@ -425,6 +544,7 @@ mod tests {
         )];
         let out = project_observed_evidence(
             &metrics,
+            &bindings_for_metrics(&metrics),
             EvidenceProjectionContext {
                 measured_at: TEST_MEASURED_AT,
             },
@@ -462,7 +582,7 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, ctx()).unwrap();
+        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         assert_eq!(out.report.partial_evidence_objects, 1);
         // try_to_physical_vector Err (missing Entropy + WitnessDepth).
         assert!(out.evidence[0]
@@ -473,7 +593,7 @@ mod tests {
 
     #[test]
     fn empty_metric_slice_produces_empty_output() {
-        let out = project_observed_evidence(&[], ctx()).unwrap();
+        let out = project_observed_evidence(&[], &[], ctx()).unwrap();
         assert_eq!(out.report.input_metric_values, 0);
         assert_eq!(out.report.evidence_objects_created, 0);
         assert!(out.evidence.is_empty());
@@ -503,7 +623,7 @@ mod tests {
         // Production namespace: CodeEntityCandidate:<path> (derive_node_id ile).
         let candidate_node = node("CodeEntityCandidate:payment.py");
 
-        // 1. Evidence projection — production ID namespace.
+        // 1. Evidence projection — production ID namespace + binding (PR F).
         let metrics = vec![projected_metric_for_tests(
             candidate_node.clone(),
             PhysicalCodeAxis::Coupling,
@@ -512,15 +632,23 @@ mod tests {
             0.85,
             1.0,
         )];
-        let out = project_observed_evidence(&metrics, ctx()).unwrap();
+        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
 
-        // 2. Provider'a yükle — production ID altında lookup.
-        let provider = InMemoryCodeEvidenceProvider::from_evidence(out.evidence.clone());
-        let lookup = provider
+        // 2. PR F adapter wire — key-faced source + lookup stub + adapter → CodeEvidenceProvider.
+        // Production identity key = CodeEntityCandidate:payment.py (binding_for helper).
+        let source = InMemoryCodeEvidenceSource::try_from_evidence(out.evidence.clone())
+            .expect("distinct identity key");
+        let lookup = TestLookup {
+            bindings: vec![binding_for(&candidate_node)],
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
+
+        // find_evidence (gate consumer) — adapter lookup → source.load.
+        let found = provider
             .find_evidence(&candidate_node)
             .unwrap()
             .expect("evidence mevcut (production CodeEntityCandidate: ID)");
-        assert!(lookup.observations().minimum_observed_strength().get() > 0.0);
+        assert!(found.observations().minimum_observed_strength().get() > 0.0);
 
         // 3. evidence_strength — scorer'ın çağırdığı provider method.
         let strength = provider
@@ -600,7 +728,7 @@ mod tests {
             1.5, // forged — range dışı confidence
             1.0,
         )];
-        let err = project_observed_evidence(&metrics, ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidStrength {
@@ -621,7 +749,7 @@ mod tests {
             0.8,
             1.5, // forged — range dışı coverage (zero değil, AboveMaximum)
         )];
-        let err = project_observed_evidence(&metrics, ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidCoverage {
@@ -643,7 +771,7 @@ mod tests {
             0.8,
             1.0,
         )];
-        let err = project_observed_evidence(&metrics, ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidObservation {
@@ -675,7 +803,7 @@ mod tests {
                 1.0,
             ),
         ];
-        let err = project_observed_evidence(&metrics, ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidCollection {
@@ -699,7 +827,7 @@ mod tests {
             0.8,
             0.0, // forged — zero coverage + positive strength
         )];
-        let err = project_observed_evidence(&metrics, ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::ZeroCoverage {

@@ -6,11 +6,15 @@
 // PR C: struct artık 3 field taşır (code_entity_id, observations, measured_at).
 // Eski field'lar (physical_vector, metric_source, confidence) kaldırıldı —
 // axis-granular `observations: ObservedPhysicalMetrics` yerine geçti.
+//
+// PR F: `code_entity_id` → `code_identity_key: CodeIdentityKey` (anti-corruption boundary).
+// Evidence artık fiziksel code identity'ye bağlanır, graph node ID'ye DEĞİL.
+use osp_core::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
 use osp_core::anchoring::types::{
     EvidenceCoverage, EvidenceStrength, ObservedCodeEvidence, ObservedCodeMetricSource,
     ObservedPhysicalMetric, ObservedPhysicalMetrics,
 };
-use osp_core::anchoring::{ConceptNodeId, PhysicalCodeMetricAxis};
+use osp_core::anchoring::PhysicalCodeMetricAxis;
 
 fn main() {
     // observations değerini constructor ile üret (bu satır derlenir).
@@ -24,9 +28,18 @@ fn main() {
     .unwrap()])
     .unwrap();
 
+    // code_identity_key değerini constructor ile üret (bu satır derlenir).
+    let _key = CodeIdentityKey::new(
+        CodeIdentityScheme::AnalysisPathV1 {
+            case_policy: CodePathCasePolicy::CaseSensitive,
+        },
+        "CodeEntity:X",
+    )
+    .unwrap();
+
     // Bu satır derlenmemeli: field'lar private.
     let _evidence = ObservedCodeEvidence {
-        code_entity_id: ConceptNodeId("CodeEntity:X".into()),
+        code_identity_key: _key,
         observations,
         measured_at: 0,
     };

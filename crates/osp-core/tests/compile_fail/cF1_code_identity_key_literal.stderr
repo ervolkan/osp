@@ -1,0 +1,9 @@
+error[E0451]: fields `scheme` and `key` of struct `CodeIdentityKey` are private
+  --> tests/compile_fail/cF1_code_identity_key_literal.rs:19:9
+   |
+18 |     let _key = CodeIdentityKey {
+   |                --------------- in this type
+19 |         scheme,
+   |         ^^^^^^ private field
+20 |         key: "CodeEntity:X".into(),
+   |         ^^^ private field

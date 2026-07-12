@@ -66,4 +66,8 @@ fn type_level_invariants_compile_fail() {
     // PR E — INV-C16 (ResolutionApplication: literal + Deserialize engelli)
     t.compile_fail("tests/compile_fail/c16_resolution_application_literal.rs");
     t.compile_fail("tests/compile_fail/c16_resolution_application_deserialize.rs");
+
+    // PR F — EI1-a evidence identity (ResolvedCodeIdentity + CodeIdentityKey literal opacity)
+    t.compile_fail("tests/compile_fail/cF1_resolved_code_identity_literal.rs");
+    t.compile_fail("tests/compile_fail/cF1_code_identity_key_literal.rs");
 }

@@ -687,6 +687,31 @@ mod tests {
     #[test]
     fn gate_accepts_implemented_by_with_evidence() {
         // Faz 4 pozitif yol: ImplementedBy + provider + evidence object → kabul.
+        // PR F: adapter pattern — lookup stub (node exists + binding) + key-faced source.
+        use crate::anchoring::code_evidence::{
+            CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+            ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+        };
+        use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+        /// Test lookup stub — tek node için binding döner.
+        struct SingleBindingLookup {
+            node_id: ConceptNodeId,
+            key: CodeIdentityKey,
+        }
+        impl CodeIdentityBindingLookup for SingleBindingLookup {
+            fn resolve_code_identity(
+                &self,
+                node_id: &ConceptNodeId,
+            ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+                if node_id == &self.node_id {
+                    Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+                } else {
+                    Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+                }
+            }
+        }
+
         let g = AnchorGate::new(glossary());
         let c = candidate(
             "CodeEntity:AuthService",
@@ -694,15 +719,25 @@ mod tests {
             0.90,
             Some("SCIP-observed implementation"),
         );
+        let auth_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            "CodeEntity:AuthService",
+        )
+        .unwrap();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
-            ConceptNodeId("CodeEntity:AuthService".into()),
+            auth_key.clone(),
             auth_service_observations(),
             1_700_000_000,
         );
-        let provider =
-            crate::anchoring::code_evidence::InMemoryCodeEvidenceProvider::from_evidence(vec![
-                evidence,
-            ]);
+        let source =
+            InMemoryCodeEvidenceSource::try_from_evidence(vec![evidence]).expect("distinct key");
+        let lookup = SingleBindingLookup {
+            node_id: ConceptNodeId("CodeEntity:AuthService".into()),
+            key: auth_key,
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
         let ctx = AnchorGateContext::with_code_evidence(None, &provider);
         let plan = g
             .decide(&ConceptPacketId("p".into()), vec![c], &empty_graph(), &ctx)
@@ -717,6 +752,30 @@ mod tests {
     fn implemented_by_evidence_does_not_bypass_explanation() {
         // Not 4: evidence VAR ama explanation YOK → MissingExplanation (INV-C7 önce).
         // Evidence explanation requirement'ı bypass etmez.
+        // PR F: adapter pattern (gate_accepts_implemented_by_with_evidence mirror).
+        use crate::anchoring::code_evidence::{
+            CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+            ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+        };
+        use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+        struct SingleBindingLookup {
+            node_id: ConceptNodeId,
+            key: CodeIdentityKey,
+        }
+        impl CodeIdentityBindingLookup for SingleBindingLookup {
+            fn resolve_code_identity(
+                &self,
+                node_id: &ConceptNodeId,
+            ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+                if node_id == &self.node_id {
+                    Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+                } else {
+                    Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+                }
+            }
+        }
+
         let g = AnchorGate::new(glossary());
         let c = candidate(
             "CodeEntity:AuthService",
@@ -724,15 +783,25 @@ mod tests {
             0.90,
             None, // explanation yok → INV-C7 önce reject
         );
+        let auth_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            "CodeEntity:AuthService",
+        )
+        .unwrap();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
-            ConceptNodeId("CodeEntity:AuthService".into()),
+            auth_key.clone(),
             auth_service_observations(),
             1_700_000_000,
         );
-        let provider =
-            crate::anchoring::code_evidence::InMemoryCodeEvidenceProvider::from_evidence(vec![
-                evidence,
-            ]);
+        let source =
+            InMemoryCodeEvidenceSource::try_from_evidence(vec![evidence]).expect("distinct key");
+        let lookup = SingleBindingLookup {
+            node_id: ConceptNodeId("CodeEntity:AuthService".into()),
+            key: auth_key,
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
         let ctx = AnchorGateContext::with_code_evidence(None, &provider);
         let err = g
             .decide(&ConceptPacketId("p".into()), vec![c], &empty_graph(), &ctx)
@@ -747,6 +816,30 @@ mod tests {
     fn implemented_by_rejects_when_provider_has_no_evidence_object() {
         // Not 5: gate find_evidence() ile OBJECT varlığını kontrol eder.
         // Provider mevcut ama bu CodeEntity için evidence object yok → reject.
+        // PR F: adapter pattern — empty source → lookup bound ama evidence yok → Ok(None) → reject.
+        use crate::anchoring::code_evidence::{
+            CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+            ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+        };
+        use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+        struct SingleBindingLookup {
+            node_id: ConceptNodeId,
+            key: CodeIdentityKey,
+        }
+        impl CodeIdentityBindingLookup for SingleBindingLookup {
+            fn resolve_code_identity(
+                &self,
+                node_id: &ConceptNodeId,
+            ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+                if node_id == &self.node_id {
+                    Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+                } else {
+                    Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+                }
+            }
+        }
+
         let g = AnchorGate::new(glossary());
         let c = candidate(
             "CodeEntity:NotInProvider",
@@ -754,8 +847,20 @@ mod tests {
             0.90,
             Some("impl"),
         );
-        // Provider var ama CodeEntity:NotInProvider için evidence seed'lenmedi.
-        let provider = crate::anchoring::code_evidence::InMemoryCodeEvidenceProvider::empty();
+        // Source boş → lookup binding döner ama source'ta evidence yok → adapter Ok(None).
+        let not_in_provider_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            "CodeEntity:NotInProvider",
+        )
+        .unwrap();
+        let source = InMemoryCodeEvidenceSource::empty();
+        let lookup = SingleBindingLookup {
+            node_id: ConceptNodeId("CodeEntity:NotInProvider".into()),
+            key: not_in_provider_key,
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
         let ctx = AnchorGateContext::with_code_evidence(None, &provider);
         let err = g
             .decide(&ConceptPacketId("p".into()), vec![c], &empty_graph(), &ctx)

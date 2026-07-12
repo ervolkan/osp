@@ -1,0 +1,9 @@
+error[E0451]: fields `node_id` and `identity_key` of struct `ResolvedCodeIdentity` are private
+  --> tests/compile_fail/cF1_resolved_code_identity_literal.rs:24:9
+   |
+23 |     let _resolved = ResolvedCodeIdentity {
+   |                     -------------------- in this type
+24 |         node_id: ConceptNodeId("CodeEntity:X".into()),
+   |         ^^^^^^^ private field
+25 |         identity_key,
+   |         ^^^^^^^^^^^^ private field
