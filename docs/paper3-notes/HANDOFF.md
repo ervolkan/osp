@@ -318,6 +318,101 @@ Plan 5 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
   self'te lineage her zaman; currentness `is_current_mainline()`. Tek source-of-truth her domain
   kuralı için ayrı canonical predicate (devasa helper değil).
 
+## Durum Değerlendirmesi (2026-07-12 — PR E merge sonrası)
+
+PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri, debt'leri ve
+öncelik sıralamasını yazılı kayıt altına alır — yeni oturumda hiçbir şey kaybolmaması için.
+
+### Tamamlanan milestone'lar (8 yüzey)
+1. PR C (#58) — core axis-granular evidence model (`ObservedPhysicalMetrics`)
+2. PR D (#59) — evidence projection + in-process wiring proof (`evidence_projection.rs`)
+3. PR E (#60) — entity resolution core + persistence contract (`CodeIdentityKey` + `ResolvesTo` + INV-C16)
+
+### Sıradaki işler (öncelik sıralı)
+
+#### PR E2 — CLI scheme adoption (en doğal devam)
+- `graph init --analyze` node'ları otomatik `CodeIdentityBinding` taşımaz (PR E core canonical
+  identity scheme ekler ama CLI adoption ayrı bridge PR).
+- `CanonicalCodeIdentity` → core `CodeIdentityScheme` mapping + `seed_code_identity_bindings_trusted`
+  graph init çağrısı.
+- `osp review resolve-code-entity <candidate>` CLI command (core transition sabitlendi).
+- **Bağımlılık:** PR E core contract hazır; CLI adoption doğal devam.
+
+#### PR F — Evidence identity migration
+- `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
+  `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter.
+- E1-E8 evidence invariantları (evidence exactly one CodeIdentityKey; candidate+entity aynı evidence;
+  resolution evidence kopyalamaz; duplicate YOK; resolver failure typed error; deterministic lookup;
+  resolution öncesi/sonrası strength değişmez; node silinmesi ownership değiştirmez).
+- **Bağımlılık:** PR E `CodeIdentityKey` hazır; PR F provider migration.
+
+#### PR G — Lineage-aware effective projection
+- `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
+  korunur).
+- **Bağımlılık:** PR E `ResolvesTo` edge + PR F evidence migration.
+
+### Technical debt (kapsam dışı bırakılan, future cleanup)
+
+#### `PhysicalCodeVector` unvalidated debt (PR C kapsamı dışı)
+- Raw pub fields (NaN coupling enjekte edilebilir). PR C bunu dokunmadı; future cleanup.
+
+#### `PhysicalCodeMetricAxis` placement note
+- Canonical `predicate_lowering.rs`'te; neutral modüle taşıma future cleanup.
+
+#### CLI→core dedup (PR D sonrası)
+- `AxisSet`/`MetricAxisValue`/`MetricCoverage` → core `PhysicalAxisValue`/`EvidenceCoverage` adopt.
+- `minimum_observed_strength` policy doc.
+
+#### run-metadata.json frozen/current debt
+- Stratum 22 vs `cumulative_trybuild_context` tutarsızlığı (frozen snapshot 22, current 28).
+- Ayrı cleanup PR — PR D/E compile-fail eklemediği için JSON'a dokunmadı.
+
+#### `measured_at` policy
+- PR D `now_unix_secs()` fail-closed Result inject; future wall-clock source (NTP/system) policy.
+
+### Paper / yayın pending
+
+#### v1.4 pending paper edits
+- Table C6 fixture adları (`c6_intent_cannot_form_observed_code_evidence` rename; yeni collection fixture'ları).
+- trybuild 24→26 (PR C) → 28 (PR E) güncelleme.
+- Evidence projection boundary (PR D) + entity resolution (PR E) Table'ları.
+- INV-C16 runtime invariant (16 invariant; 13 type-enforced + 3 runtime-asserted C14/C15/C16).
+
+#### arXiv v1.4
+- v1.3 Zenodo'da canlı; v1.4 derive adayı. Epistemik çekirdek + CLI surface + evidence + entity resolution
+  tamam. Endorsement hazır (Jimenez e-postası).
+
+### Future milestone'lar (long-term)
+
+#### Anchoring consumer gap
+- Production consumer henüz yok — `AnchorPipeline::run_with_source` çağıran anchoring/ingest/evaluate
+  CLI surface future work. PR D compatibility proof (in-crate unit test) seam çalıştığını kanıtlar.
+
+#### Evidence persistence milestone
+- `PersistedObservedCodeEvidence` schema version + validated restore + latest/history politikası
+  + deterministic ordering + upsert/append semantics. PR D evidence production hazır (in-memory);
+  persistence evidence zamanlar arasında güvenli taşır. `ObservedCodeEvidence` Deserialize VERİLMEZ.
+
+#### EvidenceSource abstraction
+- `fresh analysis` (PR D) → `validated persisted DTO` (evidence persistence). Consumer değişmez;
+  provider'ı besleyen source değişir.
+
+#### ObservedEntityRefresh
+- Incremental store'da representation change audit transition (case-only rename →
+  aynı NodeId, farklı canonical/digest). Supersede değil; `ObservedEntityRefresh`.
+
+#### Structural relation projection (eski PR E — şimdi future)
+- `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik sözleşme tasarımı.
+
+### Test envanteri (current protocol)
+- osp-core lib: 588 test
+- osp-cli unit: 123 test
+- compile-fail (trybuild): 28 (osp-core)
+- workspace total: ~1039 (osp-desktop hariç)
+- 0 regression; `RUSTFLAGS="-D warnings"` temiz.
+
+---
+
 ## Sıradaki işler
 
 ### CLI scheme adoption (PR E2 — sonraki milestone)
