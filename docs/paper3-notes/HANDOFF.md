@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core TAMAM)
 
-> **Tarih:** 2026-07-11 (`feat/evidence-projection-wiring` dalı — PR D implementasyonu)
-> **Dal:** `feat/evidence-projection-wiring` (main `d7f61bc` üstünde — PR #58 merged; plan tur 4 commit `b5b55f8`)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** TAMAM. Yedi yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam compatibility proof). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR E (structural relation projection), persistence milestone (PR G), entity-promotion/identity milestone (CodeEntityCandidate → CodeEntity transition; ImplementedBy gate evidence presence), arXiv v1.4.
+> **Tarih:** 2026-07-12 (`feat/entity-resolution-core` dalı — PR E implementasyonu)
+> **Dal:** `feat/entity-resolution-core` (main `6a8a923` üstünde — PR #59 merged; plan tur 3 commit `36d0242`)
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** TAMAM. Sekiz yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam) + entity resolution core (CodeIdentityKey + ResolvesTo + CodeEntityResolutionSession + INV-C16 atomic + snapshot v2 migration). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR E2 (CLI scheme adoption — graph init binding otomatik), PR F (evidence identity migration), PR G (lineage-aware effective projection), arXiv v1.4.
 
 ---
 
@@ -14,8 +14,8 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 552 test**; **osp-cli: 121 unit** (PR D: 108→121 +13 evidence_projection);
-**26 compile-fail** (değişmedi — PR D compile-fail eklemedi); **workspace total ~1001** (osp-desktop hariç); **0 regression**.
+**osp-core lib: 587 test** (PR E: 552→587 +10 identity + 25 resolution/review tur 4+5); **osp-cli: 123 unit** (PR E: +2 v1→v2 migration);
+**28 compile-fail** (PR E: 26→28 — c16_resolution_application literal + deserialize); **workspace total ~1038** (osp-desktop hariç); **0 regression**.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR #48 — ne yapıldı (bu oturumda)
@@ -320,24 +320,85 @@ Plan 5 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
 
 ## Sıradaki işler
 
-### Structural relation projection (PR E — sonraki milestone)
-- `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik
-  sözleşme tasarımı. ConceptEdgeKind mapping, INV-C7 explanation, Candidate lane.
+### CLI scheme adoption (PR E2 — sonraki milestone)
+- `graph init --analyze` node'ları otomatik `CodeIdentityBinding` taşımaz (PR E core canonical
+  identity scheme ekler ama CLI adoption ayrı bridge PR). PR E2: `CanonicalCodeIdentity` → core
+  `CodeIdentityScheme` mapping + `seed_code_identity_bindings_trusted` graph init çağrısı.
 
-### Persistence milestone (PR G)
+### Evidence identity migration (PR F)
+- `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
+  `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter. E1-E8 evidence invariantları.
+
+### Lineage-aware effective projection (PR G)
+- `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
+  korunur).
+
+### CLI command (PR E2 sonrası)
+- `osp review resolve-code-entity <candidate>` (core transition sabitlendi; CLI surface ayrı).
+
+### Persistence milestone (evidence)
 - `PersistedObservedCodeEvidence` schema version + validated restore + latest/history politikası
-  + deterministic ordering + upsert/append semantics + snapshot integration + corruption tests.
-  `ObservedCodeEvidence` Deserialize VERİLMEZ — serde-friendly persisted DTO `try_restore()`.
-  PR D evidence production hazır (in-memory); PR G evidence zamanlar arasında güvenli taşır.
+  + deterministic ordering + upsert/append semantics. PR D evidence production hazır (in-memory);
+  persistence evidence zamanlar arasında güvenli taşır. `ObservedCodeEvidence` Deserialize VERİLMEZ.
 
 ### Anchoring consumer gap (future)
 - Production consumer henüz yok — `AnchorPipeline::run_with_source` çağıran anchoring/ingest/evaluate
-  CLI surface future work. PR D compatibility proof (in-crate unit test) seam çalıştığını kanıtlar;
-  production consumer ayrı milestone.
+  CLI surface future work. PR D compatibility proof (in-crate unit test) seam çalıştığını kanıtlar.
 
-### ObservedEntityRefresh (PR F — F-yeni future)
+### ObservedEntityRefresh (future)
 - Incremental store'da representation change audit transition (case-only rename →
   aynı NodeId, farklı canonical/digest). Supersede değil; `ObservedEntityRefresh`.
+
+## Entity resolution core + persistence contract (PR E) — ne yapıldı (bu dalda)
+
+PR E — `CodeEntityCandidate ─ResolvesTo→ CodeEntity` identity resolution core contract + atomik
+transition + snapshot persistence. **Dar V1:** identity-resolution core (3 tur plan review).
+Ontolojik sözleşme: node identity ≠ physical code identity; ResolvesTo ≠ promotion; evidence
+resolution ≠ evidence duplication (PR F).
+
+### Mimari (3 tur plan review, implementation-ready)
+- **`CodeIdentityKey` + `CodeIdentityScheme`:** case-policy scheme'in parçası (`AnalysisPathV1 { case_policy }`);
+  smart constructor canonicalize (AsciiCaseInsensitive → to_ascii_lowercase); custom Deserialize
+  (derive bypass YOK); deterministic `derive_resolved_code_entity_id` (FNV-1a, domain-separated).
+- **`CodeIdentityBinding` store-owned:** ConceptNode alanı DEĞİL; `BTreeMap<ConceptNodeId, CodeIdentityKey>`;
+  `seed_code_identity_bindings_trusted` bootstrap (node existence + kind + family + duplicate + R7).
+- **`ConceptEdgeKind::ResolvesTo`:** 16. variant; high-stake (INV-C7 explanation zorunlu).
+- **Status politikası:** source Accepted kalır; target Created=Candidate (otomatik mainline değil),
+  Reused=existing live entity (`is_live_code_identity`); edge Accepted + explanation.
+- **`ResolutionOutcome { Created, Reused }`:** basis-pinned outcome (`StaleResolutionTarget` —
+  create→reuse sessiz dönüşüm YOK); N:1 cardinality (R7).
+- **`CodeEntityResolutionSession`:** SupersedeSession mirror; `&mut self` resolve; opaque
+  `ResolutionApplication` (private fields, no Deserialize); `ResolutionSessionSummary` + `close`.
+- **`PresentedResolutionBasis::compile`:** Accepted candidate için ayrı compile yolu (mevcut
+  PresentedBasis::compile Candidate-only); `ResolutionBasisView` + `ResolutionTargetView`.
+- **`apply_resolution` 14-step:** lane-sensitive; basis match → candidate validation → freshness →
+  binding → R6 → target recompute → basis-pinned match → reuse validation → collision → audit_seq →
+  no-fallible mutation block. R1-R10 invariantları.
+- **Created entity deterministic material:** canonical = key.canonical_key(), aliases = [].
+
+### Persistence contract (tur 3 P1-1 gerçek envelope shape)
+- `AnchorStoreSnapshot` v2: + `resolution_records` + `code_identity_bindings` (3-ledger audit_seq union).
+- `ConceptGraphSnapshot::SCHEMA_VERSION = 1` additive (backward-compat).
+- `PersistedStore::STORE_SCHEMA_VERSION: 1 → 2`; `PersistedStoreV1` + `AnchorStoreSnapshotV1` +
+  `TryFrom<PersistedStoreV1>` explicit migration (revision preserved); header-based version dispatch.
+- INV-C16 snapshot validation: binding validation + record endpoint + status forward + R2 key equality
+  + R3/R4 kind + R5 family + R6 outgoing cardinality + R7 live entity + three-way triangulation +
+  audit_seq density (3-ledger union) + INV-C7 explanation.
+
+### Testler (0 regression)
+- osp-core lib: 552 → 576 (+10 identity + 14 resolution: created/reused/failure/bootstrap/snapshot)
+- osp-cli unit: 121 → 123 (+2 v1→v2 migration: revision preserved + header dispatch reject)
+- compile-fail: 26 → 28 (c16_resolution_application literal + deserialize)
+- Workspace total ~1027 (osp-desktop hariç); 0 regression.
+
+### HANDOFF bullet'leri (PR E sonrası)
+- **CLI scheme adoption gap:** PR E core canonical identity scheme ekler ama `graph init` node'ları
+  otomatik binding taşımaz (PR E2 bridge adoption).
+- **Evidence identity migration PR F'de:** `CodeIdentityKey` provider merkezi.
+- **Lineage-aware projection PR G'de:** derived ImplementedBy (read-only).
+- **CLI surface:** `osp review resolve-code-entity` PR E2 sonrası.
+- **N:1 cardinality V1'de desteklenir (R7);** V1 test 1:1 + N:1 kapsar.
+- **`ConceptGraphSnapshot::SCHEMA_VERSION = 1` additive;** format bump CLI envelope v2.
 
 ## Evidence projection + in-process wiring proof (PR D) — ne yapıldı (bu dalda)
 

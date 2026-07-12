@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-11 (Paper 3 v1.3 public manuscript + PR C core axis-granular evidence + PR D evidence projection — arXiv editorial pass tamam, Zenodo yolunda)
+> **Son güncelleme:** 2026-07-12 (Paper 3 v1.3 public manuscript + PR C/D/E entity resolution core — arXiv editorial pass tamam, Zenodo yolunda)
 > **Detaylı roadmap:** [`roadmap/paper2-roadmap.md`](roadmap/paper2-roadmap.md)
 > **Invariant spec:** [`spec/invariants.md`](spec/invariants.md)
 > **MCP tasarım:** [`spec/mcp-design.md`](spec/mcp-design.md)
@@ -77,7 +77,7 @@ için draft deposit bekliyor. **~1001 workspace test (osp-desktop hariç, CLI: o
 > INV-C14 (PR #48) + INV-C15 (PR #49) eklendi.
 > 10 type-enforced genesis + 3 type-enforced lowering/translation (P1-P3) + 2 runtime (C14 projection + C15 transition) = 15.
 > Toplam type-enforced = 13 (10 genesis + 3 lowering); 2 runtime-asserted (C14, C15).
-> Compile-fail count 26 (PR C: 24→26 — `c6_observed_physical_metrics_literal` + `c6_observed_physical_metrics_deserialize` + `c6_intent` rename; C14/C15 runtime-asserted).
+> Compile-fail count 28 (PR E: 26→28 — c16_resolution_application literal + deserialize; C14/C15 runtime-asserted).
 
 - **INV-C1..C8** (anchoring): embedding proposes/C2 family/C3 candidate isolation/C4 supersede authority/C5 inferred not accepted/C6 code intent hypothesis/C7 explainable/C8 canonicalized
 - **INV-C12** (informed acceptance): basis karar anındaki içeriğe karşı node_digest tazelik-doğrulamalı (TOCTOU)
@@ -90,8 +90,8 @@ için draft deposit bekliyor. **~1001 workspace test (osp-desktop hariç, CLI: o
 
 ### Paper 3 kanıtları (Aşama 1 evidence freeze sertleştirildi)
 
-- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 26** (PR C axis-granular collection trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
-- 552 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
+- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 28** (PR E entity resolution trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
+- 587 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
 - **E2E binding chain replay** (Adım 1 gerçek pipeline koşusu) — `e2e-binding-chain-replay.json`
 - **E2E rejected paths replay** (4 negatif yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted) — `e2e-rejected-paths-replay.json`
 - **§0 pre-flight canonical + marker tablosu** (6 cümle × 4 sütun, gerçek pipeline koşusu) — `paper3_evidence.rs::preflight`
@@ -176,13 +176,13 @@ Paper 3 v1.3 public manuscript — Zenodo yolunda.
 ```
 cargo test --workspace --exclude osp-desktop
 ```
-- osp-core: 552 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 14 PR C axis-granular evidence + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 582; 26 type-level compile-fail (trybuild)
+- osp-core: 587 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 14 PR C axis-granular evidence + 10 PR E identity + 25 PR E resolution + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 617; 28 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 121 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection + 13 PR D evidence_projection) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration
+- osp-cli: 123 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection + 13 evidence_projection + 2 PR E v1→v2 migration) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~1001 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
+- **Toplam: ~1038 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
 
 ## Önemli Commit'ler
 

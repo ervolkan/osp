@@ -34,29 +34,32 @@
 
 | Parameter | Value |
 |---|---|
-| Current Paper-3-specific invariants | **15** (değişmedi — CLI surface invariant eklemez, INV-C11 classification düzeltildi) |
+| Current Paper-3-specific invariants | **16** (PR E: INV-C16 entity-resolution transition eklendi) |
 | ↳ type-enforced genesis (INV-C1..C8, C12, C13) | 10 |
 | ↳ type-enforced lowering/translation (INV-P1..P3) | 3 |
 | ↳ runtime projection invariant (INV-C14, Faz 8b PR #48) | 1 |
 | ↳ runtime atomic transition invariant (INV-C15, Faz 8b PR #49 atomik + PR #50 production invocation) | 1 |
+| ↳ runtime atomic transition invariant (INV-C16, PR E entity-resolution transition) | 1 |
 | **Toplam type-enforced** (genesis + lowering) | **13** |
-| **Toplam runtime-asserted** | **2** (C14 projection + C15 transition) |
-| Compile-fail test count | 26 (PR C: c6_observed_physical_metrics_literal + deserialize eklendi, c6_intent rename) |
+| **Toplam runtime-asserted** | **3** (C14 projection + C15 supersession transition + C16 entity-resolution transition) |
+| Compile-fail test count | 28 (PR E: c16_resolution_application literal + deserialize eklendi) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |
 | INV-C15 production invocation | `SupersedeSession` (PR #50) — crate-private authority issuer + parametresiz `supersede()` + token içeride mint |
 | **Restore-validated persistence (CLI)** | `AnchorStoreSnapshot::restore_snapshot` — graph schema + node uniqueness + edge endpoints + record→node/status forward integrity + dense audit_seq (union unique + {1..N} + ==N) + INV-C15 üç yönlü triangulation (committed edge ↔ record ↔ status, lane-sensitive, cycle absence). paper3 "known gap" cümlesi evaluated path için kapatıldı. |
 | **INV-C11 surface classification (CLI)** | MCP = agent-facing (review/supersede authority yok, static regression test); `osp review` CLI = operator-facing (session expose eder — INV-T2 attribution, auth deployment boundary). |
-| **Operator review testleri** | osp-core lib 552 (503 + 23 AnchorStoreSnapshot + 14 PR C axis-granular evidence + 12 supersede-preview predicates); osp-cli 121 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration; osp-mcp +2 INV-C11 |
+| **Operator review testleri** | osp-core lib 587 (503 + 23 AnchorStoreSnapshot + 14 PR C axis-granular evidence + 10 PR E identity + 25 PR E resolution + 12 supersede-preview predicates); osp-cli 123 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration; osp-mcp +2 INV-C11 |
 
 > **Taksonomi notu (Review PR #48/#49):** P1-P3 lowering invariant'ları da type-enforced'dur
 > (trybuild katmanında, strata tablosu (1) ile tutarlı). "13 type-enforced = 10 genesis + 3 lowering";
-> INV-C14 (projection) ve INV-C15 (transition) runtime-asserted. Toplam 15 = 13 type-enforced + 2 runtime.
+> INV-C14 (projection), INV-C15 (supersession transition) ve INV-C16 (entity-resolution transition) runtime-asserted.
+> Toplam 16 = 13 type-enforced + 3 runtime. INV-C16'nın iki compile-fail testi yalnız
+> `ResolutionApplication` construction-opacity boundary'sini kanıtlar (type-enforced invariant sayısını artırmaz).
 
 ## Evidence strata (5 katman)
 
 | Stratum | Amaç | Kanıt | Test |
 |---|---|---|---|
-| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-P1..P3 + supersede opacity (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant + 2 supersede opacity boundary (26 cumulative compile-fail — PR C axis-granular collection) | `tests/anchoring_typelevel.rs` |
+| **(1) Type-level trybuild** | INV-C1..C8, INV-C12, INV-C13, INV-C16, INV-P1..P3 + supersede opacity (genesis + lowering, type-enforced) | 13 Paper 3'e özgü type-enforced invariant + 2 supersede opacity boundary (28 cumulative compile-fail — PR E entity resolution collection) | `tests/anchoring_typelevel.rs` |
 | **(2) Golden fixture conformance** | 13 fixture pipeline davranışı | `anchoring_mvp.rs` + `anchoring_fixtures.rs` | `cargo test -p osp-core --test anchoring_mvp` |
 | **(3) Held-out adversarial** | 5 cümle totoloji-olmayan RQ1 | `held-out-adversarial-fixtures.json` | `paper3_heldout.rs` |
 | **(4) E2E binding chain replay** | Uçtan uca zincir; Step 6 REAL promotion (Faz 8a) | `e2e-binding-chain-replay.json` | `paper3_evidence.rs` |
