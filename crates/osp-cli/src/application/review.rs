@@ -1997,4 +1997,342 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, ReviewError::NotFound(_)));
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PR E2 tur 1 review P1 — apply_resolution production-path target-pinning tests
+    //
+    // Review P1: PR'nin varlık nedeni olan operator-facing target pinning production
+    // yolu üzerinden test edilmeli. validate_expected_target bozulsa Created mutlu yol
+    // + stale candidate test'i geçerdi — bu testler regresyonu yakalar.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    use osp_core::anchoring::review::PresentedResolutionBasis;
+
+    /// identity_key oluştur (test yardımcı — CaseSensitive).
+    fn identity_key_for(key: &str) -> CodeIdentityKey {
+        CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: osp_core::anchoring::identity::CodePathCasePolicy::CaseSensitive,
+            },
+            key,
+        )
+        .unwrap()
+    }
+
+    /// PR E2 — apply_resolution Created mutlu yol (production path).
+    /// Preview compile → expected target → mutation → Created outcome.
+    #[test]
+    fn apply_resolution_created_happy_path_production() {
+        let mut store = resolution_store_with_accepted_candidate();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        // (1) Preview compile — production path'in ilk adımı.
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let expected_target = match basis.target() {
+            PresentedResolutionTarget::Create {
+                proposed_entity_id,
+            } => ExpectedResolutionTarget::Create {
+                proposed_entity_id: proposed_entity_id.clone(),
+            },
+            _ => unreachable!("0 entity → Create"),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id.clone(),
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target,
+            reason: "canonical entity".into(),
+        };
+        // (2) Mutation — apply_resolution (production path).
+        let operator = OperatorId::new("tester");
+        let record = apply_resolution(&mut store, &cmd, operator).unwrap();
+        // Created outcome — deterministic entity ID.
+        assert!(record.entity_id.0.starts_with("CodeEntity:"));
+        assert_eq!(record.candidate_id, candidate_id);
+    }
+
+    /// PR E2 tur 1 review P1 — create→reuse target drift reject.
+    /// Preview Create gösterir; mutation öncesi store'a live entity eklenir → Reuse drift.
+    /// Beklenen: StaleResolutionTarget (core inactive→EntityNotLive DEĞIL; create→reuse drift).
+    #[test]
+    fn apply_resolution_rejects_create_to_reuse_target_drift() {
+        let mut store = resolution_store_with_accepted_candidate();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        // (1) Preview Create (0 entity).
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let _create_target = match basis.target() {
+            PresentedResolutionTarget::Create {
+                proposed_entity_id,
+            } => ExpectedResolutionTarget::Create {
+                proposed_entity_id: proposed_entity_id.clone(),
+            },
+            _ => unreachable!(),
+        };
+        // (2) Mutation öncesi: aynı identity key için live CodeEntity ekle → Reuse drift.
+        //     store manipulation: resolve(başka candidate) veya direkt seed.
+        //     En temiz: aynı key için ikinci candidate resolve et → ilk entity Created,
+        //     sonra ilk candidate preview Reuse olur.
+        //     Ama bu test yalnızca validate_expected_target'ı izole etmek için;
+        //     production drift senaryosu integration test'te (resolve_flow_reuse).
+        //     Burada expected_target'ı manuel farklı verip drift'i kanıtlıyoruz.
+        let wrong_target = ExpectedResolutionTarget::Reuse {
+            entity_id: ConceptNodeId("CodeEntity:deadbeefdeadbeef".into()),
+            entity_digest: NodeDigest::from_raw(0xDEADBEEF),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id,
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target: wrong_target, // Create basis ↔ Reuse expected → drift
+            reason: "x".into(),
+        };
+        let err = apply_resolution(
+            &mut store,
+            &cmd,
+            OperatorId::new("t"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ReviewError::StaleResolutionTarget),
+            "Create basis ↔ Reuse expected → StaleResolutionTarget, got {err:?}"
+        );
+    }
+
+    /// PR E2 tur 1 review P1 — reuse entity digest drift reject.
+    /// Preview Reuse gösterir; expected digest farklı → StaleResolutionTarget.
+    #[test]
+    fn apply_resolution_rejects_reuse_entity_digest_drift() {
+        // Setup: candidate + mevcut live CodeEntity (reuse target) — identity key aynı.
+        use osp_core::anchoring::PositionFamily;
+        let candidate_path = "src/lib.rs";
+        let candidate_id = ConceptNodeId(format!("CodeEntityCandidate:{candidate_path}"));
+        let candidate = ConceptNode {
+            id: candidate_id.clone(),
+            canonical: candidate_path.into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let identity_key = identity_key_for(candidate_path);
+        let entity_id = identity_key.derive_entity_id();
+        let entity = ConceptNode {
+            id: entity_id.clone(),
+            canonical: candidate_path.into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Candidate, // live (is_live_code_identity)
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(candidate);
+        seed.code_entities.push(entity);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        store
+            .seed_code_identity_bindings_trusted(&[
+                CodeIdentityBinding {
+                    node_id: candidate_id.clone(),
+                    identity_key: identity_key.clone(),
+                },
+                CodeIdentityBinding {
+                    node_id: entity_id.clone(),
+                    identity_key: identity_key.clone(),
+                },
+            ])
+            .expect("binding seeding");
+        // (1) Preview → Reuse (1 live entity).
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let actual_entity_id = match basis.target() {
+            PresentedResolutionTarget::Reuse { entity_id, .. } => entity_id.clone(),
+            _ => unreachable!("1 live entity → Reuse"),
+        };
+        let actual_digest = match basis.target() {
+            PresentedResolutionTarget::Reuse { entity_digest, .. } => *entity_digest,
+            _ => unreachable!(),
+        };
+        // (2) Expected target: aynı entity_id ama yanlış digest → digest drift.
+        let wrong_digest_target = ExpectedResolutionTarget::Reuse {
+            entity_id: actual_entity_id,
+            entity_digest: NodeDigest::from_raw(actual_digest.get().wrapping_add(1)),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id,
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target: wrong_digest_target,
+            reason: "x".into(),
+        };
+        let err = apply_resolution(&mut store, &cmd, OperatorId::new("t")).unwrap_err();
+        assert!(
+            matches!(err, ReviewError::StaleResolutionTarget),
+            "same entity_id + wrong digest → StaleResolutionTarget, got {err:?}"
+        );
+    }
+
+    /// PR E2 tur 1 review P1 — Reuse mutlu yol (production path).
+    /// Mevcut live entity → Reuse outcome; entity_node_id mevcut entity ile aynı.
+    #[test]
+    fn apply_resolution_reused_happy_path_production() {
+        use osp_core::anchoring::PositionFamily;
+        let candidate_path = "src/shared.rs";
+        let candidate_id = ConceptNodeId(format!("CodeEntityCandidate:{candidate_path}"));
+        let candidate = ConceptNode {
+            id: candidate_id.clone(),
+            canonical: candidate_path.into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let identity_key = identity_key_for(candidate_path);
+        let entity_id = identity_key.derive_entity_id();
+        let entity = ConceptNode {
+            id: entity_id.clone(),
+            canonical: candidate_path.into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Candidate, // live
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(candidate);
+        seed.code_entities.push(entity);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        store
+            .seed_code_identity_bindings_trusted(&[
+                CodeIdentityBinding {
+                    node_id: candidate_id.clone(),
+                    identity_key: identity_key.clone(),
+                },
+                CodeIdentityBinding {
+                    node_id: entity_id.clone(),
+                    identity_key: identity_key.clone(),
+                },
+            ])
+            .expect("binding seeding");
+        // (1) Preview → Reuse.
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let expected_target = match basis.target() {
+            PresentedResolutionTarget::Reuse {
+                entity_id,
+                entity_digest,
+            } => ExpectedResolutionTarget::Reuse {
+                entity_id: entity_id.clone(),
+                entity_digest: *entity_digest,
+            },
+            _ => unreachable!(),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id.clone(),
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target,
+            reason: "reuse canonical".into(),
+        };
+        // (2) Mutation → Reused.
+        let record = apply_resolution(&mut store, &cmd, OperatorId::new("t")).unwrap();
+        assert_eq!(record.entity_id, entity_id, "Reused → existing entity ID");
+        match record.outcome {
+            ResolutionOutcome::Reused { .. } => {}
+            other => panic!("expected Reused, got {other:?}"),
+        }
+    }
+
+    /// PR E2 tur 1 review P1 — target drift store mutation yapmaz (atomic persistence).
+    /// revision/snapshot/resolution ledger/audit_sequence unchanged.
+    #[test]
+    fn target_drift_does_not_change_revision_snapshot_ledger_or_audit_sequence() {
+        let mut store = resolution_store_with_accepted_candidate();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        // Snapshot BEFORE.
+        let before = store.export_snapshot();
+        let before_resolution_count = store.resolution_ledger().len();
+        let before_audit = store.export_snapshot().audit_sequence;
+        // Wrong target (Create basis ↔ Reuse expected).
+        let wrong_target = ExpectedResolutionTarget::Reuse {
+            entity_id: ConceptNodeId("CodeEntity:deadbeefdeadbeef".into()),
+            entity_digest: NodeDigest::from_raw(0xDEADBEEF),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id,
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target: wrong_target,
+            reason: "x".into(),
+        };
+        let _ = apply_resolution(&mut store, &cmd, OperatorId::new("t"));
+        // Snapshot AFTER — unchanged.
+        let after = store.export_snapshot();
+        let after_resolution_count = store.resolution_ledger().len();
+        let after_audit = store.export_snapshot().audit_sequence;
+        assert_eq!(
+            before.graph.nodes.len(),
+            after.graph.nodes.len(),
+            "target drift must not add nodes"
+        );
+        assert_eq!(
+            before.graph.edges.len(),
+            after.graph.edges.len(),
+            "target drift must not add edges"
+        );
+        assert_eq!(
+            before_resolution_count, after_resolution_count,
+            "target drift must not append resolution ledger"
+        );
+        assert_eq!(
+            before_audit, after_audit,
+            "target drift must not bump audit_sequence"
+        );
+    }
+
+    /// PR E2 tur 1 review P1 — already resolved candidate reject (R6 outgoing ResolvesTo).
+    #[test]
+    fn apply_resolution_already_resolved_rejects() {
+        let mut store = resolution_store_with_accepted_candidate();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        // (1) İlk resolve → Created.
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let expected_target = match basis.target() {
+            PresentedResolutionTarget::Create {
+                proposed_entity_id,
+            } => ExpectedResolutionTarget::Create {
+                proposed_entity_id: proposed_entity_id.clone(),
+            },
+            _ => unreachable!(),
+        };
+        let cmd = ResolveCodeEntityCommand {
+            candidate: candidate_id.clone(),
+            expected_candidate_digest: basis.candidate_digest(),
+            expected_target,
+            reason: "first".into(),
+        };
+        apply_resolution(&mut store, &cmd, OperatorId::new("t")).unwrap();
+        // (2) İkinci resolve — fresh preview (artık Reuse olur çünkü Created entity live).
+        //     Store R6 outgoing ResolvesTo check → AlreadyResolved (target validation öncesi).
+        let basis2 = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        let expected_target2 = match basis2.target() {
+            PresentedResolutionTarget::Create {
+                proposed_entity_id,
+            } => ExpectedResolutionTarget::Create {
+                proposed_entity_id: proposed_entity_id.clone(),
+            },
+            PresentedResolutionTarget::Reuse {
+                entity_id,
+                entity_digest,
+            } => ExpectedResolutionTarget::Reuse {
+                entity_id: entity_id.clone(),
+                entity_digest: *entity_digest,
+            },
+        };
+        let err = apply_resolution(
+            &mut store,
+            &ResolveCodeEntityCommand {
+                candidate: candidate_id,
+                expected_candidate_digest: basis2.candidate_digest(),
+                expected_target: expected_target2,
+                reason: "second".into(),
+            },
+            OperatorId::new("t"),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ReviewError::AlreadyResolved(_)),
+            "second resolve → AlreadyResolved (R6 outgoing ResolvesTo), got {err:?}"
+        );
+    }
 }

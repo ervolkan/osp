@@ -195,13 +195,16 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
     let mut store = InMemoryAnchorStore::with_seed(graph_seed);
     // PR E2 — identity binding seeding (node existence sonrası; analyze source yalnız).
     // seed_code_identity_bindings_trusted: node existence + kind + family + duplicate + R7 validation.
-    // Tur 2 P2-B: başarılı seeding sonrası ayrı stderr (Bridge report projection sayısı ayrı).
+    // Tur 1 review P2-1: başarılı seeding stderr'i durable write SONRASI basılır
+    // (restore validation + serialization/write/fsync/atomic replace fail ederse "seeded" iddia edilemez).
+    let seeded_binding_count = identity_bindings
+        .as_ref()
+        .map_or(0, Vec::len);
     if let Some(bindings) = &identity_bindings {
         if !bindings.is_empty() {
             store
                 .seed_code_identity_bindings_trusted(bindings)
                 .map_err(|e| anyhow::anyhow!("identity binding seeding failed: {e}"))?;
-            eprintln!("identity bindings seeded: {}", bindings.len());
         }
     }
     let snapshot = store.export_snapshot();
@@ -214,6 +217,11 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
     let persisted = PersistedStore::from_snapshot(snapshot);
     write_persisted_store(&args.store, &persisted)
         .map_err(|e| anyhow::anyhow!("cannot write store: {e}"))?;
+
+    // PR E2 (tur 1 review P2-1) — durable write sonrası "persisted" mesajı (disk'e yazıldı kesin).
+    if seeded_binding_count > 0 {
+        eprintln!("identity bindings persisted: {seeded_binding_count}");
+    }
 
     // lock drop → release.
     println!(

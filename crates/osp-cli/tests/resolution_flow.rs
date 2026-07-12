@@ -34,7 +34,7 @@ fn init_analyze_store(dir: &std::path::Path, repo: &std::path::Path) -> std::pat
         .assert()
         .success()
         .stdout(contains("Graph initialized"))
-        .stderr(contains("identity bindings seeded: 2"));
+        .stderr(contains("identity bindings persisted: 2"));
     store_path
 }
 

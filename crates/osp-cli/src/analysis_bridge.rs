@@ -379,11 +379,12 @@ impl std::fmt::Display for BridgeRunReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "analysis bridge: scheme={}, policy={}, projected={}, skipped_non_module={}",
+            "analysis bridge: scheme={}, policy={}, projected={}, skipped_non_module={}, projected_identity_bindings={}",
             self.identity_scheme.label(),
             self.path_case_policy.label(),
             self.projected_modules,
             self.skipped_non_module,
+            self.projected_identity_bindings,
         )?;
         if let Some(head) = &self.repository_head {
             write!(f, ", head={}", &head[..head.len().min(7)])?;

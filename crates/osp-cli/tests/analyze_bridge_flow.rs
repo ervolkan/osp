@@ -431,7 +431,10 @@ fn pr_e2_analyze_seeds_code_identity_bindings() {
         ])
         .assert()
         .success()
-        .stderr(contains("identity bindings seeded: 3"));
+        // Tur 1 review P2-1: durable write sonrası "persisted" (disk'e yazıldı kesin).
+        .stderr(contains("identity bindings persisted: 3"))
+        // Tur 1 review P2-2: BridgeRunReport Display projected_identity_bindings içerir.
+        .stderr(contains("projected_identity_bindings=3"));
 
     let bindings = extract_bindings(&store);
     assert_eq!(bindings.len(), 3, "3 candidates → 3 bindings");
