@@ -20,11 +20,13 @@
 use std::collections::BTreeMap;
 
 use osp_analyzer::contract::AnalysisResult;
-use osp_core::anchoring::types::{ConceptNodeId, ConceptNodeKind};
+use osp_core::anchoring::identity::CodeIdentityKey;
+use osp_core::anchoring::types::{CodeIdentityBinding, ConceptNodeId, ConceptNodeKind};
 use osp_core::space::{NodeId, NodeKind};
 
 use crate::canonical_identity::{CanonicalCodeIdentity, CanonicalIdentityError, PathCasePolicy};
 use crate::graph_seed_builder::GraphSeedNodeDraft;
+use crate::identity_bridge::{to_core_identity_key, AnalysisIdentityContext, IdentityBridgeError};
 use crate::seed_file::derive_node_id;
 
 /// O2' — typed identity scheme (passive metadata → active identity boundary).
@@ -202,14 +204,23 @@ impl AnalysisProjectionIndex {
 }
 
 /// Node projection iç ara sonuç — project_candidate_nodes çıktısı.
+///
+/// PR E2: `code_identity_bindings` companion çıktı (candidate + binding co-derived).
 #[derive(Debug, Clone)]
 pub(crate) struct CandidateProjectionOutput {
     pub(crate) candidate_seed: AnalysisCandidateSeed,
     pub(crate) identity_index: AnalysisProjectionIndex,
+    /// PR E2 — candidate başına bir binding (validated/sorted candidate'lardan co-derived).
+    pub(crate) code_identity_bindings: Vec<CodeIdentityBinding>,
     pub(crate) graph_report: BridgeRunReport,
 }
 
 /// Node projection — tek türetim noktası (R1). ID bir kez üretilir, hem entity'ye hem index'e.
+///
+/// PR E2 (tur 1 review karar #1): binding'ler `AnalysisCandidateSeed::try_new` sonrası
+/// validated/sorted candidate'lardan üretilir (raw analyzer loop'ta DEĞİL). İkinci iteration
+/// ama ikinci identity derivation pass'i DEĞİL: path yeniden normalize edilmez, ID yeniden
+/// türetilmez; yalnız doğrulanmış projection'dan companion binding üretilir.
 pub(crate) fn project_candidate_nodes(
     analysis: &AnalysisResult,
     policy: PathCasePolicy,
@@ -258,19 +269,40 @@ pub(crate) fn project_candidate_nodes(
         projected_modules += 1;
     }
 
+    // (2) Candidate collision validation + deterministic sort.
     let candidate_seed = AnalysisCandidateSeed::try_new(entities)?;
+
+    // (3) PR E2 — binding'leri VALIDATED/SORTED candidate'lardan türet (raw loop'ta değil).
+    //     İkinci iteration ama ikinci identity derivation pass'i DEĞİL: path yeniden normalize
+    //     edilmez, ID yeniden türetilmez; yalnız doğrulanmış projection'dan companion binding.
+    let identity_ctx = AnalysisIdentityContext::new(scheme, policy);
+    let code_identity_bindings: Vec<CodeIdentityBinding> = candidate_seed
+        .entities()
+        .iter()
+        .map(|candidate| {
+            let identity_key: CodeIdentityKey =
+                to_core_identity_key(candidate.identity(), identity_ctx)?;
+            Ok(CodeIdentityBinding {
+                node_id: candidate.concept_node_id().clone(),
+                identity_key,
+            })
+        })
+        .collect::<Result<Vec<_>, IdentityBridgeError>>()?;
+
     let graph_report = BridgeRunReport {
         identity_scheme: scheme,
         path_case_policy: policy,
         repository_head: Some(analysis.semantic_coverage.repo_head.clone()),
         projected_modules,
         skipped_non_module,
+        projected_identity_bindings: code_identity_bindings.len(),
         classifications_observed,
         roles_observed,
     };
     Ok(CandidateProjectionOutput {
         candidate_seed,
         identity_index,
+        code_identity_bindings,
         graph_report,
     })
 }
@@ -278,6 +310,8 @@ pub(crate) fn project_candidate_nodes(
 /// Bridge run output — tek assembler (pub(crate), tüm parçalar).
 /// N2: --analyze davranış sözleşmesi — InvalidMetric/EvidenceProjection durumunda candidate
 /// seeding dahil tamamen düşer (tutarlılık > kullanılabilirlik).
+///
+/// PR E2: `code_identity_bindings` companion çıktı (candidate + binding co-derived).
 #[derive(Debug, Clone)]
 pub(crate) struct BridgeRunOutput {
     pub(crate) candidate_seed: AnalysisCandidateSeed,
@@ -285,6 +319,8 @@ pub(crate) struct BridgeRunOutput {
     pub(crate) graph_report: BridgeRunReport,
     pub(crate) metric_projection: crate::metric_projection::AnalysisMetricProjection,
     pub(crate) evidence_projection: crate::evidence_projection::EvidenceProjectionOutput,
+    /// PR E2 — candidate başına bir binding (graph init `seed_code_identity_bindings_trusted`'a akar).
+    pub(crate) code_identity_bindings: Vec<CodeIdentityBinding>,
 }
 
 /// Tam analysis bridge — tek assembler (R1 tek türetim + metric projection + evidence projection).
@@ -316,6 +352,7 @@ pub(crate) fn project_analysis(
         graph_report: candidate_proj.graph_report,
         metric_projection,
         evidence_projection,
+        code_identity_bindings: candidate_proj.code_identity_bindings,
     })
 }
 
@@ -328,6 +365,9 @@ pub struct BridgeRunReport {
     pub repository_head: Option<String>,
     pub projected_modules: usize,
     pub skipped_non_module: usize,
+    /// PR E2 (tur 2 P2-B — `bindings_seeded` değil, projection sayısı; başarılı store seeding
+    /// sonrası graph command ayrı stderr basar).
+    pub projected_identity_bindings: usize,
     // Metadata counts — Display'de yazılmaz ama observable (test + future structured output).
     #[allow(dead_code)]
     pub classifications_observed: BTreeMap<String, usize>,
@@ -367,6 +407,9 @@ pub enum BridgeError {
     MetricProjection(#[from] crate::metric_projection::MetricProjectionError),
     #[error("evidence projection error: {0}")]
     EvidenceProjection(#[from] crate::evidence_projection::EvidenceProjectionError),
+    /// PR E2 — identity bridge mapping hatası (core validation reject + canonicalization drift).
+    #[error("identity bridge error: {0}")]
+    IdentityBridge(#[from] IdentityBridgeError),
 }
 
 /// Analysis seed validation hatası (O5).
@@ -670,5 +713,80 @@ mod tests {
             project_analysis(&analysis(), PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         // Node identities bit-equivalent (deterministic sort).
         assert_eq!(bridge_a.candidate_seed, bridge_b.candidate_seed);
+    }
+
+    // ── PR E2: code_identity_bindings companion çıktı ────────────────────────
+
+    #[test]
+    fn pr_e2_one_binding_per_candidate() {
+        // PR E2 — her candidate için bir binding üretilir (1:1 cardinality).
+        let analysis = analysis_result(vec![
+            (1, "src/payment.rs", NodeClassification::Production, NodeRole::Core),
+            (2, "src/user.rs", NodeClassification::Production, NodeRole::Adapter),
+            (3, "src/util.rs", NodeClassification::Production, NodeRole::Utility),
+        ]);
+        let bridge =
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        // 3 candidate → 3 binding.
+        assert_eq!(bridge.candidate_seed.entities().len(), 3);
+        assert_eq!(bridge.code_identity_bindings.len(), 3);
+        // Report projection sayısı tutarlı.
+        assert_eq!(bridge.graph_report.projected_identity_bindings, 3);
+    }
+
+    #[test]
+    fn pr_e2_binding_node_id_matches_candidate_concept_node_id() {
+        // PR E2 — binding'in node_id'si candidate'ın concept_node_id'si (R1 single-derivation).
+        let analysis = analysis_result(vec![
+            (1, "src/auth.rs", NodeClassification::Production, NodeRole::Core),
+        ]);
+        let bridge =
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        assert_eq!(bridge.code_identity_bindings.len(), 1);
+        let candidate = &bridge.candidate_seed.entities()[0];
+        let binding = &bridge.code_identity_bindings[0];
+        assert_eq!(binding.node_id, *candidate.concept_node_id());
+        // Core identity key CLI identity_key ile aynı (CaseSensitive → drift YOK).
+        assert_eq!(
+            binding.identity_key.canonical_key(),
+            candidate.identity().identity_key()
+        );
+    }
+
+    #[test]
+    fn pr_e2_empty_analysis_no_bindings() {
+        // PR E2 — empty analysis → binding YOK (I7 pattern).
+        let analysis = analysis_result(vec![]);
+        let bridge =
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        assert!(bridge.candidate_seed.is_empty());
+        assert!(bridge.code_identity_bindings.is_empty());
+        assert_eq!(bridge.graph_report.projected_identity_bindings, 0);
+    }
+
+    #[test]
+    fn pr_e2_bindings_deterministic_with_candidate_sort() {
+        // PR E2 — binding'ler candidate deterministic sort'uyla uyumlu.
+        let analysis = analysis_result(vec![
+            (1, "src/zebra.rs", NodeClassification::Production, NodeRole::Core),
+            (2, "src/apple.rs", NodeClassification::Production, NodeRole::Adapter),
+        ]);
+        let bridge_a =
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge_b =
+            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        // Binding'ler bit-equivalent (deterministic).
+        assert_eq!(
+            bridge_a.code_identity_bindings.len(),
+            bridge_b.code_identity_bindings.len()
+        );
+        for (a, b) in bridge_a
+            .code_identity_bindings
+            .iter()
+            .zip(bridge_b.code_identity_bindings.iter())
+        {
+            assert_eq!(a.node_id, b.node_id);
+            assert_eq!(a.identity_key, b.identity_key);
+        }
     }
 }

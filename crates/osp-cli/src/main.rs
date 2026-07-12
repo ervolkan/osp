@@ -18,6 +18,7 @@ mod commands;
 mod errors;
 mod evidence_projection;
 mod graph_seed_builder;
+mod identity_bridge;
 mod metric_projection;
 mod mock_llm;
 mod review_session;
@@ -105,6 +106,10 @@ enum ReviewAction {
     Supersede(commands::review::ReviewSupersedeArgs),
     /// Rich supersede preview — read-only lineage DAG + compatibility + eligibility.
     SupersedePreview(commands::review::ReviewSupersedePreviewArgs),
+    /// PR E2 — Accepted CodeEntityCandidate → CodeEntity identity resolution (tek-endpoint).
+    ResolveCodeEntity(commands::review::ReviewResolveCodeEntityArgs),
+    /// PR E2 — minimal canonical resolution preview (target reveal: Create/Reuse).
+    ResolveCodeEntityPreview(commands::review::ReviewResolveCodeEntityPreviewArgs),
     /// Interactive wizard — custom store/operator ile (argümansız `osp review` default kullanır).
     Session(commands::review::ReviewSessionArgs),
 }
@@ -136,6 +141,12 @@ fn main() -> anyhow::Result<()> {
             Some(ReviewAction::Supersede(args)) => commands::review::run_review_supersede(args),
             Some(ReviewAction::SupersedePreview(args)) => {
                 commands::review::run_review_supersede_preview(args)
+            }
+            Some(ReviewAction::ResolveCodeEntity(args)) => {
+                commands::review::run_review_resolve_code_entity(args)
+            }
+            Some(ReviewAction::ResolveCodeEntityPreview(args)) => {
+                commands::review::run_review_resolve_code_entity_preview(args)
             }
             Some(ReviewAction::Session(args)) => commands::review::run_review_session(args),
         },

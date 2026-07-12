@@ -16,7 +16,9 @@ use crate::application::repository::FileReviewStore;
 use crate::application::review::{ReviewMutationCommand, ReviewQuery};
 use crate::application::ReviewApplicationService;
 use crate::commands::OutputFormat;
-use crate::errors::{SupersedeCommand, SupersedeDigests};
+use crate::errors::{
+    ExpectedResolutionTarget, ResolveCodeEntityCommand, SupersedeCommand, SupersedeDigests,
+};
 
 // Interactive session — review_session.rs modülünde (generic R/W). Re-export edilir.
 pub use crate::review_session::{run_review_session, ReviewSessionArgs};
@@ -558,4 +560,216 @@ impl MutationArgs for ReviewRejectArgs {
     fn format(&self) -> &str {
         &self.format
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E2 — Resolution: resolve-code-entity + resolve-code-entity-preview
+//
+// Tur 3 P0: explicit colon-free target flags (NodeId colon içerir → split kırılgan).
+// Tur 2 P0-2: target pinning — confirmation tam target'ı gösterir + expected_target command'e taşınır.
+// Tur 3 P1-4: preview ReviewQuery/ReviewReadOutput tek read motoru (build_resolve_code_entity_preview).
+// Tur 3 P2-4: text output `as_str()` (Debug değil — JSON terminoloji hizalaması).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Tur 3 P0 — colon-free target outcome enum (NodeId `CodeEntity:...` colon içerir → split kırılgan).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ResolutionTargetOutcomeArg {
+    Create,
+    Reuse,
+}
+
+/// `osp review resolve-code-entity <candidate>` — Accepted candidate → CodeEntity resolution.
+///
+/// Tur 3 P0: explicit target flags (`--target-outcome` value_enum + `--target-entity-id`
+/// + `--target-entity-digest`); colon-delimited parse YOK.
+#[derive(Args, Debug)]
+pub struct ReviewResolveCodeEntityArgs {
+    /// Candidate node ID (Accepted olmalı; `CodeEntityCandidate:<path>`).
+    pub candidate: String,
+    #[arg(long, default_value = ".osp/anchor-store.json")]
+    pub store: PathBuf,
+    /// Operator kimliği (zorunlu mutation için). `$OSP_OPERATOR` env fallback.
+    #[arg(long)]
+    pub operator: Option<String>,
+    /// Resolution gerekçesi (boş olamaz; INV-C7 explanation zorunlu).
+    #[arg(long)]
+    pub reason: String,
+    /// Candidate digest (hex; non-TTY/--yes zorunlu).
+    #[arg(long)]
+    pub candidate_digest: Option<String>,
+    /// Tur 3 P0 — target outcome (create/reuse; non-TTY/--yes zorunlu).
+    #[arg(long, value_enum)]
+    pub target_outcome: Option<ResolutionTargetOutcomeArg>,
+    /// Tur 3 P0 — target entity ID (NodeId; create+reuse zorunlu).
+    #[arg(long)]
+    pub target_entity_id: Option<String>,
+    /// Tur 3 P0 — target entity digest (hex; reuse zorunlu, create'de verilmemeli).
+    #[arg(long)]
+    pub target_entity_digest: Option<String>,
+    /// Confirmation'ı atla (non-TTY/CI).
+    #[arg(long)]
+    pub yes: bool,
+    /// Çıktı formatı (text/json) — mutation automation contract.
+    #[arg(long, default_value = "text")]
+    pub format: String,
+}
+
+/// `osp review resolve-code-entity-preview <candidate>` — read-only minimal preview (target reveal).
+#[derive(Args, Debug)]
+pub struct ReviewResolveCodeEntityPreviewArgs {
+    /// Candidate node ID (Accepted olmalı).
+    pub candidate: String,
+    #[arg(long, default_value = ".osp/anchor-store.json")]
+    pub store: PathBuf,
+    /// Çıktı formatı (text/json) — query automation contract.
+    #[arg(long, default_value = "text")]
+    pub format: String,
+}
+
+/// Tur 3 P0 — explicit target flag validation matrisi.
+/// Create → entity_id zorunlu, digest verilmemeli; Reuse → ikisi zorunlu.
+fn parse_expected_target(
+    args: &ReviewResolveCodeEntityArgs,
+) -> anyhow::Result<ExpectedResolutionTarget> {
+    match args.target_outcome {
+        Some(ResolutionTargetOutcomeArg::Create) => {
+            let id = args.target_entity_id.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("--target-entity-id is required when --target-outcome=create")
+            })?;
+            if args.target_entity_digest.is_some() {
+                anyhow::bail!("--target-entity-digest is not valid when --target-outcome=create");
+            }
+            Ok(ExpectedResolutionTarget::Create {
+                proposed_entity_id: ConceptNodeId(id.clone()),
+            })
+        }
+        Some(ResolutionTargetOutcomeArg::Reuse) => {
+            let id = args.target_entity_id.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("--target-entity-id is required when --target-outcome=reuse")
+            })?;
+            let digest = args.target_entity_digest.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("--target-entity-digest is required when --target-outcome=reuse")
+            })?;
+            Ok(ExpectedResolutionTarget::Reuse {
+                entity_id: ConceptNodeId(id.clone()),
+                entity_digest: parse_digest_hex("--target-entity-digest", digest)?,
+            })
+        }
+        None => anyhow::bail!(
+            "--target-outcome, --target-entity-id and the applicable target digest \
+             are required for non-interactive resolution"
+        ),
+    }
+}
+
+/// `osp review resolve-code-entity` handler — tek-endpoint resolution mutation.
+///
+/// Confirmation: TTY'de minimal preview render et (target reveal) + `[y/N]`;
+/// non-TTY/`--yes` → `--candidate-digest` + explicit target flags zorunlu (tur 3 P0).
+pub fn run_review_resolve_code_entity(args: ReviewResolveCodeEntityArgs) -> anyhow::Result<()> {
+    let operator = resolve_operator(args.operator.clone())?;
+    let operator_id = OperatorId::new(operator);
+
+    let is_tty = std::io::stdin().is_terminal();
+    let (candidate_digest, expected_target) = if args.yes || !is_tty {
+        // Non-interactive: --candidate-digest + explicit target flags zorunlu (tur 3 P0).
+        let hex = args.candidate_digest.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "--candidate-digest <hex> required for non-interactive resolve-code-entity \
+                 (run `osp review resolve-code-entity-preview <candidate>` to get it)"
+            )
+        })?;
+        let digest = parse_digest_hex("--candidate-digest", &hex)?;
+        let target = parse_expected_target(&args)?;
+        (digest, target)
+    } else {
+        // TTY: minimal preview + target reveal + [y/N].
+        confirm_with_resolution(&args)?
+    };
+
+    let command = ResolveCodeEntityCommand {
+        candidate: ConceptNodeId(args.candidate.clone()),
+        expected_candidate_digest: candidate_digest,
+        expected_target,
+        reason: args.reason.clone(),
+    };
+
+    let repo = FileReviewStore::new(&args.store);
+    let service = ReviewApplicationService::new(repo);
+    let output = service
+        .execute_resolve_code_entity(command, operator_id)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let format = OutputFormat::from_str(&args.format);
+    if format == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        // Tur 3 P2-4 — as_str() text/JSON terminolojiyi hizalar (Debug değil).
+        println!(
+            "✓ resolved {} → {} ({}, record #{}, revision {})",
+            output.mutation.candidate_node_id,
+            output.mutation.entity_node_id,
+            output.mutation.outcome.as_str(),
+            output.mutation.resolution_sequence,
+            output.revision
+        );
+    }
+    Ok(())
+}
+
+/// `osp review resolve-code-entity-preview <candidate>` handler — read-only minimal preview.
+pub fn run_review_resolve_code_entity_preview(
+    args: ReviewResolveCodeEntityPreviewArgs,
+) -> anyhow::Result<()> {
+    let repo = FileReviewStore::new(&args.store);
+    let service = ReviewApplicationService::new(repo);
+    let preview = service
+        .execute_resolve_code_entity_preview(ConceptNodeId(args.candidate.clone()))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let format = OutputFormat::from_str(&args.format);
+    if format == OutputFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&preview)?);
+    } else {
+        let mut stdout = std::io::stdout();
+        crate::commands::resolve_code_entity_preview_render::render_resolve_code_entity_preview_text(
+            &mut stdout,
+            &preview,
+        )?;
+    }
+    Ok(())
+}
+
+/// Tur 2 P0-2 — minimal canonical preview + target reveal (TTY confirmation).
+///
+/// `Show` DEĞİL; `execute_resolve_code_entity_preview` (compile-based target reveal).
+/// Preview tam target'ı gösterir; `expected_target()` operator'e GÖRDÜĞÜ target'ı taşır.
+fn confirm_with_resolution(
+    args: &ReviewResolveCodeEntityArgs,
+) -> Result<(NodeDigest, ExpectedResolutionTarget), anyhow::Error> {
+    use crate::commands::resolve_code_entity_preview_render::render_resolve_code_entity_preview_text;
+
+    let repo = FileReviewStore::new(&args.store);
+    let service = ReviewApplicationService::new(repo);
+    let preview = service
+        .execute_resolve_code_entity_preview(ConceptNodeId(args.candidate.clone()))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let candidate_digest = preview.candidate_digest();
+    // Tur 3 preview sadeleştirme — infallible expected_target().
+    let expected_target = preview.expected_target();
+
+    let mut stdout = std::io::stdout();
+    render_resolve_code_entity_preview_text(&mut stdout, &preview)?;
+    println!("  Reason: {}", args.reason);
+    print!("  Resolve this exact candidate and target basis? [y/N] ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if input != "y" && input != "yes" {
+        anyhow::bail!("aborted by operator");
+    }
+    Ok((candidate_digest, expected_target))
 }

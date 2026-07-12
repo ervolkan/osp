@@ -401,3 +401,142 @@ fn analyze_idempotent_node_identities() {
     // Gerçek kimlik karşılaştırması — tamamen farklı NodeId'ler üretilse bile yakalanır.
     assert_eq!(tuples1, tuples2, "two analyses must produce identical node identity set");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E2 — code identity binding seeding integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Store JSON'ından code_identity_bindings array'ini çıkar (PR E2 snapshot v2).
+fn extract_bindings(store: &std::path::Path) -> Vec<serde_json::Value> {
+    let content = std::fs::read_to_string(store).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+    v["snapshot"]["code_identity_bindings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// PR E2 — `--analyze` sonrası store'da binding'ler var (1:1 candidate cardinality).
+#[test]
+fn pr_e2_analyze_seeds_code_identity_bindings() {
+    let repo = fixture_repo();
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("store.json");
+
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
+            "--store", store.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(contains("identity bindings seeded: 3"));
+
+    let bindings = extract_bindings(&store);
+    assert_eq!(bindings.len(), 3, "3 candidates → 3 bindings");
+    // Her binding'in node_id + identity_key alanları var.
+    for b in &bindings {
+        assert!(b["node_id"].is_string(), "binding node_id string");
+        assert!(b["identity_key"].is_object(), "binding identity_key object");
+    }
+}
+
+/// PR E2 — binding node_id candidate NodeId ile uyumlu (her candidate için bir binding).
+#[test]
+fn pr_e2_binding_node_id_matches_candidate() {
+    let repo = fixture_repo();
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("store.json");
+
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
+            "--store", store.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // review list → candidate id'leri.
+    let list_out = Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review", "list", "--store", store.to_str().unwrap(), "--format", "json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: serde_json::Value = serde_json::from_slice(&list_out).unwrap();
+    let candidate_ids: std::collections::BTreeSet<String> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_string())
+        .collect();
+
+    // binding node_id'leri candidate id'lerinin subset'i.
+    let bindings = extract_bindings(&store);
+    let binding_node_ids: std::collections::BTreeSet<String> = bindings
+        .iter()
+        .map(|b| b["node_id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        candidate_ids, binding_node_ids,
+        "binding node_ids must match candidate ids (1:1)"
+    );
+}
+
+/// PR E2 — empty analysis → binding YOK (I7 pattern).
+#[test]
+fn pr_e2_empty_analysis_no_bindings() {
+    let repo = empty_fixture_repo();
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("store.json");
+
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
+            "--store", store.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stderr(contains("no projectable Module nodes"))
+        .stderr(contains("projected=0"));
+
+    // "identity bindings seeded" stderr'i ÇIKMAMALI (empty → skip).
+    let bindings = extract_bindings(&store);
+    assert!(bindings.is_empty(), "empty analysis → no bindings");
+}
+
+/// PR E2 — snapshot round-trip INV-C16 validation (binding'lerle).
+/// `osp graph validate` → restore + invariant-validasyon geçer (binding'lerle).
+#[test]
+fn pr_e2_snapshot_round_trip_with_bindings() {
+    let repo = fixture_repo();
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("store.json");
+
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
+            "--store", store.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // `osp graph validate` → INV-C16 validation (binding + ledger + audit_seq density).
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "graph", "validate", "--store", store.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Store valid"))
+        .stdout(contains("All invariants pass"));
+}

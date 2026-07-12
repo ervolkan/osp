@@ -102,6 +102,31 @@ pub enum ReviewError {
         superseded: String,
         successor: String,
     },
+    // ─── Resolution-specific (PR E2 — NotFound reuse; tur 1 review karar #4) ────
+    /// Candidate Accepted değil (tur 3 P1-3 — `NotPromotableFrom(non-Accepted)` map).
+    #[error("candidate is not Accepted: {id} (status: {status})")]
+    CandidateNotAccepted { id: String, status: String },
+    /// Candidate digest değişti (tur 2 P0-1 — candidate TOCTOU).
+    #[error("stale resolution basis: candidate changed after operator reviewed it")]
+    StaleResolutionBasis,
+    /// Candidate zaten resolve edilmiş (R6 — outgoing ResolvesTo mevcut).
+    #[error("candidate already resolved (outgoing ResolvesTo exists): {0}")]
+    AlreadyResolved(String),
+    /// Operator'ın gördüğü target drift etti (tur 2 P0-2 — Create/Reuse outcome changed).
+    #[error("stale resolution target: outcome drifted (re-run resolve-code-entity-preview)")]
+    StaleResolutionTarget,
+    /// Reuse target inactive (Rejected/Deprecated/SupersededAccepted) — Create'e düşmez.
+    #[error("entity not live for resolution: {entity_id} (status: {status})")]
+    EntityNotLiveForResolution { entity_id: String, status: String },
+    /// Hash collision fail-closed (aynı ID + farklı material/key).
+    #[error("entity identity collision: {0} (different material)")]
+    EntityIdentityCollision(String),
+    /// Aynı identity key için >1 live CodeEntity (R7 violation).
+    #[error("duplicate live entity for this identity key (R7 violation)")]
+    DuplicateLiveEntity,
+    /// Candidate için identity binding yok (binding seeding yapılmamış).
+    #[error("missing identity binding for candidate: {0}")]
+    MissingIdentityBinding(String),
 }
 
 /// Supersede endpoint rolü — NotFound vs EndpointNotCurrent ayrımı + endpoint-specific stale (R1#2).
@@ -180,5 +205,71 @@ pub struct ReviewSupersedeMutation {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PersistedSupersedeOutput {
     pub mutation: ReviewSupersedeMutation,
+    pub revision: u64,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E2 — Resolution types (resolve-code-entity; supersede pattern tek-endpoint)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Tur 2 P0-2 — operator-pinned target. Confirmation'da görülen tam target command'e taşınır.
+/// Mutation lock altında re-compile edilen target ↔ expected karşılaştırılır (StaleResolutionTarget).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpectedResolutionTarget {
+    Create {
+        proposed_entity_id: ConceptNodeId,
+    },
+    Reuse {
+        entity_id: ConceptNodeId,
+        entity_digest: NodeDigest,
+    },
+}
+
+/// `osp review resolve-code-entity <candidate>` tek-endpoint mutation command.
+///
+/// Tur 2 P0-2: candidate digest + expected target ikili pinning (core `StaleResolutionTarget`
+/// garantisi operator presentation sınırına taşınır).
+#[derive(Debug, Clone)]
+pub struct ResolveCodeEntityCommand {
+    pub candidate: ConceptNodeId,
+    pub expected_candidate_digest: NodeDigest,
+    /// Tur 2 P0-2 — operator-pinned target (Create proposed_entity_id / Reuse entity_id + digest).
+    pub expected_target: ExpectedResolutionTarget,
+    pub reason: String,
+}
+
+/// Tur 2 P2-A — typed outcome (String değil; anti-corruption CLI projection).
+/// Tur 3 P2-4 — `as_str()` text output ile JSON terminolojiyi hizalar (Debug değil).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionOutcomeView {
+    Created,
+    Reused,
+}
+
+impl ResolutionOutcomeView {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Reused => "reused",
+        }
+    }
+}
+
+/// Resolution mutation sonucu — tek candidate + resolved entity (supersede iki-endpoint'ten farklı).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResolveCodeEntityMutation {
+    pub status: String,
+    pub candidate_node_id: String,
+    pub entity_node_id: String,
+    /// Tur 2 P2-A / tur 3 P2-4 — typed enum (String değil).
+    pub outcome: ResolutionOutcomeView,
+    pub resolution_sequence: u64,
+}
+
+/// Persisted resolution sonucu — named output.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PersistedResolveCodeEntityOutput {
+    pub mutation: ResolveCodeEntityMutation,
     pub revision: u64,
 }

@@ -16,16 +16,20 @@
 
 use osp_core::anchoring::review::{
     node_digest, NodeDigest, OperatorId, OperatorReviewSession, PresentedBasis,
-    PresentedSupersedeBasis, SupersedeError, SupersedeRecord, SupersedeSession,
+    PresentedResolutionBasis, PresentedResolutionTarget, PresentedSupersedeBasis,
+    ResolutionError, ResolutionOutcome, ResolutionRecord, SupersedeError, SupersedeRecord,
+    SupersedeSession, CodeEntityResolutionSession,
 };
 use osp_core::anchoring::store::{InMemoryAnchorStore, StoreError};
 use osp_core::anchoring::types::ConceptNodeId;
-use osp_core::anchoring::NonEmptyExplanation;
+use osp_core::anchoring::{DecisionStatus, NonEmptyExplanation};
 
 use crate::application::repository::ReviewStoreRepository;
 use crate::errors::{
-    format_endpoint_status, PersistedReviewOutput, PersistedSupersedeOutput, ReviewError,
-    ReviewMutation, ReviewSupersedeMutation, SupersedeCommand, SupersedeDigests, SupersedeEndpoint,
+    format_endpoint_status, ExpectedResolutionTarget, PersistedResolveCodeEntityOutput,
+    PersistedReviewOutput, PersistedSupersedeOutput, ResolveCodeEntityCommand,
+    ResolveCodeEntityMutation, ResolutionOutcomeView, ReviewError, ReviewMutation,
+    ReviewSupersedeMutation, SupersedeCommand, SupersedeDigests, SupersedeEndpoint,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -44,6 +48,12 @@ pub enum ReviewQuery {
     SupersedePreview {
         superseded: ConceptNodeId,
         successor: ConceptNodeId,
+    },
+    /// PR E2 (tur 3 P1-4) — minimal canonical resolution preview (target reveal).
+    /// `osp review resolve-code-entity-preview <candidate>` + confirmation aynı query'yi kullanır.
+    /// Tek `read_validated_store()` — candidate digest + identity key + target + revision aynı snapshot.
+    ResolveCodeEntityPreview {
+        candidate: ConceptNodeId,
     },
 }
 
@@ -76,6 +86,8 @@ pub enum ReviewReadOutput {
     },
     /// Rich supersede preview (lineage DAG + compatibility + structural eligibility).
     SupersedePreview(SupersedePreviewOutput),
+    /// PR E2 (tur 3 P1-4) — minimal canonical resolution preview (target reveal).
+    ResolveCodeEntityPreview(ResolutionPreviewOutput),
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -360,6 +372,12 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
                 let preview = build_supersede_preview(&store, &superseded, &successor, revision)?;
                 Ok(ReviewReadOutput::SupersedePreview(preview))
             }
+            ReviewQuery::ResolveCodeEntityPreview { candidate } => {
+                // PR E2 (tur 3 P1-4) — tek read motoru; preview candidate digest + identity key
+                // + target + revision'ı aynı restored snapshot'tan üretir.
+                let preview = build_resolve_code_entity_preview(&store, &candidate, revision)?;
+                Ok(ReviewReadOutput::ResolveCodeEntityPreview(preview))
+            }
         }
     }
 
@@ -374,6 +392,19 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
             successor,
         })? {
             ReviewReadOutput::SupersedePreview(output) => Ok(output),
+            _ => unreachable!("query/output variant mismatch"),
+        }
+    }
+
+    /// PR E2 (tur 3 P1-4) — minimal canonical resolution preview convenience entrypoint.
+    /// `execute_query`'yi sarmalar (tek read motoru — supersede pattern).
+    pub fn execute_resolve_code_entity_preview(
+        &self,
+        candidate: ConceptNodeId,
+    ) -> Result<ResolutionPreviewOutput, ReviewError> {
+        match self
+            .execute_query(ReviewQuery::ResolveCodeEntityPreview { candidate })? {
+            ReviewReadOutput::ResolveCodeEntityPreview(output) => Ok(output),
             _ => unreachable!("query/output variant mismatch"),
         }
     }
@@ -446,6 +477,31 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
                 })
             })
             .map(|(mutation, revision)| PersistedSupersedeOutput { mutation, revision })
+    }
+
+    /// PR E2 — Resolution mutation (ayrı komut/output). `repository.mutate` generic;
+    /// candidate digest + target precondition `apply_resolution` closure içinde (tur 2 P0-2).
+    pub fn execute_resolve_code_entity(
+        &self,
+        command: ResolveCodeEntityCommand,
+        operator: OperatorId,
+    ) -> Result<PersistedResolveCodeEntityOutput, ReviewError> {
+        self.repo
+            .mutate(|store| {
+                let record = apply_resolution(store, &command, operator.clone())?;
+                let outcome = match record.outcome {
+                    ResolutionOutcome::Created { .. } => ResolutionOutcomeView::Created,
+                    ResolutionOutcome::Reused { .. } => ResolutionOutcomeView::Reused,
+                };
+                Ok(ResolveCodeEntityMutation {
+                    status: "resolved".into(),
+                    candidate_node_id: record.candidate_id.0.clone(),
+                    entity_node_id: record.entity_id.0.clone(),
+                    outcome,
+                    resolution_sequence: record.seq,
+                })
+            })
+            .map(|(mutation, revision)| PersistedResolveCodeEntityOutput { mutation, revision })
     }
 }
 
@@ -594,6 +650,171 @@ fn build_supersede_preview(
         structurally_eligible,
         primary_structural_blocker,
         blocking_reasons: blockers,
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E2 — Minimal canonical ResolutionPreview (tur 2 P0-2 + tur 3 P1-1B/P1-4/sadeleştirme)
+//
+// `osp review resolve-code-entity-preview` standalone query + one-shot TTY confirmation +
+// interactive wizard confirmation aynı `ResolutionPreviewOutput` modelini kullanır → divergence sıfır.
+//
+// Tur 3 P1-4: tek `read_validated_store()` — candidate digest + identity key + target + revision
+//   aynı restored snapshot'tan üretilir; ayrı store okumaları YOK.
+// Tur 2 P0-2: target reveal (Create proposed_entity_id / Reuse entity_id + digest) — operator
+//   presentation sınırına target-pinning taşınır.
+// Tur 3 preview sadeleştirme: `expected_target()` infallible (supersede pattern); application read
+//   model anyhow bağımlılığı YOK; anyhow yalnız CLI adapter'da.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Resolution candidate preview — id + digest + status + kind + family.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResolutionCandidatePreview {
+    pub id: String,
+    pub canonical: String,
+    pub kind: String,
+    pub status: String,
+    pub family: String,
+    pub digest_hex: String,
+}
+
+/// Identity key preview — scheme + policy + canonical_key.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IdentityKeyPreview {
+    pub scheme: String,
+    pub case_policy: String,
+    pub canonical_key: String,
+}
+
+/// Tur 3 P1-1B — Serialize derive EKLENDİ (tur 2'de yoktu → derive hatası).
+/// `#[serde(tag = "outcome", rename_all = "snake_case")]` → JSON internal tag.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ResolutionTargetPreview {
+    Create {
+        proposed_entity_id: String,
+    },
+    Reuse {
+        entity_id: String,
+        entity_digest_hex: String,
+        entity_status: String,
+    },
+}
+
+/// Minimal canonical resolution preview output — tek model, üç yüzey render eder.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ResolutionPreviewOutput {
+    pub revision: u64,
+    pub candidate: ResolutionCandidatePreview,
+    pub identity_key: IdentityKeyPreview,
+    pub target: ResolutionTargetPreview,
+}
+
+impl ResolutionPreviewOutput {
+    /// Tur 3 preview sadeleştirme — infallible (supersede preview pattern).
+    ///
+    /// `entity_digest_hex` application'ın kendi `{:016x}` çıktısı → `.expect()` infallible.
+    /// Application read model anyhow bağımlılığı YOK; anyhow yalnız CLI adapter'da.
+    pub fn expected_target(&self) -> ExpectedResolutionTarget {
+        use crate::errors::ExpectedResolutionTarget;
+        match &self.target {
+            ResolutionTargetPreview::Create {
+                proposed_entity_id,
+            } => ExpectedResolutionTarget::Create {
+                proposed_entity_id: ConceptNodeId(proposed_entity_id.clone()),
+            },
+            ResolutionTargetPreview::Reuse {
+                entity_id,
+                entity_digest_hex,
+                ..
+            } => {
+                let raw = u64::from_str_radix(entity_digest_hex, 16)
+                    .expect("preview entity_digest_hex is our own {:016x} output");
+                ExpectedResolutionTarget::Reuse {
+                    entity_id: ConceptNodeId(entity_id.clone()),
+                    entity_digest: NodeDigest::from_raw(raw),
+                }
+            }
+        }
+    }
+
+    /// Candidate digest (confirmation `expected_candidate_digest` için).
+    /// `digest_hex` kendi `{:016x}` çıktımız → infallible parse.
+    pub fn candidate_digest(&self) -> NodeDigest {
+        let raw = u64::from_str_radix(&self.candidate.digest_hex, 16)
+            .expect("preview digest_hex is our own {:016x} output");
+        NodeDigest::from_raw(raw)
+    }
+}
+
+/// Minimal canonical resolution preview üretir (tur 3 P1-4 — tek read motoru).
+///
+/// `PresentedResolutionBasis::compile` üzerinden candidate + identity key + target reveal eder.
+/// Hata (NotFound/not-Accepted/missing-binding) map'lenir; preview operator'e tam target gösterir.
+fn build_resolve_code_entity_preview(
+    store: &InMemoryAnchorStore,
+    candidate: &ConceptNodeId,
+    revision: u64,
+) -> Result<ResolutionPreviewOutput, ReviewError> {
+    // compile — canonical Accepted gate + kind + binding + target (resolution_basis_view).
+    let basis = PresentedResolutionBasis::compile(store, candidate)
+        .map_err(|e| map_resolution_error(candidate, e))?;
+
+    let view_node = basis.candidate_id();
+    let candidate_node = store.graph().node(view_node).ok_or_else(|| {
+        ReviewError::NotFound(view_node.0.clone())
+    })?;
+    let digest = node_digest(candidate_node);
+
+    // Identity key preview — scheme + policy + canonical_key.
+    let identity_key = basis.identity_key();
+    let (scheme_str, case_policy_str) = match identity_key.scheme() {
+        osp_core::anchoring::identity::CodeIdentityScheme::AnalysisPathV1 { case_policy } => (
+            "analysis-path-v1".to_string(),
+            format!("{case_policy:?}"),
+        ),
+    };
+
+    // Target preview — Create proposed_entity_id / Reuse entity_id + digest + status.
+    let target_preview = match basis.target() {
+        PresentedResolutionTarget::Create {
+            proposed_entity_id,
+        } => ResolutionTargetPreview::Create {
+            proposed_entity_id: proposed_entity_id.0.clone(),
+        },
+        PresentedResolutionTarget::Reuse {
+            entity_id,
+            entity_digest,
+        } => {
+            let entity_node = store.graph().node(entity_id).ok_or_else(|| {
+                ReviewError::Store(format!(
+                    "reuse target entity {entity_id} not found in graph (invariant violation)"
+                ))
+            })?;
+            ResolutionTargetPreview::Reuse {
+                entity_id: entity_id.0.clone(),
+                entity_digest_hex: format!("{:016x}", entity_digest.get()),
+                entity_status: format!("{:?}", entity_node.decision_status),
+            }
+        }
+    };
+
+    Ok(ResolutionPreviewOutput {
+        revision,
+        candidate: ResolutionCandidatePreview {
+            id: candidate_node.id.0.clone(),
+            canonical: candidate_node.canonical.clone(),
+            kind: format!("{:?}", candidate_node.node_kind),
+            status: format!("{:?}", candidate_node.decision_status),
+            family: format!("{:?}", candidate_node.position_family),
+            digest_hex: format!("{:016x}", digest.get()),
+        },
+        identity_key: IdentityKeyPreview {
+            scheme: scheme_str,
+            case_policy: case_policy_str,
+            canonical_key: identity_key.canonical_key().to_string(),
+        },
+        target: target_preview,
     })
 }
 
@@ -905,6 +1126,189 @@ fn apply_supersede(
     session
         .supersede(store, &cmd.superseded, &cmd.successor, basis, reason)
         .map_err(map_supersede_error)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PR E2 — Resolution: apply_resolution + target pinning + error mapper
+//
+// Tur 2 P0-1: `candidate_query()` KULLANILMAZ (Accepted candidate candidate_query dışında).
+//   Tek yol `PresentedResolutionBasis::compile` → `resolution_basis_view` Accepted gate canonical.
+// Tur 2 P0-2: operator-pinned target (`ExpectedResolutionTarget`) — candidate digest + target
+//   ikili pinning; core `StaleResolutionTarget` garantisi operator presentation sınırına taşınır.
+// Tur 3 P1-2: `BindingWrongKind` mapper'a DAHİL (resolution_basis_view store.rs:1711 reachable).
+// Tur 3 P1-3: `NotPromotableFrom` status-aware split (Candidate/Rejected/Deprecated →
+//   CandidateNotAccepted; Accepted + wrong structural → NotPromotable; NotPromotableFrom(Accepted)
+//   mümkün — yanlış attribution engeli).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Tur 2 P0-2 — operator-pinned target ↔ current target karşılaştırma.
+/// Create proposed_entity_id eşitliği / Reuse entity_id + digest eşitliği. Mismatch → StaleResolutionTarget.
+fn validate_expected_target(
+    basis: &PresentedResolutionBasis,
+    expected: &ExpectedResolutionTarget,
+) -> Result<(), ReviewError> {
+    match (basis.target(), expected) {
+        (
+            PresentedResolutionTarget::Create {
+                proposed_entity_id: actual,
+            },
+            ExpectedResolutionTarget::Create {
+                proposed_entity_id: expected,
+            },
+        ) if actual == expected => Ok(()),
+        (
+            PresentedResolutionTarget::Reuse {
+                entity_id: actual_id,
+                entity_digest: actual_digest,
+            },
+            ExpectedResolutionTarget::Reuse {
+                entity_id: expected_id,
+                entity_digest: expected_digest,
+            },
+        ) if actual_id == expected_id && actual_digest == expected_digest => Ok(()),
+        _ => Err(ReviewError::StaleResolutionTarget),
+    }
+}
+
+/// PR E2 resolution domain transition (tur 2 P0-1 compile-based + tur 2 P0-2 target pinning).
+///
+/// Akış: `PresentedResolutionBasis::compile` (canonical Accepted gate + kind + binding + target)
+/// → candidate digest TOCTOU → target TOCTOU → reason → `CodeEntityResolutionSession::resolve`.
+///
+/// `candidate_query()` KULLANILMAZ (tur 2 P0-1): Accepted candidate candidate_query dışında.
+fn apply_resolution(
+    store: &mut InMemoryAnchorStore,
+    cmd: &ResolveCodeEntityCommand,
+    operator: OperatorId,
+) -> Result<ResolutionRecord, ReviewError> {
+    // (1) Basis compile — canonical Accepted gate + kind + binding + target (resolution_basis_view).
+    //     candidate_query() KULLANILMAZ (tur 2 P0-1).
+    let basis = PresentedResolutionBasis::compile(store, &cmd.candidate)
+        .map_err(|e| map_resolution_error(&cmd.candidate, e))?;
+
+    // (2) Candidate digest TOCTOU (compile sonrası — compile başarılı → digest comparison).
+    if basis.candidate_digest() != cmd.expected_candidate_digest {
+        return Err(ReviewError::StaleResolutionBasis);
+    }
+
+    // (3) Target TOCTOU (tur 2 P0-2 — operator-pinned target ↔ current target).
+    validate_expected_target(&basis, &cmd.expected_target)?;
+
+    // (4) Reason validation (INV-C7 explanation zorunlu).
+    let reason = NonEmptyExplanation::new(cmd.reason.clone())
+        .map_err(|e| ReviewError::Store(e.to_string()))?;
+
+    // (5) Session + resolve (core INV-C16 atomic 14-step; per-command session — tur 1 karar #3).
+    let mut session = CodeEntityResolutionSession::open_for_operator(operator);
+    session
+        .resolve(store, &cmd.candidate, basis, reason)
+        .map_err(|e| map_resolution_error(&cmd.candidate, e))
+}
+
+/// `ResolutionError → ReviewError` map (tur 2 P1-A context + tur 3 P1-2/P1-3).
+///
+/// Tur 2 P1-A: `candidate_id` context — unit variant'lar (`MissingIdentityBinding`,
+/// `AlreadyResolved`) context'ten ID alır. `CandidateNotFound(id)` tuple pattern.
+fn map_resolution_error(
+    candidate_id: &ConceptNodeId,
+    error: ResolutionError,
+) -> ReviewError {
+    use osp_core::anchoring::review::ResolutionError as RE;
+    match error {
+        RE::CandidateNotFound(id) => ReviewError::NotFound(id.0),
+        RE::WrongCandidateKind => {
+            ReviewError::NotPromotable("candidate kind değil CodeEntityCandidate".into())
+        }
+        RE::WrongFamily => ReviewError::NotPromotable("candidate family değil PhysicalCode".into()),
+        RE::CandidateNotAccepted { current } => ReviewError::CandidateNotAccepted {
+            id: candidate_id.0.clone(),
+            status: format!("{current:?}"),
+        },
+        RE::StaleResolutionBasis => ReviewError::StaleResolutionBasis,
+        // Unit variants — candidate_id context'ten (tur 2 P1-A).
+        RE::MissingIdentityBinding => ReviewError::MissingIdentityBinding(candidate_id.0.clone()),
+        RE::AlreadyResolved => ReviewError::AlreadyResolved(candidate_id.0.clone()),
+        RE::StaleResolutionTarget => ReviewError::StaleResolutionTarget,
+        RE::ReuseTargetIncompatible => ReviewError::NotPromotable("reuse target incompatible".into()),
+        RE::EntityNotLiveForResolution { entity_id, status } => {
+            ReviewError::EntityNotLiveForResolution {
+                entity_id: entity_id.0,
+                status: format!("{status:?}"),
+            }
+        }
+        RE::EntityIdentityCollision { entity_id } => {
+            ReviewError::EntityIdentityCollision(entity_id.0)
+        }
+        RE::DuplicateLiveEntity => ReviewError::DuplicateLiveEntity,
+        RE::BasisMismatch { .. } | RE::AuditSequenceExhausted | RE::SessionCounterExhausted => {
+            ReviewError::Store(error.to_string())
+        }
+        // Tur 3 P1-3: store mapper da candidate_id context alır (NotPromotableFrom status-aware split).
+        RE::Store(source) => map_resolution_store_error(candidate_id, source),
+    }
+}
+
+/// Tur 2 P1-B + tur 3 P1-2/P1-3 — resolution-reachable StoreError set + candidate context.
+///
+/// Tur 3 P1-2: `BindingWrongKind` EKLENDİ (resolution_basis_view store.rs:1711-1715, Accepted gate
+///   sonrası reachable).
+/// Tur 3 P1-3: `NotPromotableFrom` status-aware split — Candidate/Rejected/Deprecated →
+///   `CandidateNotAccepted`; Accepted + wrong structural → `NotPromotable` (`NotPromotableFrom(Accepted)`
+///   mümkün — yanlış attribution engeli).
+/// Tur 2 P1-B: seeding-only varyantlar (`BindingNodeNotFound`, `DuplicateBinding`) YOK —
+///   graph init hata yolunda ele alınır.
+fn map_resolution_store_error(
+    candidate_id: &ConceptNodeId,
+    source: Box<dyn std::error::Error + Send + Sync>,
+) -> ReviewError {
+    let Some(store_err) = source.downcast_ref::<StoreError>() else {
+        return ReviewError::Store(source.to_string());
+    };
+    match store_err {
+        // Tur 3 P1-3 — status-aware split (NotPromotableFrom(Accepted) mümkün, yanlış attribution engeli)
+        StoreError::NotPromotableFrom(status) if *status != DecisionStatus::Accepted => {
+            ReviewError::CandidateNotAccepted {
+                id: candidate_id.0.clone(),
+                status: format!("{status:?}"),
+            }
+        }
+        StoreError::NotPromotableFrom(status) => ReviewError::NotPromotable(format!(
+            "accepted node is not structurally eligible for resolution (status={status:?})"
+        )),
+        StoreError::NodeNotFound(id) => ReviewError::NotFound(id.0.clone()),
+        // Tur 3 P1-2 — BindingWrongKind reachable (resolution_basis_view store.rs:1711-1715)
+        StoreError::BindingWrongKind { kind } => ReviewError::NotPromotable(format!(
+            "candidate kind is {kind:?}; expected CodeEntityCandidate"
+        )),
+        StoreError::BindingWrongFamily { family } => ReviewError::NotPromotable(format!(
+            "candidate family is {family:?}; expected PhysicalCode"
+        )),
+        StoreError::StaleResolutionBasis { .. } => ReviewError::StaleResolutionBasis,
+        StoreError::MissingResolutionIdentityBinding(id) => {
+            ReviewError::MissingIdentityBinding(id.0.clone())
+        }
+        StoreError::AlreadyResolved(id) => ReviewError::AlreadyResolved(id.0.clone()),
+        StoreError::ReuseTargetIncompatible { entity_id } => {
+            ReviewError::NotPromotable(format!("{entity_id}"))
+        }
+        StoreError::EntityNotLiveForResolution { entity_id, status } => {
+            ReviewError::EntityNotLiveForResolution {
+                entity_id: entity_id.0.clone(),
+                status: format!("{status:?}"),
+            }
+        }
+        StoreError::EntityIdentityCollision { entity_id } => {
+            ReviewError::EntityIdentityCollision(entity_id.0.clone())
+        }
+        StoreError::DuplicateLiveCodeEntityIdentity => ReviewError::DuplicateLiveEntity,
+        StoreError::StaleResolutionTarget => ReviewError::StaleResolutionTarget,
+        StoreError::ResolutionBasisCandidateMismatch { .. } | StoreError::AuditSequenceExhausted => {
+            ReviewError::Store(source.to_string())
+        }
+        // NOT mapped (seeding-only — graph init handles): BindingNodeNotFound, DuplicateBinding.
+        // NOT mapped (unreachable from resolution): supersede/decision-specific variants.
+        _ => ReviewError::Store(source.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1384,5 +1788,213 @@ mod tests {
                 e.to
             );
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PR E2 — Resolution mapper + preview unit tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    use osp_core::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme};
+    use osp_core::anchoring::review::ResolutionError;
+    use osp_core::anchoring::store::AnchorStore;
+    use osp_core::anchoring::types::CodeIdentityBinding;
+
+    /// Test yardımcı: Accepted CodeEntityCandidate + identity binding'li store.
+    /// Resolution candidate'leri Accepted olmalı (PR E apply_resolution step 5).
+    fn resolution_store_with_accepted_candidate() -> InMemoryAnchorStore {
+        use osp_core::anchoring::PositionFamily;
+        let candidate = ConceptNode {
+            id: ConceptNodeId("CodeEntityCandidate:src/lib.rs".into()),
+            canonical: "src/lib.rs".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(candidate);
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+        // PR E2 binding seeding (identity key — store-level resolution_basis_view ister).
+        let identity_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: osp_core::anchoring::identity::CodePathCasePolicy::CaseSensitive,
+            },
+            "src/lib.rs",
+        )
+        .unwrap();
+        store
+            .seed_code_identity_bindings_trusted(&[CodeIdentityBinding {
+                node_id: ConceptNodeId("CodeEntityCandidate:src/lib.rs".into()),
+                identity_key,
+            }])
+            .expect("binding seeding");
+        store
+    }
+
+    // ── Tur 2 P1-A + Tur 3 P1-2/P1-3 — map_resolution_error context + BindingWrongKind + split ──
+
+    #[test]
+    fn map_resolution_error_candidate_not_found_tuple() {
+        // CandidateNotFound tuple variant (tur 2 P1-A — derlenmez düzeltme).
+        let id = ConceptNodeId("CodeEntityCandidate:missing".into());
+        let err = map_resolution_error(
+            &id,
+            ResolutionError::CandidateNotFound(ConceptNodeId("CodeEntityCandidate:missing".into())),
+        );
+        assert!(matches!(err, ReviewError::NotFound(ref n) if n == "CodeEntityCandidate:missing"));
+    }
+
+    #[test]
+    fn map_resolution_error_candidate_not_accepted_context_id() {
+        // CandidateNotAccepted { current } — candidate_id context'ten ID (tur 2 P1-A).
+        let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let err = map_resolution_error(
+            &id,
+            ResolutionError::CandidateNotAccepted {
+                current: DecisionStatus::Candidate,
+            },
+        );
+        match err {
+            ReviewError::CandidateNotAccepted { id, status } => {
+                assert_eq!(id, "CodeEntityCandidate:src/lib.rs");
+                assert!(status.contains("Candidate"));
+            }
+            other => panic!("expected CandidateNotAccepted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_resolution_error_missing_identity_binding_context_id() {
+        // MissingIdentityBinding unit — candidate_id context'ten ID (tur 2 P1-A).
+        let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let err = map_resolution_error(&id, ResolutionError::MissingIdentityBinding);
+        assert!(
+            matches!(err, ReviewError::MissingIdentityBinding(ref n) if n == "CodeEntityCandidate:src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn map_resolution_error_already_resolved_context_id() {
+        // AlreadyResolved unit — candidate_id context'ten ID (tur 2 P1-A).
+        let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let err = map_resolution_error(&id, ResolutionError::AlreadyResolved);
+        assert!(
+            matches!(err, ReviewError::AlreadyResolved(ref n) if n == "CodeEntityCandidate:src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn map_resolution_store_error_binding_wrong_kind_maps_not_promotable() {
+        // Tur 3 P1-2 — BindingWrongKind reachable (resolution_basis_view store.rs:1711-1715).
+        let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let source: Box<dyn std::error::Error + Send + Sync> = Box::new(StoreError::BindingWrongKind {
+            kind: ConceptNodeKind::Concept,
+        });
+        let err = map_resolution_store_error(&id, source);
+        match err {
+            ReviewError::NotPromotable(msg) => {
+                assert!(msg.contains("CodeEntityCandidate"), "msg: {msg}");
+            }
+            other => panic!("expected NotPromotable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_resolution_store_error_not_promotable_from_status_split() {
+        // Tur 3 P1-3 — status-aware split.
+        let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        // non-Accepted → CandidateNotAccepted
+        let source: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(StoreError::NotPromotableFrom(DecisionStatus::Candidate));
+        let err = map_resolution_store_error(&id, source);
+        assert!(
+            matches!(err, ReviewError::CandidateNotAccepted { .. }),
+            "non-Accepted → CandidateNotAccepted, got {err:?}"
+        );
+        // Accepted + wrong structural → NotPromotable (NotPromotableFrom(Accepted) mümkün)
+        let id2 = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
+        let source: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(StoreError::NotPromotableFrom(DecisionStatus::Accepted));
+        let err = map_resolution_store_error(&id2, source);
+        match err {
+            ReviewError::NotPromotable(msg) => {
+                assert!(msg.contains("accepted"), "Accepted → NotPromotable, msg: {msg}");
+            }
+            other => panic!("Accepted → NotPromotable, got {other:?}"),
+        }
+    }
+
+    // ── PR E2 preview builder unit tests (tur 3 P1-4 tek read motoru + target reveal) ──
+
+    #[test]
+    fn resolution_preview_create_target_reveals_proposed_entity_id() {
+        // Accepted candidate + binding + 0 entity → Create target (deterministic entity_id).
+        let store = resolution_store_with_accepted_candidate();
+        let preview = build_resolve_code_entity_preview(
+            &store,
+            &ConceptNodeId("CodeEntityCandidate:src/lib.rs".into()),
+            1,
+        )
+        .unwrap();
+        match &preview.target {
+            ResolutionTargetPreview::Create {
+                proposed_entity_id,
+            } => {
+                assert!(
+                    proposed_entity_id.starts_with("CodeEntity:"),
+                    "proposed_entity_id CodeEntity: prefix, got {proposed_entity_id}"
+                );
+            }
+            other => panic!("expected Create target, got {other:?}"),
+        }
+        // expected_target() infallible — Create variant.
+        match preview.expected_target() {
+            ExpectedResolutionTarget::Create {
+                proposed_entity_id,
+            } => {
+                assert!(proposed_entity_id.0.starts_with("CodeEntity:"));
+            }
+            other => panic!("expected Create expected_target, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolution_preview_non_accepted_rejects() {
+        // Candidate (non-Accepted) → compile reject (NotPromotableFrom → CandidateNotAccepted).
+        use osp_core::anchoring::PositionFamily;
+        let candidate = ConceptNode {
+            id: ConceptNodeId("CodeEntityCandidate:src/cand.rs".into()),
+            canonical: "src/cand.rs".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntityCandidate,
+            decision_status: DecisionStatus::Candidate, // non-Accepted
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(candidate);
+        let store = InMemoryAnchorStore::with_seed(seed);
+        let err = build_resolve_code_entity_preview(
+            &store,
+            &ConceptNodeId("CodeEntityCandidate:src/cand.rs".into()),
+            1,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, ReviewError::CandidateNotAccepted { .. }),
+            "non-Accepted → CandidateNotAccepted, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn resolution_preview_missing_candidate_not_found() {
+        // Missing candidate → NotFound.
+        let store = resolution_store_with_accepted_candidate();
+        let err = build_resolve_code_entity_preview(
+            &store,
+            &ConceptNodeId("CodeEntityCandidate:MISSING".into()),
+            1,
+        )
+        .unwrap_err();
+        assert!(matches!(err, ReviewError::NotFound(_)));
     }
 }

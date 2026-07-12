@@ -122,7 +122,7 @@ pub fn run_interactive<R: BufRead, W: Write>(
     .ok();
     writeln!(
         output,
-        "Commands: list, show <id>, accept <id>, reject <id>, supersede <old> <new>, quit"
+        "Commands: list, show <id>, accept <id>, reject <id>, supersede <old> <new>, resolve <candidate>, quit"
     )
     .ok();
     writeln!(output).ok();
@@ -207,10 +207,25 @@ pub fn run_interactive<R: BufRead, W: Write>(
                     writeln!(output, "✗ preview render failed: {e}").ok();
                 }
             }
+            "resolve" | "res" => {
+                // PR E2 (tur 3 P1-5) — resolve <candidate> (reason YOK; preview → confirm → reason).
+                let candidate = match parts.next() {
+                    Some(id) => id.to_string(),
+                    None => {
+                        writeln!(output, "Usage: resolve <candidate>").ok();
+                        continue;
+                    }
+                };
+                if let Err(e) =
+                    run_informed_resolution(&service, input, output, &candidate, &operator)
+                {
+                    writeln!(output, "✗ preview render failed: {e}").ok();
+                }
+            }
             other => {
                 writeln!(
                     output,
-                    "✗ unknown command: {other} (list/show/accept/reject/supersede/quit)"
+                    "✗ unknown command: {other} (list/show/accept/reject/supersede/resolve/quit)"
                 )
                 .ok();
             }
@@ -433,7 +448,104 @@ fn run_informed_supersede<R: BufRead, W: Write>(
     Ok(())
 }
 
-/// Node'un basis'ini göster ve (digest, canonical) döner (Candidate değilse None).
+/// PR E2 (tur 3 P1-5) — Interactive informed-resolution: minimal preview → confirm → reason → mutation.
+///
+/// Wizard informed-review sözleşmesi: operator görmediği basis'e gerekçe yazmasın.
+/// Akış: `resolve <candidate>` → preview (target reveal) → `[y/N]` → reason prompt → mutation
+/// (preview'dan çıkarılan digest + expected_target ile; per-command session — tur 1 karar #3).
+///
+/// Informed I/O zinciri fail-closed: render + confirmation/reason prompt write/flush `?` ile yayılır.
+fn run_informed_resolution<R: BufRead, W: Write>(
+    service: &ReviewApplicationService<FileReviewStore>,
+    input: &mut R,
+    output: &mut W,
+    candidate: &str,
+    operator: &OperatorId,
+) -> std::io::Result<()> {
+    use crate::commands::resolve_code_entity_preview_render::render_resolve_code_entity_preview_text;
+    use crate::errors::{ExpectedResolutionTarget, ResolveCodeEntityCommand};
+
+    // (1) Minimal canonical preview (tek canonical model — standalone query ile aynı).
+    let preview = match service
+        .execute_resolve_code_entity_preview(ConceptNodeId(candidate.into()))
+    {
+        Ok(p) => p,
+        Err(e) => {
+            writeln!(output, "✗ {e}").ok();
+            return Ok(());
+        }
+    };
+
+    // (2) Canonical renderer (body only) — standalone ile aynı çıktı.
+    render_resolve_code_entity_preview_text(output, &preview)?;
+
+    // (3) Confirmation — tam target gösterildi, operator pins.
+    write!(output, "  Resolve this exact candidate and target basis? [y/N] ")?;
+    output.flush()?;
+    let mut confirm = String::new();
+    if input.read_line(&mut confirm).unwrap_or(0) == 0 {
+        return Ok(());
+    }
+    if confirm.trim().to_lowercase() != "y" && confirm.trim().to_lowercase() != "yes" {
+        writeln!(output, "  aborted by operator").ok();
+        return Ok(());
+    }
+
+    // (4) Reason — confirmation SONRASI (operator görmediği basis'e gerekçe yazmasın).
+    write!(output, "  Reason: ")?;
+    output.flush()?;
+    let mut reason = String::new();
+    if input.read_line(&mut reason).unwrap_or(0) == 0 {
+        return Ok(());
+    }
+    let reason = reason.trim().to_string();
+    if reason.is_empty() {
+        writeln!(output, "✗ reason cannot be empty").ok();
+        return Ok(());
+    }
+
+    // (5) Mutation — preview'dan çıkarılan digest + expected_target (lock altında recheck).
+    let candidate_digest = preview.candidate_digest();
+    let expected_target: ExpectedResolutionTarget = preview.expected_target();
+    let command = ResolveCodeEntityCommand {
+        candidate: ConceptNodeId(candidate.into()),
+        expected_candidate_digest: candidate_digest,
+        expected_target,
+        reason,
+    };
+    match service.execute_resolve_code_entity(command, operator.clone()) {
+        Ok(out) => {
+            writeln!(
+                output,
+                "✓ resolved {} → {} ({}, record #{}, revision {})",
+                out.mutation.candidate_node_id,
+                out.mutation.entity_node_id,
+                out.mutation.outcome.as_str(),
+                out.mutation.resolution_sequence,
+                out.revision
+            )
+            .ok();
+        }
+        Err(crate::errors::ReviewError::StaleResolutionBasis) => {
+            writeln!(
+                output,
+                "✗ candidate changed since you viewed it; review it again"
+            )
+            .ok();
+        }
+        Err(crate::errors::ReviewError::StaleResolutionTarget) => {
+            writeln!(
+                output,
+                "✗ resolution target drifted since you viewed it; review it again"
+            )
+            .ok();
+        }
+        Err(e) => {
+            writeln!(output, "✗ {e}").ok();
+        }
+    }
+    Ok(())
+}
 fn get_basis_for(
     service: &ReviewApplicationService<FileReviewStore>,
     id: &str,
