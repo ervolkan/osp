@@ -104,9 +104,15 @@ pub(crate) enum EvidenceProjectionError {
         axis: PhysicalCodeAxis,
         source: ObservedPhysicalMetricError,
     },
-    #[error("{node_id} collection contract mismatch: {source}")]
-    InvalidCollection {
-        node_id: ConceptNodeId,
+    /// PR F review bakım — identity-key aggregation sonrası collection hatası.
+    ///
+    /// Identity aggregation sonrası `ObservedPhysicalMetrics::try_new` hatası için — `identity_key`
+    /// context (R1a bakım: `derive_entity_id()` sentetik entity ID göstermez). Pratikte
+    /// unreachable (aggregation önce axis dedup/conflict yapar) ama future collection invariant'ı
+    /// için dürüst context.
+    #[error("identity {identity_key:?} collection contract mismatch: {source}")]
+    InvalidIdentityCollection {
+        identity_key: osp_core::anchoring::identity::CodeIdentityKey,
         source: ObservedPhysicalMetricsError,
     },
     /// PR F — Duplicate code identity binding for same node (fail-fast; sessiz overwrite YOK).
@@ -316,13 +322,11 @@ pub(crate) fn project_observed_evidence(
         }
 
         // Collection validation (non-empty input yüzeyi garantisidir; DuplicateAxis defensive).
+        // R1a bakım: identity aggregation sonrası collection hatası için identity_key context
+        // (derive_entity_id() sentetik entity ID göstermez — daha dürüst).
         let collection = ObservedPhysicalMetrics::try_new(observations).map_err(|source| {
-            EvidenceProjectionError::InvalidCollection {
-                // identity-key aggregation'da node_id context'i tek node değil; identity key
-                // context olarak carry edilir. ConceptNodeId alanıInvalidCollection için
-                // identity-key'nin derive_entity_id()'sini kullan (lookup için değil, sadece
-                // hata context'i — operator hangi identity'nin patladığını görmeli).
-                node_id: identity_key.derive_entity_id(),
+            EvidenceProjectionError::InvalidIdentityCollection {
+                identity_key: identity_key.clone(),
                 source,
             }
         })?;

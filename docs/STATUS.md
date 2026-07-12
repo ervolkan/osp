@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass + PR C axis-granular evidence + PR D evidence projection tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~1001 workspace test (osp-desktop hariç, CLI: osp-core 552 lib, osp-cli 121 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~1100 workspace test (osp-desktop hariç; osp-core 604 lib, osp-cli 155 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -90,8 +90,8 @@ için draft deposit bekliyor. **~1001 workspace test (osp-desktop hariç, CLI: o
 
 ### Paper 3 kanıtları (Aşama 1 evidence freeze sertleştirildi)
 
-- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 28** (PR E entity resolution trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
-- 587 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
+- **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 30** (PR F evidence identity trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
+- 604 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
 - **E2E binding chain replay** (Adım 1 gerçek pipeline koşusu) — `e2e-binding-chain-replay.json`
 - **E2E rejected paths replay** (4 negatif yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted) — `e2e-rejected-paths-replay.json`
 - **§0 pre-flight canonical + marker tablosu** (6 cümle × 4 sütun, gerçek pipeline koşusu) — `paper3_evidence.rs::preflight`
@@ -179,7 +179,7 @@ cargo test --workspace --exclude osp-desktop
 - osp-core: 587 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 14 PR C axis-granular evidence + 10 PR E identity + 25 PR E resolution + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 617; 28 type-level compile-fail (trybuild)
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 123 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection + 13 evidence_projection + 2 PR E v1→v2 migration) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration
+- osp-cli: 155 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection/evidence-projection + PR E2 resolution + 2 PR E v1→v2 migration) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
 - **Toplam: ~1038 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.

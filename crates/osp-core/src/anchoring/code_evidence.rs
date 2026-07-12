@@ -76,14 +76,14 @@ pub enum CodeIdentityLookupError {
 // ResolvedCodeIdentity — resolved value (EI1-a: exactly one key taşır)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// `ConceptNodeId` ↔ `CodeIdentityKey` resolve edildi — audit pairing record.
+/// `ConceptNodeId` ↔ `CodeIdentityKey` resolve edildi — attested read-model.
 ///
-/// **EI1-a (TYPE):** Private fields + fixed struct shape → resolved value exactly one key taşır.
-/// Struct literal dışarıdan kurulamaz (compile-fail `cF1_resolved_code_identity_literal`).
-///
-/// **Public ctor (tur 2 P1-1):** External backend'ler [`CodeIdentityBindingLookup`] implement
-/// edebilir — authority-bearing application DEĞİL, verified read-model. Private fields struct
-/// literal'i engeller; `pub fn new` ise capability trait extensibility'sini açar.
+/// **EI1-a (TYPE — shape, not provenance):** Private fields + fixed struct shape → resolved value
+/// exactly one key taşır. Struct literal dışarıdan kurulamaz (compile-fail
+/// `cF1_resolved_code_identity_literal`). **Ancak** tip pairing'in gerçekten store'dan resolve
+/// edildiğini garanti ETMEZ — trust, lookup implementation'ına ( [`CodeIdentityBindingLookup`] )
+/// dayanır. Public ctor external backend'lerin trait'i implement edebilmesi için (tur 2 P1-1);
+/// bu bir "verified" değil "attested" read-model'dir.
 ///
 /// **No Deserialize:** PR E `ResolutionApplication` opacity pattern mirror.
 ///
@@ -526,20 +526,19 @@ mod tests {
         assert!(source.load(&key).unwrap().is_none());
     }
 
-    /// Patch 6 (restore — PR F review P2-3): GraphSeed.code_entities varlığı evidence üretmez.
+    /// Empty source — hiç evidence yüklenmediyse load her zaman None.
     ///
-    /// INV-C6 boundary: bir CodeEntity/CodeEntityCandidate node'unun graph'ta seed edilmiş
-    /// olması kanıt sayılmaz. Explicit `ObservedCodeEvidence` seed gerekir. Source'a explicit
-    /// evidence yüklenmedikçe lookup her zaman None döner — graph presence ≠ evidence.
+    /// Bu, INV-C6 Patch 6 boundary'nin source katmanı: explicit `ObservedCodeEvidence` seed
+    /// gerekir. Gerçek graph presence (GraphSeed.code_entities varlığı ≠ evidence) test'i
+    /// `resolution_identity_integration_tests::graphseed_presence_does_not_produce_evidence`
+    /// içinde gerçek `InMemoryAnchorStore` + adapter ile doğrulanır.
     #[test]
-    fn graphseed_code_entities_presence_does_not_produce_evidence() {
-        // Source boş — graph'ta node var ama explicit evidence yok.
+    fn empty_source_does_not_infer_evidence() {
         let source = InMemoryCodeEvidenceSource::empty();
         let key = identity_key("CodeEntity:PaymentModule");
         assert!(
             source.load(&key).unwrap().is_none(),
-            "INV-C6 Patch 6: GraphSeed.code_entities varlığı evidence sayılmaz \
-             (explicit ObservedCodeEvidence seed gerekir)"
+            "empty source → load None (explicit evidence seed gerekir)"
         );
         assert_eq!(source.evidence_count(), 0);
     }
@@ -1164,6 +1163,22 @@ mod resolution_identity_integration_tests {
             binding_restored.identity_key(),
             "EI6: binding identity key restore sonrası aynı"
         );
+
+        // EI6 (review P2-1 Seçenek A): evidence_strength equality — scorer consumer'ın
+        // gördüğü skalar da restore sonrası aynı. find_evidence equality zaten yukarıda
+        // kanıtlandı; strength türetilmiş skalar ama ayrı assertion matrisi dürüstleştirir.
+        let strength_orig_candidate = adapter_orig.evidence_strength(&candidate_id).unwrap();
+        let strength_restored_candidate = adapter_restored.evidence_strength(&candidate_id).unwrap();
+        assert_eq!(
+            strength_orig_candidate, strength_restored_candidate,
+            "EI6: candidate evidence_strength restore sonrası aynı (scorer consumer)"
+        );
+        let strength_orig_entity = adapter_orig.evidence_strength(&entity_id).unwrap();
+        let strength_restored_entity = adapter_restored.evidence_strength(&entity_id).unwrap();
+        assert_eq!(
+            strength_orig_entity, strength_restored_entity,
+            "EI6: entity evidence_strength restore sonrası aynı (scorer consumer)"
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1204,5 +1219,38 @@ mod resolution_identity_integration_tests {
         // Source hâlâ key ile lookup edilebilir.
         let ev = source.load(&key).unwrap();
         assert!(ev.is_some(), "key-owned evidence hâlâ mevcut");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // INV-C6 Patch 6: GraphSeed.code_entities presence ≠ evidence (review P2-3)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn graphseed_presence_does_not_produce_evidence() {
+        // INV-C6 Patch 6 (review P2-3): candidate node + binding gerçekten var olduğu halde
+        // source'a explicit evidence yüklenmediyse adapter None/zero döner. Graph presence
+        // evidence üretmez — explicit ObservedCodeEvidence seed gerekir.
+        let store = store_with_candidate("src/auth.rs", CodePathCasePolicy::CaseSensitive);
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+
+        // Source boş — explicit evidence yok.
+        let source = InMemoryCodeEvidenceSource::empty();
+        let adapter = ResolvedCodeEvidenceProvider::new(&store, &source);
+
+        // Adapter: node + binding var (resolve_code_identity Ok döner) ama source'ta evidence yok.
+        assert_eq!(
+            store.resolve_code_identity(&candidate_id).unwrap().identity_key().canonical_key(),
+            "src/auth.rs",
+            "node + binding mevcut (lookup Ok)"
+        );
+        assert!(
+            adapter.find_evidence(&candidate_id).unwrap().is_none(),
+            "INV-C6 Patch 6: graph presence ≠ evidence; explicit seed gerekir"
+        );
+        assert_eq!(
+            adapter.evidence_strength(&candidate_id).unwrap().get(),
+            0.0,
+            "INV-C6 Patch 6: graph presence → evidence_strength zero"
+        );
     }
 }
