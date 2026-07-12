@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption TAMAM)
 
-> **Tarih:** 2026-07-12 (`feat/entity-resolution-core` dalı — PR E implementasyonu)
-> **Dal:** `feat/entity-resolution-core` (main `6a8a923` üstünde — PR #59 merged; plan tur 3 commit `36d0242`)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** TAMAM. Sekiz yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam) + entity resolution core (CodeIdentityKey + ResolvesTo + CodeEntityResolutionSession + INV-C16 atomic + snapshot v2 migration). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR E2 (CLI scheme adoption — graph init binding otomatik), PR F (evidence identity migration), PR G (lineage-aware effective projection), arXiv v1.4.
+> **Tarih:** 2026-07-12 (`feat/cli-scheme-adoption` dalı — PR E2 implementasyonu)
+> **Dal:** `feat/cli-scheme-adoption` (main `06d3a02` üstünde — PR E merged; plan `05875ff` 3 tur review)
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** + **PR E2 (CLI scheme adoption — graph init binding + resolve-code-entity)** TAMAM. Dokuz yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam) + entity resolution core (CodeIdentityKey + ResolvesTo + CodeEntityResolutionSession + INV-C16 atomic + snapshot v2 migration) + CLI scheme adoption (graph init binding seeding otomatik + `osp review resolve-code-entity` + minimal canonical preview). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR F (evidence identity migration), PR G (lineage-aware effective projection), arXiv v1.4.
 
 ---
 
@@ -14,9 +14,93 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 587 test** (PR E: 552→587 +10 identity + 25 resolution/review tur 4+5); **osp-cli: 123 unit** (PR E: +2 v1→v2 migration);
-**28 compile-fail** (PR E: 26→28 — c16_resolution_application literal + deserialize); **workspace total ~1038** (osp-desktop hariç); **0 regression**.
+**osp-core lib: 588 test** (PR E2 untouched); **osp-cli: 150 unit** (PR E2: 123→150 +27: 8 identity_bridge + 4 analysis_bridge binding + 9 application/review resolution mapper/preview + 6 apply_resolution production target-pinning incl. gerçek TOCTOU state drift + repository-level atomic persistence);
+**28 compile-fail** (PR E2 eklemedi); **workspace total ~1087** (osp-desktop hariç); **0 regression**.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
+
+## PR E2 — CLI scheme adoption (bu oturumda)
+
+### Kod (`crates/osp-cli/src/`)
+- **`identity_bridge.rs`** (yeni) — `AnalysisIdentityContext` (private fields + constructor; scheme +
+  policy tek propagation value) + `IdentityBridgeError` (`CoreValidation` + `CanonicalizationDrift`;
+  Eq derive YOK — core `CodeIdentityKeyError` Eq değil) + `to_core_identity_key` (CLI
+  `CanonicalCodeIdentity` → core `CodeIdentityKey`; drift runtime guard) + `From<PathCasePolicy> for
+  CodePathCasePolicy` (exhaustive enum mapping). 8 unit test.
+- **`analysis_bridge.rs`** — `CandidateProjectionOutput.code_identity_bindings` + `BridgeRunOutput.
+  code_identity_bindings` (candidate başına bir binding; `AnalysisCandidateSeed::try_new` sonrası
+  validated/sorted candidate'lardan co-derived — tur 1 review karar #1). `BridgeRunReport.
+  projected_identity_bindings` (tur 2 P2-B — `bindings_seeded` değil). `BridgeError::IdentityBridge(
+  #[from])`. 4 unit test (pr_e2_*).
+- **`commands/graph.rs`** — `--analyze` branch `seed_code_identity_bindings_trusted` çağırır (node
+  existence sonrası; `AnchorStore` trait import). Başarılı seeding sonrası ayrı stderr
+  `identity bindings seeded: N` (tur 2 P2-B). Legacy `--seed` binding üretmez (PR A semantics preserved).
+- **`errors.rs`** — `ExpectedResolutionTarget` (Create/Reuse; tur 2 P0-2 operator-pinned target) +
+  `ResolveCodeEntityCommand` (candidate digest + expected_target ikili pinning) +
+  `ResolutionOutcomeView` (typed enum + `as_str()`; tur 2 P2-A / tur 3 P2-4) +
+  `ResolveCodeEntityMutation` + `PersistedResolveCodeEntityOutput` + `ReviewError` yeni varyantlar
+  (CandidateNotAccepted, StaleResolutionBasis, AlreadyResolved, StaleResolutionTarget,
+  EntityNotLiveForResolution, EntityIdentityCollision, DuplicateLiveEntity, MissingIdentityBinding).
+- **`application/review.rs`** — `ReviewQuery::ResolveCodeEntityPreview` + `ReviewReadOutput::
+  ResolveCodeEntityPreview` (tur 3 P1-4 tek read motoru). `execute_resolve_code_entity` (mutate
+  envelope) + `execute_resolve_code_entity_preview` (execute_query sarmalar). `apply_resolution`
+  (tur 2 P0-1 compile-based — `candidate_query()` YOK; `PresentedResolutionBasis::compile` canonical
+  Accepted gate) + `validate_expected_target` (tur 2 P0-2 target pinning). `map_resolution_error(
+  candidate_id, error)` (tur 2 P1-A context; `CandidateNotFound(id)` tuple; unit variant'lar
+  context'ten ID) + `map_resolution_store_error(candidate_id, source)` (tur 3 P1-2 `BindingWrongKind`
+  reachable; tur 3 P1-3 `NotPromotableFrom` status-aware split — non-Accepted → CandidateNotAccepted,
+  Accepted+wrong-structural → NotPromotable). `ResolutionPreviewOutput` + `ResolutionTargetPreview`
+  (Serialize; tur 3 P1-1B) + `IdentityKeyPreview` + `ResolutionCandidatePreview` + `build_resolve_
+  code_entity_preview` (tek read; compile-based target reveal). `expected_target()` infallible
+  (tur 3 preview sadeleştirme). 9 unit test (map_resolution_* + resolution_preview_*).
+- **`commands/review.rs`** — `ResolutionTargetOutcomeArg` (value_enum; tur 3 P0 colon-free) +
+  `ReviewResolveCodeEntityArgs` (`--candidate-digest` + `--target-outcome` + `--target-entity-id` +
+  `--target-entity-digest` explicit flags) + `ReviewResolveCodeEntityPreviewArgs` +
+  `parse_expected_target` (validation matrisi: Create→id zorunlu digest YOK; Reuse→ikisi zorunlu) +
+  `run_review_resolve_code_entity` (text output `as_str()`; tur 3 P2-4) + `run_review_resolve_code_
+  entity_preview` + `confirm_with_resolution` (TTY: minimal preview + target reveal + `[y/N]`).
+- **`commands/resolve_code_entity_preview_render.rs`** (yeni) — body-only renderer (üç yüzey tek
+  renderer; supersede_preview_render pattern).
+- **`main.rs`** — `ReviewAction::ResolveCodeEntity` + `ResolveCodeEntityPreview` + dispatch.
+- **`review_session.rs`** — `resolve <candidate>` wizard komutu (tur 3 P1-5 — reason YOK; preview →
+  confirm → reason prompt → mutation; per-command session — tur 1 review karar #3).
+
+### Testler (0 regression; `RUSTFLAGS="-D warnings"` temiz)
+- **osp-cli unit:** 123 → 144 (+21: 8 identity_bridge + 4 analysis_bridge binding + 9 application/
+  review resolution mapper/preview)
+- **osp-cli integration:** review_flow 21 + supersede_flow 20 + preview_flow 12 + analyze_bridge_flow
+  13 (9→13, +4 PR E2 binding seeding) + architecture_guards 2 + **resolution_flow 9 (yeni)**
+- **osp-core lib:** 588 (değişmedi — PR E2 core untouched)
+- **compile-fail:** 28 (değişmedi — PR E2 eklemedi)
+
+### 3 tur plan review'ün metodolojik dersi
+Plan 3 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
+- **Tur 1 (ontolojik):** iki katmanlı kimlik modeli + outcome operator-chosen DEĞİL + binding store-owned.
+- **Tur 2 (2 P0 bloklayıcı):** P0-1 `candidate_query()` Accepted bulamaz (compile-based düzeltme) +
+  P0-2 target pinning operator presentation sınırına taşınmadı (ExpectedResolutionTarget). 4 P1 +
+  2 P2.
+- **Tur 3 (1 P0 + 5 P1 + 4 P2):** P0 non-interactive target CLI colon-free + derleme düzeltmeleri
+  (Eq derive, Serialize, Result açma) + BindingWrongKind reachable + NotPromotableFrom status-aware
+  split (NotPromotableFrom(Accepted) mümkün) + ReviewQuery tek read motoru + wizard reason sırası.
+
+Tüm bulgular core koda karşı doğrulandı (explore agents — `candidate_query` filter, `ResolutionError`
+varyant shape'leri, `apply_resolution` reachable `StoreError` set, `resolution_basis_view` Accepted gate,
+`BindingWrongKind` resolution reachability, `compute_resolution_target` inactive→hard error policy).
+
+### Tur 3 sabitlenen kritik tasarım kararları
+- **`candidate_query()` YOK (tur 2 P0-1):** Accepted candidate candidate_query dışında; tek yol
+  `PresentedResolutionBasis::compile` (`resolution_basis_view` Accepted gate canonical).
+- **Operator-pinned target (tur 2 P0-2):** `ExpectedResolutionTarget` command'e taşınır; mutation
+  lock altında expected↔current karşılaştırma (StaleResolutionTarget).
+- **`NotPromotableFrom(Accepted)` mümkün (tur 3 P1-3):** `apply_resolution` step 3 Accepted candidate +
+  wrong kind → `NotPromotableFrom(Accepted)`; status-aware split yanlış attribution engeller.
+- **`BindingWrongKind` resolution-reachable (tur 3 P1-2):** `resolution_basis_view` Accepted gate
+  sonrası (store.rs:1711); mapper'a dahil.
+- **Minimal canonical preview V1 (tur 2 P0-2 + tur 3 P1-4):** target reveal Create/Reuse + entity
+  id/digest; tek read motoru (ReviewQuery); rich diagnostic future-work.
+- **Explicit colon-free target flags (tur 3 P0):** NodeId `CodeEntity:...` colon içerir → split
+  kırılgan; `--target-outcome` value_enum + `--target-entity-id` + `--target-entity-digest`.
+
+## PR #48 — ne yapıldı (bu oturumda)
 
 ## PR #48 — ne yapıldı (bu oturumda)
 
@@ -328,28 +412,33 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 2. PR D (#59) — evidence projection + in-process wiring proof (`evidence_projection.rs`)
 3. PR E (#60) — entity resolution core + persistence contract (`CodeIdentityKey` + `ResolvesTo` + INV-C16)
 
-### Sıradaki işler (öncelik sıralı)
+### Sıradaki işler (öncelik sıralı — PR E2 tamamlandı)
 
-#### PR E2 — CLI scheme adoption (en doğal devam)
-- `graph init --analyze` node'ları otomatik `CodeIdentityBinding` taşımaz (PR E core canonical
-  identity scheme ekler ama CLI adoption ayrı bridge PR).
-- `CanonicalCodeIdentity` → core `CodeIdentityScheme` mapping + `seed_code_identity_bindings_trusted`
-  graph init çağrısı.
-- `osp review resolve-code-entity <candidate>` CLI command (core transition sabitlendi).
-- **Bağımlılık:** PR E core contract hazır; CLI adoption doğal devam.
-
-#### PR F — Evidence identity migration
+#### PR F — Evidence identity migration (en doğal devam)
 - `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
   `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter.
 - E1-E8 evidence invariantları (evidence exactly one CodeIdentityKey; candidate+entity aynı evidence;
   resolution evidence kopyalamaz; duplicate YOK; resolver failure typed error; deterministic lookup;
   resolution öncesi/sonrası strength değişmez; node silinmesi ownership değiştirmez).
-- **Bağımlılık:** PR E `CodeIdentityKey` hazır; PR F provider migration.
+- **Bağımlılık:** PR E `CodeIdentityKey` hazır + PR E2 binding seeding (evidence resolved entity'ye
+  bağlanır); PR F provider migration.
 
 #### PR G — Lineage-aware effective projection
 - `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
   korunur).
-- **Bağımlılık:** PR E `ResolvesTo` edge + PR F evidence migration.
+- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface (operator-promoted entity'ler)
+  + PR F evidence migration.
+
+#### PR E2 sonrası future-work (HANDOFF bullet'lerinden)
+- **Rich diagnostic resolution preview:** lineage, multi-blocker list, identity collision açıklama
+  grafiği, candidate→entity ilişki geçmişi, batch uygunluk raporu, alternatif target açıklamaları
+  (supersede-preview pattern'inin zengin analogu). V1 minimal canonical preview (target reveal) kapandı.
+- **Batch resolution V2:** `osp review resolve-code-entity --from-analysis` (tüm Accepted candidate'ları
+  tek session'da resolve). Session-spanning lifetime.
+- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` hangi policy ile üretildiğini
+  taşır veya identity + core key tek opaque projection result birlikte üretilir. Runtime drift guard
+  yeterli; gerçek type-level garanti future-work.
+- **Machine-readable CLI error envelope:** `operation` metadata taşıyan JSON envelope.
 
 ### Technical debt (kapsam dışı bırakılan, future cleanup)
 
@@ -415,21 +504,22 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 
 ## Sıradaki işler
 
-### CLI scheme adoption (PR E2 — sonraki milestone)
-- `graph init --analyze` node'ları otomatik `CodeIdentityBinding` taşımaz (PR E core canonical
-  identity scheme ekler ama CLI adoption ayrı bridge PR). PR E2: `CanonicalCodeIdentity` → core
-  `CodeIdentityScheme` mapping + `seed_code_identity_bindings_trusted` graph init çağrısı.
-
-### Evidence identity migration (PR F)
+### Evidence identity migration (PR F — sonraki milestone)
 - `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
   `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter. E1-E8 evidence invariantları.
+- **Bağımlılık:** PR E `CodeIdentityKey` hazır + PR E2 binding seeding; PR F provider migration.
 
 ### Lineage-aware effective projection (PR G)
 - `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
   korunur).
+- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface + PR F evidence migration.
 
-### CLI command (PR E2 sonrası)
-- `osp review resolve-code-entity <candidate>` (core transition sabitlendi; CLI surface ayrı).
+### PR E2 future-work (CLI scheme adoption sonrası)
+- **Rich diagnostic resolution preview:** lineage, multi-blocker, collision graph (supersede-preview
+  analogu). V1 minimal canonical preview kapandı.
+- **Batch resolution V2:** `--from-analysis` (session-spanning).
+- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` policy taşır; runtime drift guard
+  yeterli ama gerçek type-level future-work.
 
 ### Persistence milestone (evidence)
 - `PersistedObservedCodeEvidence` schema version + validated restore + latest/history politikası
@@ -795,9 +885,12 @@ en değerli çıktı bu oldu.
 | `crates/osp-cli/src/store_io.rs` | **`PersistedStore` envelope + `StoreLock` (fs4) + `atomic_replace` (Windows MoveFileEx / POSIX rename) + read/write_persisted_store** |
 | `crates/osp-cli/src/application/` | **`repository.rs` (`ReviewStoreRepository` + `FileReviewStore`, tek persistent transaction) + `review.rs` (`ReviewApplicationService`, query/mutation, expected_basis_digest)** |
 | `crates/osp-cli/src/seed_file.rs` | **`CandidateSeedFile` DTO (nodes-only, deny_unknown_fields, id derive, Candidate hard-code)** |
-| `crates/osp-cli/src/commands/{graph,review}.rs` | **`osp graph init/status/validate` + `osp review list/show/accept/reject/session`** |
-| `crates/osp-cli/src/review_session.rs` | **interactive wizard (generic R/W)** |
+| `crates/osp-cli/src/commands/{graph,review}.rs` | **`osp graph init/status/validate` + `osp review list/show/accept/reject/session`** + **PR E2: `osp review resolve-code-entity` + `resolve-code-entity-preview` (explicit target flags)** |
+| `crates/osp-cli/src/review_session.rs` | **interactive wizard (generic R/W)** + **PR E2: `resolve <candidate>` komutu** |
+| `crates/osp-cli/src/identity_bridge.rs` | **PR E2: `AnalysisIdentityContext` + `to_core_identity_key` + `From<PathCasePolicy>` (CLI ↔ core mapping)** |
+| `crates/osp-cli/src/commands/resolve_code_entity_preview_render.rs` | **PR E2: body-only renderer (üç yüzey tek renderer)** |
 | `crates/osp-cli/tests/review_flow.rs` | **11 integration test (stale basis, restart-safe, operator, corrupt, canonical)** |
+| `crates/osp-cli/tests/resolution_flow.rs` | **PR E2: 9 integration test (Created mutlu yol, stale basis, not accepted, JSON, preview)** |
 | `crates/osp-mcp/tests/inv_c11_agent_surface.rs` | **INV-C11 agent-surface regression (static source scan)** |
 
 ## Kullanıcıya not
@@ -811,11 +904,11 @@ en değerli çıktı bu oldu.
 
 ## Commit durumu
 
-✅ **Faz 8b + CLI `osp review` (accept/reject/supersede) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence + PR D evidence projection TAMAM.**
-- main: `d7f61bc` (PR #58 merged — PR C axis-granular evidence model; 3 review turu).
-- PR D: `feat/evidence-projection-wiring` dalı (main `b5b55f8` üstünde) — evidence projection + in-process wiring proof; 4 tur plan review implementation-ready.
-- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup); PR #53 (CLI accept/reject); PR #54 (CLI supersession); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection); **PR C (axis-granular evidence model)**; **PR D (evidence projection + wiring proof)**.
-- **osp-core 552 lib** + **osp-cli 121 unit** + **26 compile-fail** + **21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards** + **osp-mcp +2 INV-C11** yeşil.
+✅ **Faz 8b + CLI `osp review` (accept/reject/supersede/resolve-code-entity) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption TAMAM.**
+- main: `06d3a02` (PR E merged — entity resolution core + persistence contract).
+- PR E2: `feat/cli-scheme-adoption` dalı (main `06d3a02` üstünde) — CLI scheme adoption (graph init binding seeding + resolve-code-entity surface + minimal canonical preview); 3 tur plan review implementation-ready → implementasyon tamam.
+- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup); PR #53 (CLI accept/reject); PR #54 (CLI supersession); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection); **PR C (axis-granular evidence model)**; **PR D (evidence projection + wiring proof)**; **PR E (entity resolution core)**; **PR E2 (CLI scheme adoption)**.
+- **osp-core 588 lib** + **osp-cli 144 unit** + **28 compile-fail** + **21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards** + **osp-mcp +2 INV-C11** yeşil (`RUSTFLAGS="-D warnings"` temiz).
 
 ## Yayın durumu (v1.3 → v1.4 adayı)
 

@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, ArgGroup};
-use osp_core::anchoring::store::InMemoryAnchorStore;
+use osp_core::anchoring::store::{AnchorStore, InMemoryAnchorStore};
 
 use crate::analysis_bridge::project_analysis;
 use crate::canonical_identity::PathCasePolicy;
@@ -109,11 +109,16 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
         );
     }
 
-    // (3) Source → GraphSeedNodeDraft[] (iki source, ayrı conversion surface — S2).
+    // (3) Source → (GraphSeedNodeDraft[], Option<CodeIdentityBinding[]>) (iki source — S2).
     //     Pre-validation non-destructive: hata burada olursa store'a hiç dokunulmaz.
     //     P2: --path-case yalnız --analyze ile (Clap requires yetersiz — explicit kontrol).
-    let drafts: Vec<GraphSeedNodeDraft> = if let Some(seed_path) = &args.seed {
+    //     PR E2: analyze source binding üretir; seed source (legacy) None (PR A semantics preserved).
+    let (drafts, identity_bindings): (
+        Vec<GraphSeedNodeDraft>,
+        Option<Vec<osp_core::anchoring::types::CodeIdentityBinding>>,
+    ) = if let Some(seed_path) = &args.seed {
         // Legacy JSON source — F1 semantics (ConceptualIntent, Candidate, aliases).
+        // PR E2: legacy source binding üretmez (PR A legacy semantics preserved).
         if args.path_case.is_some() {
             anyhow::bail!("--path-case can only be used with --analyze");
         }
@@ -124,9 +129,10 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("cannot read seed file {}: {e}", seed_path.display()))?;
         let seed_file = CandidateSeedFile::from_json(&seed_json)
             .map_err(|e| anyhow::anyhow!("invalid seed file: {e}"))?;
-        seed_file
+        let drafts = seed_file
             .into_drafts()
-            .map_err(|e| anyhow::anyhow!("seed validation failed: {e}"))?
+            .map_err(|e| anyhow::anyhow!("seed validation failed: {e}"))?;
+        (drafts, None)
     } else if let Some(repo) = &args.analyze {
         // Analysis source — PhysicalCode, identity_key NodeId, INV-C5 Candidate.
         let registry = osp_analyzer::language::AdapterRegistry::default_all();
@@ -172,7 +178,10 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
         eprintln!("Evidence runtime consumer: none in graph init");
         eprintln!("Evidence persistence: disabled");
         eprintln!("{}", bridge_output.graph_report);
-        bridge_output.candidate_seed.into_drafts()
+        // PR E2 — binding'leri sakla (into_drafts consume'dan önce); drafts ile birlikte döndür.
+        let code_identity_bindings = bridge_output.code_identity_bindings.clone();
+        let drafts = bridge_output.candidate_seed.into_drafts();
+        (drafts, Some(code_identity_bindings))
     } else {
         // ArgGroup guaranteed exactly one; unreachable.
         anyhow::bail!("either --seed <json> or --analyze <repo> required");
@@ -183,7 +192,21 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("graph seed construction failed: {e}"))?;
 
     // (5) with_seed → export → restore-validasyon (corrupt seed'i baştan yakala).
-    let store = InMemoryAnchorStore::with_seed(graph_seed);
+    let mut store = InMemoryAnchorStore::with_seed(graph_seed);
+    // PR E2 — identity binding seeding (node existence sonrası; analyze source yalnız).
+    // seed_code_identity_bindings_trusted: node existence + kind + family + duplicate + R7 validation.
+    // Tur 1 review P2-1: başarılı seeding stderr'i durable write SONRASI basılır
+    // (restore validation + serialization/write/fsync/atomic replace fail ederse "seeded" iddia edilemez).
+    let seeded_binding_count = identity_bindings
+        .as_ref()
+        .map_or(0, Vec::len);
+    if let Some(bindings) = &identity_bindings {
+        if !bindings.is_empty() {
+            store
+                .seed_code_identity_bindings_trusted(bindings)
+                .map_err(|e| anyhow::anyhow!("identity binding seeding failed: {e}"))?;
+        }
+    }
     let snapshot = store.export_snapshot();
     InMemoryAnchorStore::restore_snapshot(snapshot.clone())
         .map_err(|e| anyhow::anyhow!("post-init restore validation failed (corrupt seed): {e}"))?;
@@ -194,6 +217,11 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
     let persisted = PersistedStore::from_snapshot(snapshot);
     write_persisted_store(&args.store, &persisted)
         .map_err(|e| anyhow::anyhow!("cannot write store: {e}"))?;
+
+    // PR E2 (tur 1 review P2-1) — durable write sonrası "persisted" mesajı (disk'e yazıldı kesin).
+    if seeded_binding_count > 0 {
+        eprintln!("identity bindings persisted: {seeded_binding_count}");
+    }
 
     // lock drop → release.
     println!(
