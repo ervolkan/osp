@@ -34,19 +34,20 @@
 
 | Parameter | Value |
 |---|---|
-| Current Paper-3-specific invariants | **15** (değişmedi — CLI surface invariant eklemez, INV-C11 classification düzeltildi) |
+| Current Paper-3-specific invariants | **16** (PR E: INV-C16 entity-resolution transition eklendi) |
 | ↳ type-enforced genesis (INV-C1..C8, C12, C13) | 10 |
 | ↳ type-enforced lowering/translation (INV-P1..P3) | 3 |
 | ↳ runtime projection invariant (INV-C14, Faz 8b PR #48) | 1 |
 | ↳ runtime atomic transition invariant (INV-C15, Faz 8b PR #49 atomik + PR #50 production invocation) | 1 |
+| ↳ runtime atomic transition invariant (INV-C16, PR E entity-resolution transition) | 1 |
 | **Toplam type-enforced** (genesis + lowering) | **13** |
-| **Toplam runtime-asserted** | **2** (C14 projection + C15 transition) |
+| **Toplam runtime-asserted** | **3** (C14 projection + C15 supersession transition + C16 entity-resolution transition) |
 | Compile-fail test count | 28 (PR E: c16_resolution_application literal + deserialize eklendi) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |
 | INV-C15 production invocation | `SupersedeSession` (PR #50) — crate-private authority issuer + parametresiz `supersede()` + token içeride mint |
 | **Restore-validated persistence (CLI)** | `AnchorStoreSnapshot::restore_snapshot` — graph schema + node uniqueness + edge endpoints + record→node/status forward integrity + dense audit_seq (union unique + {1..N} + ==N) + INV-C15 üç yönlü triangulation (committed edge ↔ record ↔ status, lane-sensitive, cycle absence). paper3 "known gap" cümlesi evaluated path için kapatıldı. |
 | **INV-C11 surface classification (CLI)** | MCP = agent-facing (review/supersede authority yok, static regression test); `osp review` CLI = operator-facing (session expose eder — INV-T2 attribution, auth deployment boundary). |
-| **Operator review testleri** | osp-core lib 576 (503 + 23 AnchorStoreSnapshot + 14 PR C axis-granular evidence + 10 PR E identity + 14 PR E resolution + 12 supersede-preview predicates); osp-cli 123 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration; osp-mcp +2 INV-C11 |
+| **Operator review testleri** | osp-core lib 587 (503 + 23 AnchorStoreSnapshot + 14 PR C axis-granular evidence + 10 PR E identity + 25 PR E resolution + 12 supersede-preview predicates); osp-cli 123 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 9 analyze_bridge_flow + 2 architecture_guards integration; osp-mcp +2 INV-C11 |
 
 > **Taksonomi notu (Review PR #48/#49):** P1-P3 lowering invariant'ları da type-enforced'dur
 > (trybuild katmanında, strata tablosu (1) ile tutarlı). "13 type-enforced = 10 genesis + 3 lowering";

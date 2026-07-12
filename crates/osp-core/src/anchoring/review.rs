@@ -3438,20 +3438,17 @@ mod tests {
     }
 
     /// P1-2: Batch validation — iki live entity aynı key aynı batch'te.
+    ///
+    /// Canonical-only policy (tur 5 P1-2) altında aynı key → aynı derive_entity_id → aynı node.
+    /// İki ayrı canonical ID'li live entity aynı key'e bindinglenemez (ID collision önce).
+    /// Bu test iki *farklı key* ama aynı canonical ID kullanan entity ile R7'yi test eder:
+    /// entity ID derive zorunlu olduğu için bu senaryo canonical policy'de EntityIdentityCollision verir.
     #[test]
-    fn trusted_binding_batch_rejects_two_live_entities_same_key() {
+    fn trusted_binding_batch_rejects_noncanonical_entity() {
         let mut store = InMemoryAnchorStore::new();
-        // İki Accepted CodeEntity node (farklı ID, aynı identity key).
-        let entity_a = ConceptNode {
-            id: ConceptNodeId("CodeEntity:a".into()),
-            canonical: "src/auth.rs".into(),
-            aliases: vec![],
-            node_kind: ConceptNodeKind::CodeEntity,
-            decision_status: DecisionStatus::Accepted,
-            position_family: PositionFamily::PhysicalCode,
-        };
-        let entity_b = ConceptNode {
-            id: ConceptNodeId("CodeEntity:b".into()),
+        // Non-canonical entity: ID "CodeEntity:LegacyAuth" ama key src/auth.rs → derive farklı.
+        let entity = ConceptNode {
+            id: ConceptNodeId("CodeEntity:LegacyAuth".into()),
             canonical: "src/auth.rs".into(),
             aliases: vec![],
             node_kind: ConceptNodeKind::CodeEntity,
@@ -3459,28 +3456,21 @@ mod tests {
             position_family: PositionFamily::PhysicalCode,
         };
         let mut seed = GraphSeed::default();
-        seed.code_entities.push(entity_a);
-        seed.code_entities.push(entity_b);
+        seed.code_entities.push(entity);
         store.seed_trusted(&seed).unwrap();
-        // Aynı batch'te iki live entity aynı key → R7 violation.
+        // Canonical-only policy: CodeEntity ID != derive_entity_id → reject.
         let err = store
-            .seed_code_identity_bindings_trusted(&[
-                crate::anchoring::types::CodeIdentityBinding {
-                    node_id: ConceptNodeId("CodeEntity:a".into()),
-                    identity_key: insensitive_key("src/auth.rs"),
-                },
-                crate::anchoring::types::CodeIdentityBinding {
-                    node_id: ConceptNodeId("CodeEntity:b".into()),
-                    identity_key: insensitive_key("src/auth.rs"),
-                },
-            ])
+            .seed_code_identity_bindings_trusted(&[crate::anchoring::types::CodeIdentityBinding {
+                node_id: ConceptNodeId("CodeEntity:LegacyAuth".into()),
+                identity_key: insensitive_key("src/auth.rs"),
+            }])
             .unwrap_err();
         assert!(
             matches!(
                 err,
-                crate::anchoring::store::StoreError::DuplicateLiveCodeEntityIdentity
+                crate::anchoring::store::StoreError::EntityIdentityCollision { .. }
             ),
-            "batch duplicate live entity reject — got {err:?}"
+            "non-canonical entity reject (P1-2 tur 5) — got {err:?}"
         );
     }
 
@@ -3585,6 +3575,139 @@ mod tests {
         assert!(
             matches!(err, ResolutionError::Store(_)),
             "inactive entity target reject — got {err:?}"
+        );
+    }
+
+    /// P1-1 (tur 5): Snapshot duplicate binding same key rejected.
+    #[test]
+    fn snapshot_duplicate_binding_same_key_rejected() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .unwrap();
+        // Forge: candidate binding'i bir daha ekle (duplicate same key).
+        let mut snap = store.export_snapshot();
+        snap.code_identity_bindings.push(snap.code_identity_bindings[0].clone());
+        let err = InMemoryAnchorStore::restore_snapshot(snap).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::anchoring::store::SnapshotError::ResolutionDuplicateBinding { .. }
+            ),
+            "duplicate binding same key reject — got {err:?}"
+        );
+    }
+
+    /// P1-1 (tur 5): Snapshot duplicate binding conflicting key rejected.
+    #[test]
+    fn snapshot_duplicate_binding_conflicting_key_rejected() {
+        let store = store_with_resolvable_candidate("src/auth.rs");
+        let mut snap = store.export_snapshot();
+        // Aynı node'a farklı key binding ekle (conflicting).
+        snap.code_identity_bindings
+            .push(crate::anchoring::types::CodeIdentityBinding {
+                node_id: snap.code_identity_bindings[0].node_id.clone(),
+                identity_key: insensitive_key("src/other.rs"),
+            });
+        let err = InMemoryAnchorStore::restore_snapshot(snap).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::anchoring::store::SnapshotError::ResolutionDuplicateBinding { .. }
+            ),
+            "duplicate binding conflicting key reject — got {err:?}"
+        );
+    }
+
+    /// P1-2 (tur 5): Successful resolution must be restorable (export → restore round-trip).
+    #[test]
+    fn successful_resolution_must_be_restorable() {
+        let mut store = store_with_resolvable_candidate("src/auth.rs");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let mut session = CodeEntityResolutionSession::open_for_operator(OperatorId::new("op"));
+        let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
+        session
+            .resolve(
+                &mut store,
+                &candidate_id,
+                basis,
+                NonEmptyExplanation::new("test").unwrap(),
+            )
+            .expect("resolution succeeds");
+        // Production transition kendi snapshot'ını geri yükleyebilmeli.
+        let snapshot = store.export_snapshot();
+        InMemoryAnchorStore::restore_snapshot(snapshot)
+            .expect("successful resolution must be restorable (P1-2 tur 5)");
+    }
+
+    /// P2-2 (tur 5): Non-Accepted ResolvesTo edge rejected.
+    #[test]
+    fn non_accepted_resolves_to_edge_rejected() {
+        let store = store_with_resolvable_candidate("src/auth.rs");
+        let mut snap = store.export_snapshot();
+        // Forge: Candidate-status ResolvesTo edge (non-Accepted).
+        snap.graph.edges.push(crate::anchoring::types::ConceptEdge {
+            from: ConceptNodeId("CodeEntityCandidate:src/auth.rs".into()),
+            to: ConceptNodeId("CodeEntity:fake".into()),
+            kind: crate::anchoring::ConceptEdgeKind::ResolvesTo,
+            decision_status: DecisionStatus::Candidate, // non-Accepted
+            explanation: Some(NonEmptyExplanation::new("forged").unwrap()),
+        });
+        // Entity node ekle (endpoint existence için).
+        snap.graph.nodes.push(ConceptNode {
+            id: ConceptNodeId("CodeEntity:fake".into()),
+            canonical: "fake".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Candidate,
+            position_family: PositionFamily::PhysicalCode,
+        });
+        let err = InMemoryAnchorStore::restore_snapshot(snap).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::anchoring::store::SnapshotError::ResolutionEdgeNotAccepted { .. }
+            ),
+            "non-Accepted ResolvesTo reject — got {err:?}"
+        );
+    }
+
+    /// P2-2 (tur 5): ResolvesTo missing explanation rejected (INV-C7).
+    #[test]
+    fn resolves_to_edge_missing_explanation_rejected() {
+        let store = store_with_resolvable_candidate("src/auth.rs");
+        let mut snap = store.export_snapshot();
+        // Forge: Accepted ResolvesTo ama explanation yok (INV-C7 violation).
+        snap.graph.edges.push(crate::anchoring::types::ConceptEdge {
+            from: ConceptNodeId("CodeEntityCandidate:src/auth.rs".into()),
+            to: ConceptNodeId("CodeEntity:fake2".into()),
+            kind: crate::anchoring::ConceptEdgeKind::ResolvesTo,
+            decision_status: DecisionStatus::Accepted,
+            explanation: None, // INV-C7 violation
+        });
+        snap.graph.nodes.push(ConceptNode {
+            id: ConceptNodeId("CodeEntity:fake2".into()),
+            canonical: "fake2".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Candidate,
+            position_family: PositionFamily::PhysicalCode,
+        });
+        let err = InMemoryAnchorStore::restore_snapshot(snap).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                crate::anchoring::store::SnapshotError::ResolutionEdgeMissingExplanation { .. }
+            ),
+            "ResolvesTo missing explanation reject — got {err:?}"
         );
     }
 }

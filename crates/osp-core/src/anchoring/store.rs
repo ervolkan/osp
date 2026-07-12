@@ -393,6 +393,19 @@ pub enum SnapshotError {
         entity: String,
         count: u32,
     },
+    /// P1-1 (review tur 5): duplicate binding for same node in snapshot.
+    #[error("duplicate identity binding for node: {node_id}")]
+    ResolutionDuplicateBinding { node_id: ConceptNodeId },
+    /// P1-2 (review tur 5): non-canonical entity — ID != derive_entity_id().
+    #[error("non-canonical entity binding: node {node_id} ID != identity_key.derive_entity_id()")]
+    ResolutionNonCanonicalEntityBinding { node_id: ConceptNodeId },
+    /// P2-2 (review tur 5): non-Accepted ResolvesTo edge (V1: committed-only lane).
+    #[error("non-Accepted ResolvesTo edge: {from} -> {to} status={status:?}")]
+    ResolutionEdgeNotAccepted {
+        from: ConceptNodeId,
+        to: ConceptNodeId,
+        status: DecisionStatus,
+    },
 }
 
 /// `PresentedBasis`'in deterministic fingerprint'i → `[u8; 32]`.
@@ -1452,6 +1465,15 @@ impl AnchorStore for InMemoryAnchorStore {
                     family: node.position_family,
                 });
             }
+            // P1-2 (review tur 5): canonical-only entity policy (runtime + restore tutarlı).
+            // CodeEntity binding için node.id == identity_key.derive_entity_id() zorunlu.
+            if node.node_kind == ConceptNodeKind::CodeEntity
+                && node.id != binding.identity_key.derive_entity_id()
+            {
+                return Err(StoreError::EntityIdentityCollision {
+                    entity_id: binding.node_id.clone(),
+                });
+            }
             // (4) duplicate binding for same node (staged — batch içindeki çakışma dahil)
             if staged.contains_key(&binding.node_id) {
                 return Err(StoreError::DuplicateBinding(binding.node_id.clone()));
@@ -2066,12 +2088,57 @@ fn validate_snapshot(snapshot: &AnchorStoreSnapshot) -> Result<(), SnapshotError
     // PR E (INV-C16) — Resolution triangulation + binding validation
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // (8) Binding validation: node existence + kind + family (R2/R3/R4/R5 store-side).
-    let binding_keys: BTreeMap<String, crate::anchoring::identity::CodeIdentityKey> = snapshot
-        .code_identity_bindings
-        .iter()
-        .map(|b| (b.node_id.0.clone(), b.identity_key.clone()))
-        .collect();
+    // (7d) P2-2 (review tur 5): ResolvesTo edge lane validation.
+    // V1: ResolvesTo yalnız committed operator fact (Accepted). Non-Accepted ResolvesTo reject.
+    // R3/R4/R5/INV-C7 tüm ResolvesTo edge'leri için (sadece Accepted lane değil).
+    for e in &snapshot.graph.edges {
+        if e.kind == ConceptEdgeKind::ResolvesTo {
+            // V1 dar politika: tüm ResolvesTo Accepted olmalı.
+            if e.decision_status != DecisionStatus::Accepted {
+                return Err(SnapshotError::ResolutionEdgeNotAccepted {
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                    status: e.decision_status,
+                });
+            }
+            // INV-C7: explanation zorunlu (high-stake).
+            if e.explanation.is_none() {
+                return Err(SnapshotError::ResolutionEdgeMissingExplanation {
+                    from: e.from.clone(),
+                    to: e.to.clone(),
+                });
+            }
+            // R3: source CodeEntityCandidate
+            let source = snapshot.graph.nodes.iter().find(|n| n.id == e.from);
+            if source.map(|n| n.node_kind != ConceptNodeKind::CodeEntityCandidate).unwrap_or(true) {
+                return Err(SnapshotError::ResolutionSourceKindWrong {
+                    node_id: e.from.clone(),
+                });
+            }
+            // R4: target CodeEntity
+            let target = snapshot.graph.nodes.iter().find(|n| n.id == e.to);
+            if target.map(|n| n.node_kind != ConceptNodeKind::CodeEntity).unwrap_or(true) {
+                return Err(SnapshotError::ResolutionTargetKindWrong {
+                    node_id: e.to.clone(),
+                });
+            }
+        }
+    }
+
+    // (8) Binding validation: node existence + kind + family + duplicate node (R2/R3/R4/R5 store-side).
+    // P1-1 (review tur 5): duplicate node binding explicit reject (BTreeMap collect sessiz overwrite YOK).
+    let mut binding_keys: BTreeMap<String, crate::anchoring::identity::CodeIdentityKey> =
+        BTreeMap::new();
+    for binding in &snapshot.code_identity_bindings {
+        if binding_keys
+            .insert(binding.node_id.0.clone(), binding.identity_key.clone())
+            .is_some()
+        {
+            return Err(SnapshotError::ResolutionDuplicateBinding {
+                node_id: binding.node_id.clone(),
+            });
+        }
+    }
     for binding in &snapshot.code_identity_bindings {
         // node existence
         if !snapshot.graph.nodes.iter().any(|n| n.id == binding.node_id) {
@@ -2102,11 +2169,27 @@ fn validate_snapshot(snapshot: &AnchorStoreSnapshot) -> Result<(), SnapshotError
                 family: node.position_family,
             });
         }
+        // P1-2 (review tur 5): canonical-only entity policy.
+        // CodeEntity binding için node.id == identity_key.derive_entity_id() zorunlu.
+        // CodeEntityCandidate için derive kontrolü yapılmaz (candidate ID path-based, farklı scheme).
+        if node.node_kind == ConceptNodeKind::CodeEntity
+            && node.id != binding.identity_key.derive_entity_id()
+        {
+            return Err(SnapshotError::ResolutionNonCanonicalEntityBinding {
+                node_id: binding.node_id.clone(),
+            });
+        }
     }
 
     // (9) Resolution record → node existence + status forward integrity + R2 key equality.
     let _ = &binding_keys;
-    for record in &snapshot.resolution_records {
+    // (9) Resolution record → node existence + status forward integrity + R2 key equality.
+    // P2-1 (review tur 5): Created outcome duplicate reject — aynı entity'ye iki Created olamaz.
+    let mut created_entities: BTreeSet<String> = BTreeSet::new();
+    // Records seq sırasıyla değerlendirilir (sort — export canonical seq sırasında).
+    let mut sorted_records: Vec<_> = snapshot.resolution_records.iter().collect();
+    sorted_records.sort_by_key(|r| r.seq);
+    for record in &sorted_records {
         // candidate existence
         if !snapshot.graph.nodes.iter().any(|n| n.id == record.candidate_id) {
             return Err(SnapshotError::ResolutionRecordNodeMissing {
@@ -2200,6 +2283,29 @@ fn validate_snapshot(snapshot: &AnchorStoreSnapshot) -> Result<(), SnapshotError
             return Err(SnapshotError::ResolutionRecordOutcomeInconsistent {
                 seq: record.seq,
             });
+        }
+        // P2-1 (review tur 5): Created outcome → entity deterministic material doğrulaması.
+        // canonical = key.canonical_key(), aliases = [] (tur 3 P2-C ile tutarlı).
+        if matches!(
+            record.outcome,
+            crate::anchoring::review::ResolutionOutcome::Created { .. }
+        ) {
+            if entity.canonical != record.identity_key.canonical_key() {
+                return Err(SnapshotError::ResolutionRecordOutcomeInconsistent {
+                    seq: record.seq,
+                });
+            }
+            if !entity.aliases.is_empty() {
+                return Err(SnapshotError::ResolutionRecordOutcomeInconsistent {
+                    seq: record.seq,
+                });
+            }
+            // P2-1: duplicate Created reject — aynı entity'ye iki Created olamaz.
+            if !created_entities.insert(record.entity_id.0.clone()) {
+                return Err(SnapshotError::ResolutionRecordOutcomeInconsistent {
+                    seq: record.seq,
+                });
+            }
         }
         // P1-3: record digests == current node digests (freshness at restore time).
         if record.candidate_digest != crate::anchoring::review::node_digest(candidate).get() {
