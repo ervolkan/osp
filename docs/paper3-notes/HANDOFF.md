@@ -14,8 +14,8 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 588 test** (PR E2 untouched); **osp-cli: 150 unit** (PR E2: 123→150 +27: 8 identity_bridge + 4 analysis_bridge binding + 9 application/review resolution mapper/preview + 6 apply_resolution production target-pinning);
-**28 compile-fail** (PR E2 eklemedi); **workspace total ~1086** (osp-desktop hariç); **0 regression**.
+**osp-core lib: 588 test** (PR E2 untouched); **osp-cli: 150 unit** (PR E2: 123→150 +27: 8 identity_bridge + 4 analysis_bridge binding + 9 application/review resolution mapper/preview + 6 apply_resolution production target-pinning incl. gerçek TOCTOU state drift + repository-level atomic persistence);
+**28 compile-fail** (PR E2 eklemedi); **workspace total ~1087** (osp-desktop hariç); **0 regression**.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR E2 — CLI scheme adoption (bu oturumda)

@@ -323,3 +323,101 @@ fn resolve_code_entity_created_json_output() {
     assert!(v["mutation"]["resolution_sequence"].is_number());
     assert!(v["revision"].is_number());
 }
+
+/// Store JSON'ından persisted revision + snapshot graph alanlarını çıkar.
+fn read_persisted(store: &std::path::Path) -> serde_json::Value {
+    let content = std::fs::read_to_string(store).unwrap();
+    serde_json::from_str(&content).unwrap()
+}
+
+/// PR E2 tur 2 review P1 — repository-level atomic persistence.
+///
+/// target drift → application Err → repository revision increment ETMEZ → mutated snapshot YAZMAZ.
+/// `FileReviewStore::mutate()` envelope'ının error durumunda disk'i değiştirmediğini kanıtlar.
+/// (in-memory store test değil, gerçek file-based repository üzerinden.)
+#[test]
+fn target_drift_repository_revision_snapshot_unchanged() {
+    let repo = fixture_repo();
+    let dir = tempdir().unwrap();
+    let store = init_analyze_store(dir.path(), repo.path());
+    let candidate = "CodeEntityCandidate:auth.py";
+    accept_candidate(&store, candidate);
+
+    let preview = preview_json(&store, candidate);
+    let candidate_digest = preview["candidate"]["digest_hex"].as_str().unwrap();
+
+    // Persisted envelope BEFORE (accept sonrası revision).
+    let before = read_persisted(&store);
+    let before_revision = before["revision"].as_u64().unwrap();
+    let before_snapshot = before["snapshot"].clone();
+    let before_resolution_records =
+        before["snapshot"]["resolution_records"].as_array().unwrap().len();
+    let before_bindings = before["snapshot"]["code_identity_bindings"]
+        .as_array()
+        .unwrap()
+        .len();
+    let before_nodes = before["snapshot"]["graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .len();
+    let before_audit = before["snapshot"]["audit_sequence"].as_u64().unwrap();
+
+    // Wrong target (Create basis ↔ Reuse expected → StaleResolutionTarget).
+    Command::cargo_bin("osp")
+        .unwrap()
+        .args([
+            "review", "resolve-code-entity", candidate,
+            "--store", store.to_str().unwrap(),
+            "--operator", "t", "--reason", "x",
+            "--yes",
+            "--candidate-digest", candidate_digest,
+            "--target-outcome", "reuse",  // Create basis ↔ Reuse expected → drift
+            "--target-entity-id", "CodeEntity:deadbeefdeadbeef",
+            "--target-entity-digest", "0000000000000001",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("stale resolution target"));
+
+    // Persisted envelope AFTER — revision/snapshot unchanged (atomic persistence).
+    let after = read_persisted(&store);
+    assert_eq!(
+        after["revision"].as_u64().unwrap(),
+        before_revision,
+        "target drift must not increment revision"
+    );
+    assert_eq!(
+        after["snapshot"]["resolution_records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        before_resolution_records,
+        "target drift must not append resolution_records"
+    );
+    assert_eq!(
+        after["snapshot"]["code_identity_bindings"]
+            .as_array()
+            .unwrap()
+            .len(),
+        before_bindings,
+        "target drift must not change bindings"
+    );
+    assert_eq!(
+        after["snapshot"]["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        before_nodes,
+        "target drift must not add nodes"
+    );
+    assert_eq!(
+        after["snapshot"]["audit_sequence"].as_u64().unwrap(),
+        before_audit,
+        "target drift must not bump audit_sequence"
+    );
+    // Tam snapshot JSON eşitliği (PartialEq'nin JSON karşılığı — alan-bazlı karşılaştırma).
+    assert_eq!(
+        after["snapshot"], before_snapshot,
+        "target drift must leave persisted snapshot byte-identical"
+    );
+}
