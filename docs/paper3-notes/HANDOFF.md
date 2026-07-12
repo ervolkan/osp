@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration TAMAM)
 
-> **Tarih:** 2026-07-12 (`feat/cli-scheme-adoption` dalı — PR E2 implementasyonu)
-> **Dal:** `feat/cli-scheme-adoption` (main `06d3a02` üstünde — PR E merged; plan `05875ff` 3 tur review)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** + **PR E2 (CLI scheme adoption — graph init binding + resolve-code-entity)** TAMAM. Dokuz yüzey kapandı: `OperatorReviewSession` + `SupersedeSession` + `supersede-preview` + `graph init --analyze` (Module identity projection) + metric projection (axis-granular draft, NOT core evidence) + core axis-granular evidence model (per-axis provenance/strength/coverage) + CLI→core evidence projection (draft→evidence conversion + ExpectedImplementation scorer seam) + entity resolution core (CodeIdentityKey + ResolvesTo + CodeEntityResolutionSession + INV-C16 atomic + snapshot v2 migration) + CLI scheme adoption (graph init binding seeding otomatik + `osp review resolve-code-entity` + minimal canonical preview). Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR F (evidence identity migration), PR G (lineage-aware effective projection), arXiv v1.4.
+> **Tarih:** 2026-07-12 (`feat/evidence-identity-migration` dalı — PR F implementasyonu)
+> **Dal:** `feat/evidence-identity-migration` (main `09cc82b` üstünde — PR E2 merged; plan 3 tur review)
+> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** + **PR E2 (CLI scheme adoption — graph init binding + resolve-code-entity)** + **PR F (evidence identity migration — anti-corruption boundary)** TAMAM. On yüzey kapandı. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR G (lineage-aware effective projection), arXiv v1.4.
 
 ---
 
@@ -14,8 +14,10 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 588 test** (PR E2 untouched); **osp-cli: 150 unit** (PR E2: 123→150 +27: 8 identity_bridge + 4 analysis_bridge binding + 9 application/review resolution mapper/preview + 6 apply_resolution production target-pinning incl. gerçek TOCTOU state drift + repository-level atomic persistence);
-**28 compile-fail** (PR E2 eklemedi); **workspace total ~1087** (osp-desktop hariç); **0 regression**.
+**osp-core lib: 603 test** (PR F: 588→603 +15: ResolvedCodeIdentity + source builders + adapter + EI5-b footgun guard + N:1 resolution/evidence identity integration tests EI1-b/EI2/EI3-b/EI4-c/EI6/EI7/EI8-V1 + Patch 6 restore);
+**osp-cli: 155 unit** (PR F: 150→155 +5: identity-key aggregation + N:1 emit + conflicting reject + DuplicateBindingNode/UnboundNode reject);
+**30 compile-fail** (PR F: 28→30 +2: cF1_resolved_code_identity_literal + cF1_code_identity_key_literal);
+**workspace total 1100** (osp-desktop hariç); **0 regression**; `RUSTFLAGS="-D warnings"` temiz.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR E2 — CLI scheme adoption (bu oturumda)
@@ -99,6 +101,92 @@ varyant shape'leri, `apply_resolution` reachable `StoreError` set, `resolution_b
   id/digest; tek read motoru (ReviewQuery); rich diagnostic future-work.
 - **Explicit colon-free target flags (tur 3 P0):** NodeId `CodeEntity:...` colon içerir → split
   kırılgan; `--target-outcome` value_enum + `--target-entity-id` + `--target-entity-digest`.
+
+## PR F — Evidence identity migration (bu oturumda)
+
+PR F — `ObservedCodeEvidence` artık `CodeIdentityKey` taşır (`ConceptNodeId` değil). Anti-corruption
+boundary: graph dünyası (`ConceptNodeId`) ↔ identity/evidence dünyası (`CodeIdentityKey`) ayrı.
+Üç tur plan review (implementation-ready onayı: "Mimari onay: Evet. Implementation-ready: Evet.").
+
+### Mimari merkez (anti-corruption boundary — 3 tur review sonucu, sabit)
+```
+Graph dünyası                Identity/evidence dünyası
+ConceptNodeId                CodeIdentityKey
+       │                             │
+       └── CodeIdentityBindingLookup ┘  (dar public read-only capability)
+                    │
+                    ▼
+           ResolvedCodeIdentity (pub ctor)
+                    │
+                    ▼
+           CodeEvidenceSource (key-facing)
+                    │
+                    ▼
+           ObservedCodeEvidence
+```
+Tek truth source: `HashMap<CodeIdentityKey, ObservedCodeEvidence>`. `ConceptNodeId`-keyed evidence
+storage **oluşturulmaz** (EI1 mimari garanti).
+
+### Kod (`crates/osp-core/src/anchoring/`)
+- **`code_evidence.rs`** (rewrite) — 6 yeni tip/trait:
+  - `ResolvedCodeIdentity` (pub ctor, private fields; EI1-a TYPE) — node_id + identity_key audit pairing record.
+  - `CodeIdentityBindingLookup` trait (public dar capability) — `ConceptNodeId → ResolvedCodeIdentity`.
+  - `CodeIdentityLookupError` (`NodeNotFound` structural inconsistency + `Unbound` normal absence; Eq YOK).
+  - `CodeEvidenceError::IdentityLookup(#[from])` — typed propagation; EI5-b explicit semantic mapping.
+  - `CodeEvidenceSource` trait (key-facing; `load(&CodeIdentityKey)`).
+  - `InMemoryCodeEvidenceSource` (`try_from_evidence`/`try_with_evidence` fail-closed; R1a P1-2 explicit loop, `collect()` sessiz overwrite YOK) + `CodeEvidenceSourceBuildError::DuplicateIdentity`.
+  - `ResolvedCodeEvidenceProvider<'a, L, S>` adapter (pub ctor; compose lookup+source; `Unbound→Ok(None)`, `NodeNotFound→IdentityLookup`).
+  - **Mevcut `CodeEvidenceProvider` trait AYNEN KORUNUR** — gate.rs:377 + scorer.rs:186 dokunulmadı.
+  - **Mevcut `InMemoryCodeEvidenceProvider` kaldırıldı** — yerine key-faced source + adapter.
+- **`types.rs:751-791`** — `ObservedCodeEvidence.code_entity_id: ConceptNodeId` → `code_identity_key: CodeIdentityKey` (field + accessor rename; Serialize-only preserved).
+- **`store.rs`** — `impl CodeIdentityBindingLookup for InMemoryAnchorStore` (`self.graph.node()` API; tur 3 kesinleşme: store.rs'te, sibling modül erişemez; yeni accessor AÇILMAZ).
+- **`gate.rs` + `scorer.rs`** — 3+2 evidence test fixture adapter pattern migration (SingleBindingLookup stub + source + adapter → `&dyn CodeEvidenceProvider`).
+- **`mod.rs`** — re-export'lar: `CodeEvidenceSource, CodeEvidenceSourceBuildError, CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource, ResolvedCodeEvidenceProvider, ResolvedCodeIdentity`.
+
+### Kod (`crates/osp-cli/src/`)
+- **`evidence_projection.rs`** — `project_observed_evidence` signature'a `bindings: &[CodeIdentityBinding]` eklendi (R1a P0-2: `EvidenceProjectionContext`'e KOYULMAZ, cycle). `BTreeMap` index-building O(log n) lookup; `DuplicateBindingNode` + `UnboundNode` fail-fast reject. Production call site identity key ile construct.
+- **`analysis_bridge.rs`** — `project_analysis` `&candidate_proj.code_identity_bindings` argüman geçer (co-derived; R1 single-derivation preserved).
+- **`tests/architecture_guards.rs`** — ownership guard genişledi: `InMemoryCodeEvidenceSource::{try_from_evidence, try_with_evidence, empty}` token'ları da sadece `evidence_projection.rs`'de.
+
+### EI1-EI8 invariant matrisi (clause-bazlı enforcement)
+| Inv | Clause | Enforcement |
+|---|---|---|
+| EI1-a | resolved value exactly one key taşır | TYPE (private fields + fixed struct shape) |
+| EI1-b | bound node store'da tek binding'e resolve | RUNTIME |
+| EI2 | candidate+entity aynı evidence | RUNTIME triangulation |
+| EI3-a | Resolution API evidence-source/mutator capability taşımaz | TYPE/API (capability absence; INV-C1 kategorisi — dedicated fixture YOK) |
+| EI3-b | resolution source cardinality değiştirmez | RUNTIME (regression witness) |
+| EI4-a | one node → conflicting keys reject | RUNTIME (constructor/store boundary) |
+| EI4-b | materialization-zamanı: one key → multiple live CodeEntity reject | RUNTIME (R7 `DuplicateLiveCodeEntityIdentity` — **PR E'den**) |
+| EI4-c | resolution-zamanı: multiple candidates same key → converge | RUNTIME (N:1 reuse pozitif) |
+| EI5-a | resolver NodeNotFound/Unbound typed ayırır | TYPE (`CodeIdentityLookupError`) |
+| EI5-b | adapter explicit semantic mapping (Unbound→Ok(None), NodeNotFound→IdentityLookup) | TYPE (exhaustive match) + `unbound_maps_to_none` pin test (R2 P2-A footgun guard) |
+| EI6 | same snapshot → consumer-bazlı eşitlikler | RUNTIME |
+| EI7 | candidate/entity strength equality | RUNTIME |
+| EI8-V1 | graph absence/unbound → key-owned evidence mutasyonu YOK | RUNTIME |
+
+**EI4 lifecycle-stage (tur 2 P2-B):** EI4-b materialization-zamanı (R7), EI4-c resolution-zamanı (N:1 convergence).
+**NodeNotFound backward-compat (tur 3 daraltma):** gate/scorer production path compatibility korunur (candidate target ID'leri graph-backed); public provider arbitrary-ID davranışı bilinçci sertleşir (`Ok(None)` → typed structural error).
+
+### Compile-fail (28 → 30, +2)
+- `cF1_resolved_code_identity_literal.rs` (yeni) — struct literal reject (EI1-a opacity).
+- `cF1_code_identity_key_literal.rs` (yeni) — `CodeIdentityKey { ... }` literal reject (PR C `ObservedPhysicalMetrics` pattern mirror).
+- `c6_observed_evidence_literal.rs` + `.stderr` (güncellendi) — field rename `code_entity_id` → `code_identity_key`.
+- `c6_intent_cannot_form_observed_code_evidence.rs` + `.stderr` (güncellendi) — param tipi `ConceptNodeId` → `CodeIdentityKey`.
+- **Eklenmedi:** `code_identity_key_deserialize` — custom Deserialize zaten var (identity.rs:155-165).
+- `anchoring_typelevel.rs` orchestration +2 fixture.
+
+### Testler (0 regression; `RUSTFLAGS="-D warnings"` temiz)
+- **osp-core lib:** 588 → 603 (+15: ResolvedCodeIdentity ×2, source builders ×5, adapter delegation ×4, error propagation ×1, footgun guard ×1, N:1 resolution/evidence identity integration tests ×7 [EI1-b/EI2/EI3-b/EI4-c/EI6/EI7/EI8-V1], Patch 6 restore ×1 — review P1-2 runtime invariant coverage)
+- **osp-cli unit:** 150 → 155 (+5: identity-key aggregation emit + conflict reject + dedup + DuplicateBindingNode/UnboundNode reject — review P1-1)
+- **compile-fail:** 28 → 30 (+2)
+- **workspace total:** 1100 (osp-desktop hariç); 0 regression.
+
+### 3 tur plan review'ün metodolojik dersi
+Plan 3 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
+- **Tur 1 (R1a + R2):** EI4 cardinality (N:1 convergence ile "duplicate reject" çelişkisi), binding cycle (`EvidenceProjectionContext`'e bindings cycle yaratır), typed error (`Unbound→Internal` fail-closed niyetini ters çevirir), E8 deletion (store API yok), object-safety, frozen Serialize (grep kanıt: 6 JSON 0 match), naming collision (E1-E8 → EI1-EI8), test target propagation.
+- **Tur 2 (R1a + R2):** pub ctor (`ResolvedCodeIdentity` sealed trait olmasın), error derlenebilirliği (`#[error]` + `{0:?}`), EI5 iki clause (resolver typed + adapter mapping), projection duplicate binding, BTreeMap O(log n), EI3 capability absence, EI6 consumer-bazlı, `#[from]` footgun guard, EI4 lifecycle, NodeNotFound backward-compat.
+- **Tur 3 (onay):** "Mimari onay: Evet. Implementation-ready: Evet. Yeni review turu gerektiren plan sorunu: Hayır." Dört metinsel sabitleme: `#[from]` annotation örneğe geri, EI3-a "compile proof (adapter shared borrow)" kaldırıldı, `InMemoryAnchorStore` impl yeri `store.rs` + `self.graph.node()`, NodeNotFound backward-compat daraltma.
 
 ## PR #48 — ne yapıldı (bu oturumda)
 
@@ -411,23 +499,38 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 1. PR C (#58) — core axis-granular evidence model (`ObservedPhysicalMetrics`)
 2. PR D (#59) — evidence projection + in-process wiring proof (`evidence_projection.rs`)
 3. PR E (#60) — entity resolution core + persistence contract (`CodeIdentityKey` + `ResolvesTo` + INV-C16)
+4. PR E2 (#61) — CLI scheme adoption (graph init binding seeding + `resolve-code-entity`)
+5. PR F — evidence identity migration (anti-corruption boundary: `CodeIdentityBindingLookup` + `CodeEvidenceSource` + `ResolvedCodeEvidenceProvider` adapter + EI1-EI8 invariants)
 
-### Sıradaki işler (öncelik sıralı — PR E2 tamamlandı)
+### Sıradaki işler (öncelik sıralı — PR F tamamlandı)
 
-#### PR F — Evidence identity migration (en doğal devam)
-- `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
-  `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter.
-- E1-E8 evidence invariantları (evidence exactly one CodeIdentityKey; candidate+entity aynı evidence;
-  resolution evidence kopyalamaz; duplicate YOK; resolver failure typed error; deterministic lookup;
-  resolution öncesi/sonrası strength değişmez; node silinmesi ownership değiştirmez).
-- **Bağımlılık:** PR E `CodeIdentityKey` hazır + PR E2 binding seeding (evidence resolved entity'ye
-  bağlanır); PR F provider migration.
-
-#### PR G — Lineage-aware effective projection
+#### PR G — Lineage-aware effective projection (en doğal devam)
 - `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
   korunur).
 - **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface (operator-promoted entity'ler)
-  + PR F evidence migration.
+  + **PR F evidence migration (TAMAM)**.
+
+#### PR F sonrası future-work (kapsam dışı bırakılan)
+- **Frozen `CodeEvidenceBasis`:** review/execution için compile-once basis (canlı lookup vs frozen-basis
+  ayrımı — PR F canlı lookup kurdu, frozen future milestone).
+- **Plan scope resolution (`ResolvedPlanScope`):** Plan-Bound Execution modelinin kimlik omurgası PR F ile
+  kuruldu; plan tipleri future.
+- **`CodeIdentityLookupError` geniş varyantları:** `Ambiguous`/`SupersededBinding`/`SchemeMismatch` future
+  (V1 sadece NodeNotFound/Unbound).
+- **`ResolvedCodeIdentity` provenance genişlemesi:** `binding_digest`/`scheme_version`/`path_case_policy`
+  future (V1 iki alan — kullanıcı: "sahte alan ekleme").
+- **Gerçek node deletion transition:** EI8-V1 graph absence ile karşılandı; deletion API gelince ayrı test.
+
+#### PR E2 sonrası future-work (HANDOFF bullet'lerinden — hâlâ geçerli)
+- **Rich diagnostic resolution preview:** lineage, multi-blocker list, identity collision açıklama
+  grafiği, candidate→entity ilişki geçmişi, batch uygunluk raporu, alternatif target açıklamaları
+  (supersede-preview pattern'inin zengin analogu). V1 minimal canonical preview (target reveal) kapandı.
+- **Batch resolution V2:** `osp review resolve-code-entity --from-analysis` (tüm Accepted candidate'ları
+  tek session'da resolve). Session-spanning lifetime.
+- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` hangi policy ile üretildiğini
+  taşır veya identity + core key tek opaque projection result birlikte üretilir. Runtime drift guard
+  yeterli; gerçek type-level garanti future-work.
+- **Machine-readable CLI error envelope:** `operation` metadata taşıyan JSON envelope.
 
 #### PR E2 sonrası future-work (HANDOFF bullet'lerinden)
 - **Rich diagnostic resolution preview:** lineage, multi-blocker list, identity collision açıklama
@@ -493,28 +596,30 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 #### Structural relation projection (eski PR E — şimdi future)
 - `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik sözleşme tasarımı.
 
-### Test envanteri (current protocol)
-- osp-core lib: 588 test
-- osp-cli unit: 123 test
-- compile-fail (trybuild): 28 (osp-core)
-- workspace total: ~1039 (osp-desktop hariç)
+### Test envanteri (current protocol — PR F sonrası)
+- osp-core lib: 603 test
+- osp-cli unit: 155 test
+- compile-fail (trybuild): 30 (osp-core)
+- workspace total: 1100 (osp-desktop hariç)
 - 0 regression; `RUSTFLAGS="-D warnings"` temiz.
 
 ---
 
 ## Sıradaki işler
 
-### Evidence identity migration (PR F — sonraki milestone)
-- `ObservedCodeEvidence.code_entity_id` → `code_identity_key`; provider `CodeIdentityKey` merkezi;
-  `CodeIdentityResolver` + `ResolvedCodeEvidenceProvider` node-facing adapter. E1-E8 evidence invariantları.
-- **Bağımlılık:** PR E `CodeIdentityKey` hazır + PR E2 binding seeding; PR F provider migration.
-
-### Lineage-aware effective projection (PR G)
+### Lineage-aware effective projection (PR G — sonraki milestone)
 - `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
   korunur).
-- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface + PR F evidence migration.
+- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface + **PR F evidence migration (TAMAM)**.
 
-### PR E2 future-work (CLI scheme adoption sonrası)
+### PR F sonrası future-work (kapsam dışı bırakılan)
+- **Frozen `CodeEvidenceBasis`:** review/execution için compile-once basis (PR F canlı lookup kurdu).
+- **Plan scope resolution (`ResolvedPlanScope`):** Plan-Bound Execution kimlik omurgası PR F ile kuruldu.
+- **`CodeIdentityLookupError` geniş varyantları:** `Ambiguous`/`SupersededBinding`/`SchemeMismatch` future.
+- **`ResolvedCodeIdentity` provenance genişlemesi:** future (V1 iki alan).
+- **Gerçek node deletion transition:** EI8-V1 graph absence ile karşılandı.
+
+### PR E2 future-work (CLI scheme adoption sonrası — hâlâ geçerli)
 - **Rich diagnostic resolution preview:** lineage, multi-blocker, collision graph (supersede-preview
   analogu). V1 minimal canonical preview kapandı.
 - **Batch resolution V2:** `--from-analysis` (session-spanning).

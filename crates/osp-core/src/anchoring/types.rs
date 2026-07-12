@@ -736,6 +736,10 @@ impl std::error::Error for IncompletePhysicalVector {}
 ///   literal construct edilemez (trybuild `c6_observed_evidence_literal`); ama **gelecekteki
 ///   osp-analyzer bridge crate'i `new(...)` çağırabilir** (`pub(crate)` DEĞİL — dış provider
 ///   geçerli evidence üretebilir). İnvariant'lar constructor içinde korunur.
+/// - **`code_identity_key: CodeIdentityKey`** (PR F): evidence artık fiziksel code identity'ye
+///   bağlanır, graph node ID'ye DEĞİL. Anti-corruption boundary: graph dünyası (`ConceptNodeId`)
+///   ile identity/evidence dünyası (`CodeIdentityKey`) ayrı. [`CodeIdentityBindingLookup`] adapter
+///   tek geçiş noktası. Eski `code_entity_id: ConceptNodeId` kaldırıldı.
 /// - **`observations: ObservedPhysicalMetrics`** (PR C): axis-granular observation
 ///   collection. Her Paper 1 ekseni ayrı `ObservedPhysicalMetric` (per-axis provenance +
 ///   strength + coverage). Tek bir `PhysicalCodeVector` + tek `confidence` yerine.
@@ -748,9 +752,11 @@ impl std::error::Error for IncompletePhysicalVector {}
 /// Bu evidence bir CodeEntity'nin *ölçülmüş fiziksel yapısını* taşır. Node'un graph
 /// acceptance status'unu (Candidate→Accepted) değiştirmez. Operator acceptance ayrı
 /// lane'dir (INV-C3).
+///
+/// [`CodeIdentityBindingLookup`]: crate::anchoring::code_evidence::CodeIdentityBindingLookup
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ObservedCodeEvidence {
-    code_entity_id: ConceptNodeId,
+    code_identity_key: crate::anchoring::identity::CodeIdentityKey,
     observations: ObservedPhysicalMetrics,
     /// Unix epoch saniye (chrono bağımlılığı yok — Faz 1 stratejisi).
     measured_at: u64,
@@ -760,23 +766,29 @@ impl ObservedCodeEvidence {
     /// Public smart constructor — invariant'lar `ObservedPhysicalMetrics::try_new`'de
     /// korunur (Patch 1 + PR C). Caller valid bir collection geçmelidir.
     ///
+    /// **PR F migration:** İlk parametre artık `CodeIdentityKey` (eski `ConceptNodeId` değil).
     /// Dış crate (osp-analyzer bridge, test) geçerli observed evidence üretebilir; ama
     /// field'lar private olduğu için struct literal ile *geçersiz* evidence enjekte edemez.
     pub fn new(
-        code_entity_id: ConceptNodeId,
+        code_identity_key: crate::anchoring::identity::CodeIdentityKey,
         observations: ObservedPhysicalMetrics,
         measured_at: u64,
     ) -> Self {
         Self {
-            code_entity_id,
+            code_identity_key,
             observations,
             measured_at,
         }
     }
 
-    /// Bu evidence'ın bağlı olduğu CodeEntity node ID'si.
-    pub fn code_entity_id(&self) -> &ConceptNodeId {
-        &self.code_entity_id
+    /// Bu evidence'ın bağlı olduğu code identity key (PR F — anti-corruption boundary).
+    ///
+    /// Graph node ID değil; fiziksel code identity. Node-facing lookup
+    /// ([`CodeIdentityBindingLookup`]) `ConceptNodeId → CodeIdentityKey` resolve eder.
+    ///
+    /// [`CodeIdentityBindingLookup`]: crate::anchoring::code_evidence::CodeIdentityBindingLookup
+    pub fn code_identity_key(&self) -> &crate::anchoring::identity::CodeIdentityKey {
+        &self.code_identity_key
     }
 
     /// Axis-granular observation collection (PR C — per-axis provenance/strength/coverage).

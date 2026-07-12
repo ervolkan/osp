@@ -623,12 +623,35 @@ fn anchor_mvp_fix_011_implemented_by_rejected_without_provider() {
 #[test]
 fn anchor_mvp_fix_011_implemented_by_accepted_with_provider() {
     // Faz 4 pozitif yol: provider + evidence object → ImplementedBy kabul.
-    use osp_core::anchoring::code_evidence::InMemoryCodeEvidenceProvider;
+    // PR F: adapter pattern — lookup stub (node exists + binding) + key-faced source.
+    use osp_core::anchoring::code_evidence::{
+        CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+        ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+    };
+    use osp_core::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
     use osp_core::anchoring::types::{
         ConceptNodeId, EvidenceCoverage, EvidenceStrength, ObservedCodeEvidence,
         ObservedCodeMetricSource, ObservedPhysicalMetric, ObservedPhysicalMetrics,
     };
     use osp_core::anchoring::PhysicalCodeMetricAxis;
+
+    /// Test lookup stub — tek node için binding döner (gate.rs/scorer.rs pattern mirror).
+    struct SingleBindingLookup {
+        node_id: ConceptNodeId,
+        key: CodeIdentityKey,
+    }
+    impl CodeIdentityBindingLookup for SingleBindingLookup {
+        fn resolve_code_identity(
+            &self,
+            node_id: &ConceptNodeId,
+        ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+            if node_id == &self.node_id {
+                Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+            } else {
+                Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+            }
+        }
+    }
 
     let f = load_fixture("fix_011_implemented_by_with_evidence");
     let pipeline = AnchorPipeline::default_pipeline();
@@ -637,9 +660,17 @@ fn anchor_mvp_fix_011_implemented_by_accepted_with_provider() {
     // Patch 6: explicit ObservedCodeEvidence seed (GraphSeed.code_entities yeterli değil).
     // PR C: axis-granular observations. entropy/witness representative normalized
     // (1.1/5.0 raw → 0.52/0.68). 5 eksende de uniform [0,1].
+    // PR F: evidence artık CodeIdentityKey taşıyor (CodeEntity:AuthService identity).
     let strength = EvidenceStrength::new(0.85).unwrap();
+    let auth_key = CodeIdentityKey::new(
+        CodeIdentityScheme::AnalysisPathV1 {
+            case_policy: CodePathCasePolicy::CaseSensitive,
+        },
+        "CodeEntity:AuthService",
+    )
+    .unwrap();
     let evidence = ObservedCodeEvidence::new(
-        ConceptNodeId("CodeEntity:AuthService".into()),
+        auth_key.clone(),
         ObservedPhysicalMetrics::try_new(vec![
             ObservedPhysicalMetric::new(
                 PhysicalCodeMetricAxis::Coupling,
@@ -685,7 +716,12 @@ fn anchor_mvp_fix_011_implemented_by_accepted_with_provider() {
         .unwrap(),
         1_700_000_000,
     );
-    let provider = InMemoryCodeEvidenceProvider::from_evidence(vec![evidence]);
+    let source = InMemoryCodeEvidenceSource::try_from_evidence(vec![evidence]).unwrap();
+    let lookup = SingleBindingLookup {
+        node_id: ConceptNodeId("CodeEntity:AuthService".into()),
+        key: auth_key,
+    };
+    let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
     let ctx = AnchorGateContext::with_code_evidence(None, &provider);
 
     let plan = pipeline

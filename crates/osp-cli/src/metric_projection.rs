@@ -24,7 +24,10 @@ use osp_core::space::NodeId;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Physical code axis (5-axis core uzayı — Paper 1 sabit).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Ord`/`PartialOrd` (PR F review P1-1): identity-key aggregation `BTreeMap<PhysicalCodeAxis, _>`
+/// için deterministik axis sırası. Variant tanım sırası = Ord sırası (Coupling < Cohesion < ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum PhysicalCodeAxis {
     Coupling,
     Cohesion,

@@ -389,9 +389,40 @@ mod tests {
     #[test]
     fn code_evidence_score_zero_for_non_code_edge_kind() {
         // Non-code edge kind'lerde evidence aranmaz (Mentions vb.) → 0.
+        // PR F: adapter pattern — lookup stub + key-faced source.
+        use crate::anchoring::code_evidence::{
+            CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+            ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+        };
+        use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+        struct SingleBindingLookup {
+            node_id: ConceptNodeId,
+            key: CodeIdentityKey,
+        }
+        impl CodeIdentityBindingLookup for SingleBindingLookup {
+            fn resolve_code_identity(
+                &self,
+                node_id: &ConceptNodeId,
+            ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+                if node_id == &self.node_id {
+                    Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+                } else {
+                    Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+                }
+            }
+        }
+
         let s = AnchorScorer::new();
+        let x_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            "CodeEntity:X",
+        )
+        .unwrap();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
-            ConceptNodeId("CodeEntity:X".into()),
+            x_key.clone(),
             single_axis_observations(
                 crate::anchoring::PhysicalCodeMetricAxis::Coupling,
                 0.1,
@@ -400,10 +431,13 @@ mod tests {
             ),
             0,
         );
-        let provider =
-            crate::anchoring::code_evidence::InMemoryCodeEvidenceProvider::from_evidence(vec![
-                evidence,
-            ]);
+        let source =
+            InMemoryCodeEvidenceSource::try_from_evidence(vec![evidence]).expect("distinct key");
+        let lookup = SingleBindingLookup {
+            node_id: ConceptNodeId("CodeEntity:X".into()),
+            key: x_key,
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
         let ac = s.score(
             extracted("CodeEntity:X", ConceptEdgeKind::Mentions),
             &ConceptGraph::new(),
@@ -420,9 +454,40 @@ mod tests {
     fn code_evidence_score_from_provider_strength() {
         // Faz 4: ImplementedBy + provider → code_evidence_score = minimum_observed_strength
         // (Not 5 — PR C: normative min-over-axes).
+        // PR F: adapter pattern (code_evidence_score_zero_for_non_code_edge_kind mirror).
+        use crate::anchoring::code_evidence::{
+            CodeIdentityBindingLookup, CodeIdentityLookupError, InMemoryCodeEvidenceSource,
+            ResolvedCodeEvidenceProvider, ResolvedCodeIdentity,
+        };
+        use crate::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
+
+        struct SingleBindingLookup {
+            node_id: ConceptNodeId,
+            key: CodeIdentityKey,
+        }
+        impl CodeIdentityBindingLookup for SingleBindingLookup {
+            fn resolve_code_identity(
+                &self,
+                node_id: &ConceptNodeId,
+            ) -> Result<ResolvedCodeIdentity, CodeIdentityLookupError> {
+                if node_id == &self.node_id {
+                    Ok(ResolvedCodeIdentity::new(node_id.clone(), self.key.clone()))
+                } else {
+                    Err(CodeIdentityLookupError::NodeNotFound(node_id.clone()))
+                }
+            }
+        }
+
         let s = AnchorScorer::new();
+        let auth_key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::CaseSensitive,
+            },
+            "CodeEntity:AuthService",
+        )
+        .unwrap();
         let evidence = crate::anchoring::types::ObservedCodeEvidence::new(
-            ConceptNodeId("CodeEntity:AuthService".into()),
+            auth_key.clone(),
             single_axis_observations(
                 crate::anchoring::PhysicalCodeMetricAxis::Coupling,
                 0.42,
@@ -431,10 +496,13 @@ mod tests {
             ),
             1_700_000_000,
         );
-        let provider =
-            crate::anchoring::code_evidence::InMemoryCodeEvidenceProvider::from_evidence(vec![
-                evidence,
-            ]);
+        let source =
+            InMemoryCodeEvidenceSource::try_from_evidence(vec![evidence]).expect("distinct key");
+        let lookup = SingleBindingLookup {
+            node_id: ConceptNodeId("CodeEntity:AuthService".into()),
+            key: auth_key,
+        };
+        let provider = ResolvedCodeEvidenceProvider::new(&lookup, &source);
         let ac = s.score(
             extracted("CodeEntity:AuthService", ConceptEdgeKind::ImplementedBy),
             &ConceptGraph::new(),
