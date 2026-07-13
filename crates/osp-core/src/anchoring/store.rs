@@ -581,6 +581,46 @@ pub trait AnchorStore {
 
     fn node_count(&self) -> Result<usize, Self::Error>;
     fn edge_count(&self) -> Result<usize, Self::Error>;
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PR G — Lineage-aware effective projection (packet-level derived read model)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /// Node + edge snapshot — backend transaction/snapshot sınırında üretir.
+    ///
+    /// **Contract:** `nodes` ve `edges` aynı logical snapshot/transaction'dan gelmelidir.
+    /// InMemory tek immutable borrow ile sağlar; persistent backend'ler transaction/snapshot
+    /// isolation ile sağlamalıdır. **Derleyici garantisi DEĞİL** — contract-level.
+    fn resolved_implementation_basis(
+        &self,
+    ) -> Result<crate::anchoring::resolved_implementation::ResolvedImplementationBasis, Self::Error>;
+
+    /// Derived lineage projection: ConceptPacket → Candidate → Entity resolved expectation.
+    ///
+    /// Bu bir **lineage fold**'tur, status filtresi değil. Deterministic ascending order by
+    /// `(packet_id, entity_id)` — tuple ordering backend'ler arasında aynı sonucu garanti eder.
+    /// Lineages within relation: `candidate_id` ascending.
+    ///
+    /// RP1 soundness: her derived lineage tam bir ExpectedImplementation + ResolvesTo
+    /// lineage'ına dayanır; lineage path'i olmayan derived üretilemez.
+    ///
+    /// **Default implementation:** Pure projector — `resolved_implementation_basis()` primitive
+    /// üzerinden. Backend'ler bedavaya alır; native lineage query'si isterse override eder.
+    /// **Backend-agnostisizm:** default method yalnızca trait item'larına erişebilir (concrete
+    /// backend private alanlarına DEĞİL). Basis consistency ve native override equivalence
+    /// contract + conformance test ile korunur; compiler garantisi değildir.
+    fn resolved_implementation_expectation_query(
+        &self,
+    ) -> Result<
+        Vec<crate::anchoring::resolved_implementation::ResolvedImplementationExpectation>,
+        crate::anchoring::resolved_implementation::ResolvedImplementationQueryError<Self::Error>,
+    > {
+        let basis = self
+            .resolved_implementation_basis()
+            .map_err(crate::anchoring::resolved_implementation::ResolvedImplementationQueryError::Store)?;
+        crate::anchoring::resolved_implementation::project_resolved_implementations(&basis)
+            .map_err(crate::anchoring::resolved_implementation::ResolvedImplementationQueryError::Projection)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1803,6 +1843,19 @@ impl AnchorStore for InMemoryAnchorStore {
     fn edge_count(&self) -> Result<usize, Self::Error> {
         Ok(self.graph.edge_count())
     }
+
+    /// PR G — node + edge snapshot (tek immutable borrow → same-snapshot garantisi).
+    fn resolved_implementation_basis(
+        &self,
+    ) -> Result<
+        crate::anchoring::resolved_implementation::ResolvedImplementationBasis,
+        Self::Error,
+    > {
+        use crate::anchoring::resolved_implementation::ResolvedImplementationBasis;
+        let nodes: Vec<ConceptNode> = self.graph.nodes_iter().cloned().collect();
+        let edges: Vec<ConceptEdge> = self.graph.edges().cloned().collect();
+        Ok(ResolvedImplementationBasis::new(nodes, edges))
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1864,12 +1917,8 @@ fn parse_target(id: &str) -> (crate::anchoring::types::ConceptNodeKind, String) 
     }
 }
 
-/// ConceptPacketId'den ConceptNodeId'ye (ConceptPacket node'u graph'ta).
-impl crate::anchoring::types::ConceptPacketId {
-    pub fn into_node_id(&self) -> ConceptNodeId {
-        ConceptNodeId(format!("ConceptPacket:{}", self.0))
-    }
-}
+// PR G — `ConceptPacketId::into_node_id` + `try_from_node_id` types.rs'e taşındı
+// (ID formatı store davranışı değil, ID tipinin sorumluluğu).
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // validate_snapshot — restore_snapshot'ın invariant-validasyonu

@@ -35,6 +35,7 @@ pub mod gate;
 pub mod identity;
 pub mod pipeline;
 pub mod predicate_lowering;
+pub mod resolved_implementation;
 pub mod review;
 pub mod scorer;
 pub mod store;
@@ -230,7 +231,9 @@ pub enum ConceptPacketType {
 /// Concept graph edge türleri (§8.3). 16 = 15 ontolojik + 1 meta.
 ///
 /// High-stake (11): INV-C7 gereği explanation zorunlu. Düşük-stake (4): opsiyonel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// PR G: `Ord`/`PartialOrd` eklendi (canonical triple dedup `BTreeSet` key için).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum ConceptEdgeKind {
     // --- 15 ontolojik ---
