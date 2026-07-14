@@ -342,15 +342,19 @@
     {
       "invariant": "EI4-b",
       "evidence_id": "E-EI-04B",
-      "evidence_kind": "gap",
-      "status": "gap",
-      "clause": "Materialization: one identity key → multiple live CodeEntity reject (DuplicateLiveCodeEntityIdentity).",
-      "finding": "DuplicateLiveCodeEntityIdentity variant is defined at store.rs:144 and produced via R7 check in seed_code_identity_bindings_trusted (store.rs:1537) and apply_resolution reuse path (store.rs:1774-1788), but NO test in the codebase asserts this variant via matches! or similar. HANDOFF attributes this to PR E (entity-resolution), not PR F.",
-      "resolution_options": [
-        "Add a regression test asserting DuplicateLiveCodeEntityIdentity in A-stage or a focused follow-up",
-        "Narrow manuscript Table EI row EI4-b to 'seed-time R7 enforcement (production site); runtime characterization test future'"
-      ],
-      "manuscript_decision_pending": true
+      "evidence_kind": "rust_test",
+      "package": "osp-core",
+      "target_kind": "lib",
+      "target_name": null,
+      "test_name": "anchoring::store::tests::resolution_target_rejects_duplicate_live_entity_same_key",
+      "expected_selected": 1,
+      "clause": "Materialization: one identity key cannot bind more than one live CodeEntity in the evaluated store (DuplicateLiveCodeEntityIdentity).",
+      "enforcement_note": "Defense-in-depth: primary protection via entity-ID derivation (same key → same entity ID, unreachable through apply_resolution); secondary R7 duplicate-live check at resolution-target computation (resolution_target_for_identity) + trusted-binding ingress. Test constructs the corrupt/edge-case state directly to exercise the secondary check.",
+      "production_symbols": [
+        "InMemoryAnchorStore::resolution_target_for_identity",
+        "InMemoryAnchorStore::compute_resolution_target",
+        "InMemoryAnchorStore::seed_code_identity_bindings_trusted"
+      ]
     },
     {
       "invariant": "EI4-c",
@@ -496,25 +500,14 @@
       "clause": "Snapshot unchanged after projection (export_snapshot before == export_snapshot after)."
     }
   ],
-  "gaps": [
-    {
-      "invariant": "EI4-b",
-      "severity": "manuscript-blocking",
-      "finding": "DuplicateLiveCodeEntityIdentity is produced by production code but not asserted by any test.",
-      "resolution_required_before": "B-stage Table EI finalization",
-      "options": [
-        "Add regression test asserting DuplicateLiveCodeEntityIdentity (preferred — closes the gap, keeps manuscript claim)",
-        "Narrow manuscript Table EI row EI4-b to 'seed-time R7 enforcement (production site); runtime characterization test future'"
-      ]
-    }
-  ],
+  "gaps": [],
   "summary": {
     "total_evidence_entries": 34,
     "trybuild_fixtures": 30,
-    "rust_tests_canonical": 15,
+    "rust_tests_canonical": 16,
     "type_shape_enforced": 3,
     "architecture_guards": 1,
-    "gaps": 1,
+    "gaps": 0,
     "paper3_specific_compile_fail": 28,
     "paper2_inherited_inv_t2_compile_fail": 2,
     "cumulative_workspace_compile_fail": 30

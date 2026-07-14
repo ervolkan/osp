@@ -2631,6 +2631,101 @@ mod tests {
         assert_eq!(store.candidate_query().unwrap().len(), 1);
     }
 
+    /// EI4-b (RUNTIME): one identity key cannot bind more than one live `CodeEntity` in the
+    /// evaluated store. Defense-in-depth: primary protection is entity-ID derivation (same key
+    /// derives the same entity ID, so two distinct `CodeEntity` nodes with the same key cannot
+    /// be produced through the evaluated `apply_resolution` path). The secondary R7 duplicate-
+    /// live check is enforced at resolution-target computation
+    /// (`InMemoryAnchorStore::resolution_target_for_identity`), reached via
+    /// `apply_resolution` and `resolution_basis_view`.
+    ///
+    /// This test constructs the corrupt/edge-case state directly (two distinct live `CodeEntity`
+    /// nodes bound to the same `CodeIdentityKey`) to exercise the secondary check, since the
+    /// primary derivation check makes the state unreachable through the evaluated trusted
+    /// binding path. The check rejects the duplicate and the store snapshot is unchanged.
+    ///
+    /// Production symbol: `InMemoryAnchorStore::resolution_target_for_identity`.
+    /// Expected error: `StoreError::DuplicateLiveCodeEntityIdentity`.
+    #[test]
+    fn resolution_target_rejects_duplicate_live_entity_same_key() {
+        use crate::anchoring::identity::{
+            CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy,
+        };
+        use crate::anchoring::store::AnchorStore;
+        use crate::anchoring::types::{ConceptNode, CodeIdentityBinding};
+
+        let key = CodeIdentityKey::new(
+            CodeIdentityScheme::AnalysisPathV1 {
+                case_policy: CodePathCasePolicy::AsciiCaseInsensitive,
+            },
+            "src/auth.rs",
+        )
+        .unwrap();
+
+        // Two distinct live CodeEntity nodes (different IDs, both Accepted = live). Seeded via
+        // GraphSeed (with_seed) so node existence holds; bindings are then written directly to
+        // the store field to construct the edge-case state the secondary R7 check guards
+        // (bypassing trusted-binding validation, which the entity-ID derivation would reject).
+        let mk_code_entity = |id: &str| ConceptNode {
+            id: ConceptNodeId(id.into()),
+            canonical: id.to_string(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Accepted,
+            position_family: PositionFamily::PhysicalCode,
+        };
+
+        let mut seed = GraphSeed::default();
+        seed.code_entities.push(mk_code_entity("CodeEntity:src/auth.rs"));
+        seed.code_entities
+            .push(mk_code_entity("CodeEntity:src/auth/legacy.rs"));
+        let mut store = InMemoryAnchorStore::with_seed(seed);
+
+        // Write the bindings directly to construct the corrupt state (same key → two live nodes).
+        store
+            .code_identity_bindings
+            .insert(ConceptNodeId("CodeEntity:src/auth.rs".into()), key.clone());
+        store
+            .code_identity_bindings
+            .insert(ConceptNodeId("CodeEntity:src/auth/legacy.rs".into()), key.clone());
+
+        // Resolution-target computation must reject the duplicate live entity.
+        let before = store.export_snapshot();
+        let err = store
+            .resolution_target_for_identity(&key)
+            .unwrap_err();
+        assert!(
+            matches!(err, StoreError::DuplicateLiveCodeEntityIdentity),
+            "expected DuplicateLiveCodeEntityIdentity, got {err:?}"
+        );
+        // The query is pure (read-only); store state is unchanged regardless.
+        assert_eq!(store.export_snapshot(), before);
+
+        // Also confirm the binding-ingress path itself rejects this state if asked to accept it
+        // (either via R7 duplicate-live or entity-identity collision — both are valid rejections
+        // of the corrupt state; the test confirms the ingress does not silently accept it).
+        let err_ingress = store
+            .seed_code_identity_bindings_trusted(&[
+                CodeIdentityBinding {
+                    node_id: ConceptNodeId("CodeEntity:src/auth.rs".into()),
+                    identity_key: key.clone(),
+                },
+                CodeIdentityBinding {
+                    node_id: ConceptNodeId("CodeEntity:src/auth/legacy.rs".into()),
+                    identity_key: key,
+                },
+            ])
+            .unwrap_err();
+        assert!(
+            matches!(
+                err_ingress,
+                StoreError::DuplicateLiveCodeEntityIdentity
+                    | StoreError::EntityIdentityCollision { .. }
+            ),
+            "ingress should reject (either R7 duplicate-live or entity-identity collision), got {err_ingress:?}"
+        );
+    }
+
     /// candidate_query deterministic — ID ascending sort (HashMap iteration random;
     /// mainline_query ile aynı disiplin — Review 2.tur P2.1).
     #[test]

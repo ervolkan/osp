@@ -82,7 +82,7 @@
       "paper2_inherited_inv_t2": 2,
       "note": "30 cumulative = 28 Paper-3-specific + 2 INV-T2 (Paper 2 task-genesis boundary)"
     },
-    "osp_core_tests": 653,
+    "osp_core_tests": 654,
     "decision_status_variants": 5,
     "verification_surfaces": [
       {
