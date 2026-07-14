@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration TAMAM)
+# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration + PR G lineage-aware effective projection TAMAM)
 
-> **Tarih:** 2026-07-12 (`feat/evidence-identity-migration` dalı — PR F implementasyonu)
-> **Dal:** `feat/evidence-identity-migration` (main `09cc82b` üstünde — PR E2 merged; plan 3 tur review)
-> **Durum:** Faz 8b epistemik çekirdek (PR #48-51) + **CLI accept/reject** (PR #53) + **CLI supersession surface** (PR #54) + **Rich SupersedePreview query** (PR #55) + **Analysis → candidate bridge** (PR #56) + **Analysis metric projection** (PR #57) + **PR C (core axis-granular evidence model)** + **PR D (evidence projection + in-process wiring proof)** + **PR E (entity resolution core + persistence contract)** + **PR E2 (CLI scheme adoption — graph init binding + resolve-code-entity)** + **PR F (evidence identity migration — anti-corruption boundary)** TAMAM. On yüzey kapandı. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: PR G (lineage-aware effective projection), arXiv v1.4.
+> **Tarih:** 2026-07-13 (`feat/resolved-implementation-expectation` dalı — PR G implementasyonu)
+> **Dal:** `feat/resolved-implementation-expectation` (main `4ccd5c6` üstünde — PR F merged; plan 4 tur review)
+> **Durum:** Faz 8b epistemik çekirdek + CLI accept/reject/supersede/preview + analysis bridge + metric projection + PR C/D/E/E2/F + **PR G (lineage-aware effective projection — packet-level derived read model)** TAMAM. On bir yüzey kapandı. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: arXiv v1.4.
 
 ---
 
@@ -14,10 +14,10 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 603 test** (PR F: 588→603 +15: ResolvedCodeIdentity + source builders + adapter + EI5-b footgun guard + N:1 resolution/evidence identity integration tests EI1-b/EI2/EI3-b/EI4-c/EI6/EI7/EI8-V1 + Patch 6 restore);
-**osp-cli: 155 unit** (PR F: 150→155 +5: identity-key aggregation + N:1 emit + conflicting reject + DuplicateBindingNode/UnboundNode reject);
-**30 compile-fail** (PR F: 28→30 +2: cF1_resolved_code_identity_literal + cF1_code_identity_key_literal);
-**workspace total 1100** (osp-desktop hariç); **0 regression**; `RUSTFLAGS="-D warnings"` temiz.
+**osp-core lib: 653 test** (PR G: 604→653 +49: ConceptPacketId Ord/round-trip + DerivedEdgeReference/Lineage/Expectation nested public ctor + ResolvedImplementationBasis + project_resolved_implementations pure projector fail-closed + RP1-RP4 lineage fold + review tur 1: ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b);
+**osp-cli: 155 unit** (PR G untouched);
+**30 compile-fail** (PR G eklemedi);
+**workspace total 1150** (osp-desktop hariç); **0 regression**; `RUSTFLAGS="-D warnings"` temiz.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR E2 — CLI scheme adoption (bu oturumda)
@@ -186,7 +186,61 @@ storage **oluşturulmaz** (EI1 mimari garanti).
 Plan 3 tur review gördü; her tur mimari/claim doğruluğunu sıkıştırdı:
 - **Tur 1 (R1a + R2):** EI4 cardinality (N:1 convergence ile "duplicate reject" çelişkisi), binding cycle (`EvidenceProjectionContext`'e bindings cycle yaratır), typed error (`Unbound→Internal` fail-closed niyetini ters çevirir), E8 deletion (store API yok), object-safety, frozen Serialize (grep kanıt: 6 JSON 0 match), naming collision (E1-E8 → EI1-EI8), test target propagation.
 - **Tur 2 (R1a + R2):** pub ctor (`ResolvedCodeIdentity` sealed trait olmasın), error derlenebilirliği (`#[error]` + `{0:?}`), EI5 iki clause (resolver typed + adapter mapping), projection duplicate binding, BTreeMap O(log n), EI3 capability absence, EI6 consumer-bazlı, `#[from]` footgun guard, EI4 lifecycle, NodeNotFound backward-compat.
-- **Tur 3 (onay):** "Mimari onay: Evet. Implementation-ready: Evet. Yeni review turu gerektiren plan sorunu: Hayır." Dört metinsel sabitleme: `#[from]` annotation örneğe geri, EI3-a "compile proof (adapter shared borrow)" kaldırıldı, `InMemoryAnchorStore` impl yeri `store.rs` + `self.graph.node()`, NodeNotFound backward-compat daraltma.
+- **Tur 3 (onay):** "Mimari onay: Evet. Implementation-ready: Evet. Yeni review turu gerektiren plan sorumu: Hayır." Dört metinsel sabitleme: `#[from]` annotation örneğe geri, EI3-a "compile proof (adapter shared borrow)" kaldırıldı, `InMemoryAnchorStore` impl yeri `store.rs` + `self.graph.node()`, NodeNotFound backward-compat daraltma.
+
+## PR G — Lineage-aware effective projection (bu oturumda)
+
+PR G — `ConceptPacket → Candidate → Entity` lineage'ından **packet-level derived read model**
+(`ResolvedImplementationExpectation`). Read-only fold; grafiği düzeltmez, grafiğin bugün
+gerçekten bildiğini kayıpsız ve dürüst biçimde projekte eder. 4 tur plan review (ontolojik
+engel tespiti → packet-level reframing → epistemik dürüstlük → implementation-ready).
+
+### Mimari merkez (packet-level — 4 tur review, sabit)
+```
+ConceptPacket:X ──ExpectedImplementation(Candidate)──→ CodeEntityCandidate:Z
+CodeEntityCandidate:Z ──ResolvesTo(Accepted)──→ CodeEntity:W
+↓ (derived read model)
+ConceptPacket:X ──ResolvedImplementationExpectation──→ CodeEntity:W
+```
+
+### Ontolojik engel ve reframing (tur 1 — koda karşı doğrulandı)
+- **P0-1:** `apply_plan_inner` edge source = `ConceptPacket:<id>` (store.rs:1105), source node
+  graph'a eklenmiyor. Planın "Concept → Candidate" zinciri grafte YOK.
+- **P0-2:** `ExpectedImplementation` edge `Candidate` kalır (apply_decision edge promote etmiyor).
+- **P0-3:** `AnchorStore` trait'te node-by-id lookup yok.
+- **Çözüm:** Packet-level V1 (kullanıcı kararı) — gerçek grafiği dürüst projekte eder. Tip adı
+  `EffectiveImplementation` → `ResolvedImplementationExpectation` (epistemik dürüstlük — Candidate
+  source, "effective" fazla güçlü; acceptance `ResolvesTo`'dan gelir).
+
+### Kod (`crates/osp-core/src/anchoring/`)
+- **`resolved_implementation.rs`** (yeni modül):
+  - `ResolvedImplementationBasis { nodes, edges }` (P1-1 public ctor + accessors; validation YOK — projector fail-closed)
+  - `DerivedEdgeReference { from, kind, to }` (guarantee ladder base; `new` + `from_edge`)
+  - `ResolvedImplementationLineage` (fallible `try_new` — kind + candidate endpoint consistency)
+  - `ResolvedImplementationExpectation` (fallible `try_new` — packet/entity + sort + dedup; N:1 relation + `lineages: Vec`)
+  - `ResolvedImplementationShapeError` (aggregate smart ctor iç tutarlılık), `ResolvedImplementationStructureError` (basis structural — `#[from]` chain: `InvalidPacketSource`, `Shape`), `ResolvedImplementationQueryError<E>` (Store + Projection)
+  - `project_resolved_implementations` pure projector — fail-closed validation (duplicate node, dangling endpoint, wrong-kind/status/family), full endpoint matris (source CodeEntityCandidate + Accepted + PhysicalCode; target CodeEntity + PhysicalCode + live), non-Accepted ResolvesTo typed error (INV-C16 structural), canonical triple dedup, packet source `try_from_node_id`
+- **`types.rs`:** `ConceptPacketId` Ord/PartialOrd derive (BTreeMap key); `into_node_id` store.rs'tan types.rs'e taşındı (ID formatı store davranışı değil); `try_from_node_id` canonical reverse (non-empty contract) + `InvalidConceptPacketNodeId` + `NODE_PREFIX` const (single source-of-truth)
+- **`mod.rs`:** `ConceptEdgeKind` Ord/PartialOrd derive (canonical triple dedup BTreeSet key); `pub mod resolved_implementation`
+- **`store.rs`:** `AnchorStore` trait'e `resolved_implementation_basis` (required) + `resolved_implementation_expectation_query` (default method — pure projector, backend-agnostisizm derleyici-garantili); `InMemoryAnchorStore::resolved_implementation_basis` (tek immutable borrow → same-snapshot garantisi)
+
+### RP1-RP4 projection invariantları (INV-Cx dışında, RP prefix — PR F EI pattern mirror)
+- **RP1** (soundness): Canonical bijection; non-tautological fixture
+- **RP2**: Fallible ctor endpoint consistency (nested public ladder)
+- **RP3**: Explanation yok — nested serde + architecture guard
+- **RP4-a**: Read-only fold (TYPE/API structural)
+- **RP4-b**: Store snapshot unchanged (RUNTIME export_snapshot equality)
+
+### Testler (0 regression; `RUSTFLAGS="-D warnings"` temiz)
+- **osp-core lib:** 604 → 653 (+49: Katman 1 smart-ctor + Katman 2 lineage fold + Katman 3 RP3/RP4 + review tur 1: iki yönlü occurrence-aware ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b)
+- **compile-fail:** 30 (değişmedi — RP3 serde assertion, compile-fail YOK)
+- **workspace total:** 1101 → 1150 (osp-desktop hariç)
+
+### 4 tur plan review'ün metodolojik dersi
+- **Tur 1:** 3 P0 ontolojik engel (lineage yok, edge status, primitive eksik) — koda karşı doğrulandı.
+- **Tur 2:** Packet-level reframing + 5 P1 (hata ayrımı, node index, packet parse, triple dedup, fallible ctor).
+- **Tur 3:** 4 P1 (Ord, #[from], nested public, non-Accepted ResolvesTo typed error).
+- **Tur 4 (onay):** "Plan artık mimari review gerektiren bir durumda değil." 3 P1 (basis public ctor, canonical reverse #[from] + move, source status error) + "bundán sonraki anlamlı review noktası implementasyon PR'ı."
 
 ## PR #48 — ne yapıldı (bu oturumda)
 
@@ -502,34 +556,40 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 4. PR E2 (#61) — CLI scheme adoption (graph init binding seeding + `resolve-code-entity`)
 5. PR F — evidence identity migration (anti-corruption boundary: `CodeIdentityBindingLookup` + `CodeEvidenceSource` + `ResolvedCodeEvidenceProvider` adapter + EI1-EI8 invariants)
 
-### Sıradaki işler (öncelik sıralı — PR F tamamlandı)
+### Sıradaki işler (öncelik sıralı — PR G tamamlandı)
 
-#### PR G — Lineage-aware effective projection (en doğal devam)
-- `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
-  korunur).
-- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface (operator-promoted entity'ler)
-  + **PR F evidence migration (TAMAM)**.
+#### arXiv v1.4 (en doğal devam)
+- Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Epistemik çekirdek + CLI surface + evidence
+  identity + entity resolution + lineage projection tamam. Endorsement hazır (Jimenez e-postası).
+- v1.4 pending edits: INV-C16 runtime invariant (16 invariant; 13 type-enforced + 3 runtime C14/C15/C16);
+  PR C/D/E/E2/F/G Table'ları; EI1-EI8 + RP1-RP4 invariant aileleri doc.
 
-#### PR F sonrası future-work (kapsam dışı bırakılan)
+#### PR G sonrası future-work (kapsam dışı bırakılan)
+- **Concept-level lineage:** Packet → Mentions → Concept join ayrı milestone (cardinality policy gerektirir).
+- **Concept-level write path:** `Concept → CodeEntityCandidate` edge ontolojik karar — ayrı design milestone.
+- **Task-level projection (V1.1):** Ayrı subject model ve relation semantiği; packet-level tipe sessiz
+  genişleme yapılmaz (source ID tipi + relation key + output tipi değişir).
+- **Rule-level:** `Constrains` vs `ExpectedImplementation` ontoloji kararı.
+- **Risk-level:** Kalıcı dışarıda (`ImplementedBy` ontolojik olarak tanımsız).
+- **"Effective" adı:** Source relation committed/accepted hale gelirse `EffectivePacketImplementation`
+  adına geçiş future.
+- **CLI surface:** `osp review resolved-implementations` query command future.
+- **Frozen projection basis:** temporal/compile-once projection future.
+
+#### PR F sonrası future-work (hâlâ geçerli)
 - **Frozen `CodeEvidenceBasis`:** review/execution için compile-once basis (canlı lookup vs frozen-basis
   ayrımı — PR F canlı lookup kurdu, frozen future milestone).
 - **Plan scope resolution (`ResolvedPlanScope`):** Plan-Bound Execution modelinin kimlik omurgası PR F ile
   kuruldu; plan tipleri future.
-- **`CodeIdentityLookupError` geniş varyantları:** `Ambiguous`/`SupersededBinding`/`SchemeMismatch` future
-  (V1 sadece NodeNotFound/Unbound).
-- **`ResolvedCodeIdentity` provenance genişlemesi:** `binding_digest`/`scheme_version`/`path_case_policy`
-  future (V1 iki alan — kullanıcı: "sahte alan ekleme").
-- **Gerçek node deletion transition:** EI8-V1 graph absence ile karşılandı; deletion API gelince ayrı test.
+- **`CodeIdentityLookupError` geniş varyantları:** `Ambiguous`/`SupersededBinding`/`SchemeMismatch` future.
+- **`ResolvedCodeIdentity` provenance genişlemesi:** future (V1 iki alan).
+- **Gerçek node deletion transition:** EI8-V1 graph absence ile karşılandı.
 
 #### PR E2 sonrası future-work (HANDOFF bullet'lerinden — hâlâ geçerli)
 - **Rich diagnostic resolution preview:** lineage, multi-blocker list, identity collision açıklama
-  grafiği, candidate→entity ilişki geçmişi, batch uygunluk raporu, alternatif target açıklamaları
-  (supersede-preview pattern'inin zengin analogu). V1 minimal canonical preview (target reveal) kapandı.
-- **Batch resolution V2:** `osp review resolve-code-entity --from-analysis` (tüm Accepted candidate'ları
-  tek session'da resolve). Session-spanning lifetime.
-- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` hangi policy ile üretildiğini
-  taşır veya identity + core key tek opaque projection result birlikte üretilir. Runtime drift guard
-  yeterli; gerçek type-level garanti future-work.
+  grafiği, candidate→entity ilişki geçmişi, batch uygunluk raporu.
+- **Batch resolution V2:** `osp review resolve-code-entity --from-analysis`.
+- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` policy taşır.
 - **Machine-readable CLI error envelope:** `operation` metadata taşıyan JSON envelope.
 
 #### PR E2 sonrası future-work (HANDOFF bullet'lerinden)
@@ -596,35 +656,41 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 #### Structural relation projection (eski PR E — şimdi future)
 - `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik sözleşme tasarımı.
 
-### Test envanteri (current protocol — PR F sonrası)
-- osp-core lib: 603 test
+### Test envanteri (current protocol — PR G sonrası)
+- osp-core lib: 653 test
 - osp-cli unit: 155 test
 - compile-fail (trybuild): 30 (osp-core)
-- workspace total: 1100 (osp-desktop hariç)
+- workspace total: 1150 (osp-desktop hariç)
 - 0 regression; `RUSTFLAGS="-D warnings"` temiz.
 
 ---
 
 ## Sıradaki işler
 
-### Lineage-aware effective projection (PR G — sonraki milestone)
-- `Concept → Candidate → Entity` derived `ImplementedBy` (read-only; tarihsel `ExpectedImplementation`
-  korunur).
-- **Bağımlılık:** PR E `ResolvesTo` edge + PR E2 CLI resolution surface + **PR F evidence migration (TAMAM)**.
+### arXiv v1.4 (sonraki milestone)
+- Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Epistemik çekirdek + CLI surface + evidence
+  identity + entity resolution + lineage projection tamam. Endorsement hazır.
+- v1.4 pending edits: INV-C16 + PR C/D/E/E2/F/G Table'ları; EI1-EI8 + RP1-RP4 invariant aileleri.
 
-### PR F sonrası future-work (kapsam dışı bırakılan)
-- **Frozen `CodeEvidenceBasis`:** review/execution için compile-once basis (PR F canlı lookup kurdu).
-- **Plan scope resolution (`ResolvedPlanScope`):** Plan-Bound Execution kimlik omurgası PR F ile kuruldu.
-- **`CodeIdentityLookupError` geniş varyantları:** `Ambiguous`/`SupersededBinding`/`SchemeMismatch` future.
-- **`ResolvedCodeIdentity` provenance genişlemesi:** future (V1 iki alan).
+### PR G sonrası future-work (kapsam dışı bırakılan)
+- **Concept-level lineage/write path:** Ayrı ontolojik milestone (packet→concept join cardinality).
+- **Task-level projection (V1.1):** Ayrı subject model; packet-level tipe sessiz genişleme yapılmaz.
+- **Rule-level:** `Constrains` vs `ExpectedImplementation` ontoloji kararı.
+- **Risk-level:** Kalıcı dışarıda.
+- **"Effective" adı:** Source committed hale gelirse future geçiş.
+- **CLI surface:** `osp review resolved-implementations` query command future.
+- **Frozen projection basis:** temporal/compile-once projection future.
+
+### PR F sonrası future-work (hâlâ geçerli)
+- **Frozen `CodeEvidenceBasis`:** review/execution compile-once basis.
+- **Plan scope resolution (`ResolvedPlanScope`):** Plan-Bound Execution.
+- **`CodeIdentityLookupError` geniş varyantları:** future.
 - **Gerçek node deletion transition:** EI8-V1 graph absence ile karşılandı.
 
-### PR E2 future-work (CLI scheme adoption sonrası — hâlâ geçerli)
-- **Rich diagnostic resolution preview:** lineage, multi-blocker, collision graph (supersede-preview
-  analogu). V1 minimal canonical preview kapandı.
-- **Batch resolution V2:** `--from-analysis` (session-spanning).
-- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` policy taşır; runtime drift guard
-  yeterli ama gerçek type-level future-work.
+### PR E2 future-work (hâlâ geçerli)
+- **Rich diagnostic resolution preview:** lineage, multi-blocker, collision graph.
+- **Batch resolution V2:** `--from-analysis`.
+- **Type-level policy mismatch garantisi:** `CanonicalCodeIdentity` policy taşır.
 
 ### Persistence milestone (evidence)
 - `PersistedObservedCodeEvidence` schema version + validated restore + latest/history politikası

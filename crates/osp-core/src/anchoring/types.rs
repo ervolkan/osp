@@ -13,7 +13,10 @@ use crate::anchoring::{
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// ConceptPacket newtype ID'si.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// PR G: `Ord`/`PartialOrd` eklendi (BTreeMap key — resolved implementation grouping
+/// deterministik sort için). String Ord olduğu için lexicographic sıralama güvenli.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ConceptPacketId(pub String);
 
@@ -24,6 +27,45 @@ pub struct ConceptPacketId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ConceptNodeId(pub String);
+
+/// `ConceptPacketId::try_from_node_id` hatası — non-canonical / empty packet node ID.
+///
+/// PR G — canonical reverse parse. `ConceptPacketId` public tuple newtype olduğu için
+/// boş değer temsil edilebilir; `try_from_node_id` non-empty contract'ı uygular.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[error("not a valid ConceptPacket node id: {node_id}")]
+pub struct InvalidConceptPacketNodeId {
+    pub node_id: ConceptNodeId,
+}
+
+impl ConceptPacketId {
+    /// Single source-of-truth prefix constant (PR G — literal duplication yok).
+    pub const NODE_PREFIX: &'static str = "ConceptPacket:";
+
+    /// ConceptPacket node ID'sine çevir (graph'ta ConceptPacket node'u).
+    ///
+    /// PR G — store.rs'tan types.rs'e taşındı (ID formatı store davranışı değil,
+    /// ID tipinin sorumluluğu).
+    pub fn to_node_id(&self) -> ConceptNodeId {
+        ConceptNodeId(format!("{}{}", Self::NODE_PREFIX, self.0))
+    }
+
+    /// Canonical reverse parse (PR G).
+    ///
+    /// `to_node_id` round-trip: non-empty, non-whitespace, non-control packet IDs için total.
+    /// Empty/whitespace/control reject (R1a P2 review — malformed packet ID'ler projection
+    /// admission boundary'sinde derived relation key'ine taşınmamalı).
+    pub fn try_from_node_id(node_id: &ConceptNodeId) -> Result<Self, InvalidConceptPacketNodeId> {
+        let raw = node_id
+            .0
+            .strip_prefix(Self::NODE_PREFIX)
+            .filter(|v| !v.trim().is_empty() && !v.chars().any(|c| c.is_control()))
+            .ok_or_else(|| InvalidConceptPacketNodeId {
+                node_id: node_id.clone(),
+            })?;
+        Ok(Self(raw.to_owned()))
+    }
+}
 
 /// PositionSnapshot newtype ID'si.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

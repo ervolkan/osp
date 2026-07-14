@@ -397,7 +397,7 @@ impl AnchorGate {
             && c.target_node_id.0.starts_with("CodeEntity:")
         {
             return Err(GateError::IllegalDirectCodeBinding {
-                from: c.packet_id.clone().into_node_id(),
+                from: c.packet_id.clone().to_node_id(),
                 to: c.target_node_id.clone(),
             });
         }
