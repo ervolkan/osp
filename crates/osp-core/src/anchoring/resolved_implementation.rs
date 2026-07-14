@@ -1275,19 +1275,13 @@ mod lineage_fold_tests {
             ],
         );
         let err = project_resolved_implementations(&b).unwrap_err();
-        // R6 ihlali: iki edge aynı candidate'ten. Triangulation record-edge mismatch yakalar
-        // (ikinci edge entity2'ye ama record candidate→entity1'den geliyor — BTreeMap son
-        // yazan kazanır). Bu fail-closed davranış; hangi varyantın önce tetiklendiği
-        // implementation detail — önemli olan structurally invalid state'in reject edilmesi.
-        assert!(
-            matches!(
-                err,
-                ResolvedImplementationStructureError::MultipleResolutions { .. }
-                    | ResolvedImplementationStructureError::ResolutionRecordEdgeMismatch { .. }
-                    | ResolvedImplementationStructureError::MissingResolutionRecord { .. }
-            ),
-            "R6 ihlali structural error: {err:?}"
-        );
+        // R6 ihlali: aynı candidate iki farklı entity'ye Accepted ResolvesTo.
+        // Yeni algoritma (review tur 3) R6 candidate cardinality'yi non-live'den ÖNCE
+        // doğrular → deterministik MultipleResolutions.
+        assert!(matches!(
+            err,
+            ResolvedImplementationStructureError::MultipleResolutions { .. }
+        ));
     }
 
     #[test]
