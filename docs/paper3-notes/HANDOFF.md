@@ -1,7 +1,7 @@
 # Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration + PR G lineage-aware effective projection TAMAM)
 
-> **Tarih:** 2026-07-13 (`feat/resolved-implementation-expectation` dalı — PR G implementasyonu)
-> **Dal:** `feat/resolved-implementation-expectation` (main `4ccd5c6` üstünde — PR F merged; plan 4 tur review)
+> **Tarih:** 2026-07-14 (PR G merge sonrası — main `9254cf2`)
+> **Dal:** `main` (PR G `feat/resolved-implementation-expectation` merged; plan 4 tur + PR 3 tur review)
 > **Durum:** Faz 8b epistemik çekirdek + CLI accept/reject/supersede/preview + analysis bridge + metric projection + PR C/D/E/E2/F + **PR G (lineage-aware effective projection — packet-level derived read model)** TAMAM. On bir yüzey kapandı. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: arXiv v1.4.
 
 ---
@@ -1063,6 +1063,10 @@ en değerli çıktı bu oldu.
 | `crates/osp-cli/tests/review_flow.rs` | **11 integration test (stale basis, restart-safe, operator, corrupt, canonical)** |
 | `crates/osp-cli/tests/resolution_flow.rs` | **PR E2: 9 integration test (Created mutlu yol, stale basis, not accepted, JSON, preview)** |
 | `crates/osp-mcp/tests/inv_c11_agent_surface.rs` | **INV-C11 agent-surface regression (static source scan)** |
+| `crates/osp-core/src/anchoring/code_evidence.rs` | **PR F: `ResolvedCodeIdentity` + `CodeIdentityBindingLookup` + `CodeEvidenceSource` + `InMemoryCodeEvidenceSource` + `ResolvedCodeEvidenceProvider` adapter + EI1-EI8 evidence identity invariants** |
+| `crates/osp-core/src/anchoring/resolved_implementation.rs` | **PR G: `ResolvedImplementationExpectation` + `ResolvedImplementationBasis` + `project_resolved_implementations` pure projector + RP1-RP4 lineage projection invariants + iki yönlü occurrence-aware ResolutionRecord triangulation** |
+| `crates/osp-core/src/anchoring/identity.rs` | **PR E: `CodeIdentityKey` + `CodeIdentityScheme` + `derive_resolved_code_entity_id` (FNV-1a domain-separated)** |
+| `crates/osp-core/src/anchoring/types.rs` | `ConceptNodeId` (Ord) + `ConceptPacketId` (Ord + `to_node_id`/`try_from_node_id` canonical reverse) + `CodeIdentityBinding` + `ObservedCodeEvidence` (PR F: `code_identity_key`) |
 
 ## Kullanıcıya not
 
@@ -1075,11 +1079,10 @@ en değerli çıktı bu oldu.
 
 ## Commit durumu
 
-✅ **Faz 8b + CLI `osp review` (accept/reject/supersede/resolve-code-entity) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption TAMAM.**
-- main: `06d3a02` (PR E merged — entity resolution core + persistence contract).
-- PR E2: `feat/cli-scheme-adoption` dalı (main `06d3a02` üstünde) — CLI scheme adoption (graph init binding seeding + resolve-code-entity surface + minimal canonical preview); 3 tur plan review implementation-ready → implementasyon tamam.
-- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup); PR #53 (CLI accept/reject); PR #54 (CLI supersession); PR #55 (rich SupersedePreview); PR #56 (analysis bridge); PR #57 (metric projection); **PR C (axis-granular evidence model)**; **PR D (evidence projection + wiring proof)**; **PR E (entity resolution core)**; **PR E2 (CLI scheme adoption)**.
-- **osp-core 588 lib** + **osp-cli 144 unit** + **28 compile-fail** + **21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards** + **osp-mcp +2 INV-C11** yeşil (`RUSTFLAGS="-D warnings"` temiz).
+✅ **Faz 8b + CLI `osp review` (accept/reject/supersede/resolve-code-entity) + rich SupersedePreview + Analysis bridge + Metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration + PR G lineage-aware effective projection TAMAM.**
+- main: `9254cf2` (PR G merged — lineage-aware effective projection; packet-level derived read model).
+- PR #48-51 (epistemik çekirdek); PR #52 (stale cleanup); PR #53-55 (CLI review/supersede/preview); PR #56-57 (analysis bridge + metric projection); **PR C** (axis-granular evidence model); **PR D** (evidence projection + wiring proof); **PR E** (entity resolution core); **PR E2** (CLI scheme adoption); **PR F** (evidence identity migration — anti-corruption boundary); **PR G** (lineage-aware effective projection — packet-level derived read model).
+- **osp-core 653 lib** + **osp-cli 155 unit** + **30 compile-fail** + **21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards** + **osp-mcp +2 INV-C11** yeşil (`RUSTFLAGS="-D warnings"` temiz).
 
 ## Yayın durumu (v1.3 → v1.4 adayı)
 
@@ -1092,7 +1095,7 @@ en değerli çıktı bu oldu.
 | Paper 2 | `10.5281/zenodo.21207704` | (v1.2) | CC-BY-4.0 |
 | Evidence Pack | `10.5281/zenodo.21207762` | (frozen) | CC-BY-4.0 |
 
-- **License düzeltmesi:** Üç makale + evidence pack artık **CC-BY-4.0** (önceki Apache-2.0 yanlıştı — makale yaratıcı eser, kod Apache-2.0 kalır). Tüm Zenodo kayıtları güncellendi.
+- **License:** Üç makale + evidence pack **CC-BY-4.0** (kod Apache-2.0 kalır).
 - **Cite pratiği:** Concept DOI kullanılır (her zaman en son versiyona resolve). Version DOI belirli sürümü işaret eder (v1.3 = `21251821`).
-- **arXiv sonrası:** v1.3 epistemik çekirdek (supersession vocabulary) tamamladığı için dondurma gerek yok. Jimenez e-postası hazır (endorsement).
-- **PR #52:** makale-kod tutarlılığı (markdown stale + PDF üretim aracı + v1.3 review düzeltmeleri). Merge sonrası arXiv yoluna çıkış.
+- **arXiv v1.4:** Epistemik çekirdek + CLI surface + evidence identity + entity resolution + lineage projection tamam. Endorsement hazır (Jimenez e-postası).
+- **v1.4 pending paper edits:** INV-C16 runtime invariant (16 invariant; 13 type-enforced + 3 runtime C14/C15/C16); PR C/D/E/E2/F/G Table'ları; EI1-EI8 (PR F) + RP1-RP4 (PR G) invariant aileleri; trybuild 24→30; compile-fail fixture adları.

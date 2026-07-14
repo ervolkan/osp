@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-12 (Paper 3 v1.3 public manuscript + PR C/D/E entity resolution core — arXiv editorial pass tamam, Zenodo yolunda)
+> **Son güncelleme:** 2026-07-14 (PR G merge — lineage-aware effective projection; main `9254cf2`; arXiv v1.4 adayı)
 > **Detaylı roadmap:** [`roadmap/paper2-roadmap.md`](roadmap/paper2-roadmap.md)
 > **Invariant spec:** [`spec/invariants.md`](spec/invariants.md)
 > **MCP tasarım:** [`spec/mcp-design.md`](spec/mcp-design.md)
@@ -69,7 +69,7 @@ için draft deposit bekliyor. **~1150 workspace test (osp-desktop hariç; osp-co
 | Faz 7 | Planlandı | Embedding + LLM-assisted candidate generation |
 | Faz 8 | Planlandı | Desktop integration (Project Reality Cockpit) |
 | **Faz 8a** | ✅ PR40-41 | OperatorReviewSession (INV-C12/C13 real promotion) + threat tightening |
-| **Faz 8b** | ✅ PR48-51 + CLI | PR #48 ✅ (varyant + INV-C14). PR #49 ✅ (`apply_supersede` + INV-C15 atomic). PR #50 ✅ (`SupersedeSession` + crate-private authority issuer, INV-C15 production invocation). PR #51 ✅ (`mainline_query` deterministic ordering). **CLI accept/reject** ✅ (PR #53): persistent `AnchorStoreSnapshot`, Candidate-only seed, one-shot + interactive, basis-freshness. **CLI supersession** ✅ (PR #54): `osp review supersede`, `node_digest_hex` unconditional, named `SupersedeDigests`, endpoint-specific stale, store-level typed errors (E1 downcast), yön-açık confirmation. **Rich SupersedePreview** ✅ (PR #55). **Analysis bridge** ✅ (PR #56). **Metric projection** ✅ (PR #57). **PR C** ✅ (axis-granular evidence model): `ObservedPhysicalMetrics` per-axis provenance/strength/coverage, zero-strength reject, compile-fail 24→26. **PR D** ✅ (evidence projection + wiring proof): `evidence_projection.rs` draft→evidence conversion, zero coverage reject, in-crate scorer+gate compatibility proof, ownership guard. Sıradaki: PR E (structural relation projection), PR G (persistence milestone) |
+| **Faz 8b+** | ✅ PR48-57 + C/D/E/E2/F/G | PR #48-51 (epistemik çekirdek). PR #53-55 (CLI review/supersede/preview). PR #56-57 (analysis bridge + metric projection). **PR C** ✅ (axis-granular evidence model). **PR D** ✅ (evidence projection + wiring proof). **PR E** ✅ (entity resolution core + persistence contract — `CodeIdentityKey` + `ResolvesTo` + INV-C16 + snapshot v2). **PR E2** ✅ (CLI scheme adoption — binding seeding + `resolve-code-entity`). **PR F** ✅ (evidence identity migration — anti-corruption boundary: `CodeIdentityBindingLookup` + `CodeEvidenceSource` + adapter + EI1-EI8). **PR G** ✅ (lineage-aware effective projection — packet-level derived read model: `ResolvedImplementationExpectation` + pure projector + iki yönlü occurrence-aware ResolutionRecord triangulation + RP1-RP4). Sıradaki: arXiv v1.4. |
 | Faz 8c | ✅ PR47 | promote_to_accepted kaldırma (legacy path migrate) |
 
 ### Invariant'lar (15 Paper 3'e özgü + INV-T2 boundary)
@@ -162,14 +162,15 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 3 Zenodo → endorsement → arXiv.** Paper 3 v1.3 public manuscript hazır (`52cc9c9`).
-- v1.3 first-complete + Faz 8a real promotion + threat tightening + arXiv editorial + PR C axis-granular evidence model TAMAM
-- **Sıradaki:** PR D (provider + gate/scorer wiring), Zenodo evidence pack + P1/P2 deposit → 3 DOI → References doldur → endorsement → arXiv
+**Paper 3 arXiv v1.4.** Tüm milestone'lar tamam:
+- v1.3 Zenodo'da canlı + epistemik çekirdek + CLI surface + evidence identity (PR F) + entity resolution (PR E/E2) + lineage projection (PR G) TAMAM
+- **v1.4 pending paper edits:** INV-C16 runtime invariant; PR C/D/E/E2/F/G Table'ları; EI1-EI8 (PR F) + RP1-RP4 (PR G) invariant aileleri; trybuild 24→30; compile-fail fixture adları
+- Endorsement hazır (Jimenez e-postası)
 - Evidence pack hazır: `docs/paper3-notes/evidence-pack/` (README + MANIFEST)
 - Detaylı handoff: [`paper3-notes/HANDOFF.md`](paper3-notes/HANDOFF.md)
 
 Paper 2 v1.2 review ile arXiv adayı (docs/papers/paper2-agent-trajectory.md).
-Paper 3 v1.3 public manuscript — Zenodo yolunda.
+Paper 3 v1.4 derive adayı — arXiv yoluna çıkış.
 
 ## Test Durumu
 
