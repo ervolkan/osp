@@ -18,9 +18,12 @@
 //! üzerinde operator-reviewed resolution). Bu yüzden tip "EffectiveImplementation" değil
 //! "ResolvedImplementationExpectation" — expectation resolve edildi, effective fact değil.
 //!
-//! # INV-C7 uygulanmaz
-//! Derived record write path'e girmez (apply_plan değil, gate'den geçmez). High-stake explanation
-//! kategorisi devreye girmez. Tip ayrımı: committed `ImplementedBy` edge ile karışmaz.
+//! # INV-C7 interaction
+//! Derived record write path'e girmez (apply_plan değil, gate'den geçmez) — derived output için
+//! INV-C7 high-stake explanation uygulanmaz. Ancak source `ExpectedImplementation` ve `ResolvesTo`
+//! edge'leri high-stake; INV-C7 explanation validity canonical store ingress tarafından enforced
+//! kabul edilir ve RP1 validation V1 kapsamı dışındadır. Tip ayrımı: committed `ImplementedBy`
+//! edge ile derived record karışmaz.
 //!
 //! # N:1 relation model
 //! Unique relation `(packet_id, entity_id)`. Aynı çift birden fazla candidate lineage proof
@@ -405,7 +408,8 @@ pub enum ResolvedImplementationQueryError<E> {
 /// Pure projector — `ResolvedImplementationBasis` → `Vec<ResolvedImplementationExpectation>`.
 ///
 /// **Fail-closed validation:** Duplicate node, dangling endpoint, wrong-kind/status/family
-/// hepsi typed error. Sessiz skip YOK — RP1 "projection yalan söyleyemez".
+/// hepsi typed error. Structurally malformed lineage state typed error ile reject edilir.
+/// Valid ama unresolved veya non-live lineage state bilinçli olarak effective projection'dan hariç tutulur.
 ///
 /// **Lineage fold (P1-2/P1-3/P1-4):**
 /// 1. Fail-closed node index (duplicate node error).
@@ -447,8 +451,11 @@ pub fn project_resolved_implementations(
     // 2. Accepted ResolvesTo index — full endpoint matris + triangulation.
     //    R1a P1-2 (review tur 2): triangulation non-live skip'ten ÖNCE — structural validity
     //    → sonra projection'a dahil etme.
+    //    R1a P1 (review tur 3): candidate-level R6 cardinality de non-live'den ÖNCE.
+    //    İki ayrı map: resolution_by_candidate (R6 tüm edge'ler) + live_resolutions (projection).
     let mut edge_pairs: BTreeMap<(ConceptNodeId, ConceptNodeId), usize> = BTreeMap::new();
-    let mut resolutions: BTreeMap<ConceptNodeId, (ConceptNodeId, DerivedEdgeReference)> =
+    let mut resolution_by_candidate: BTreeMap<ConceptNodeId, ConceptNodeId> = BTreeMap::new();
+    let mut live_resolutions: BTreeMap<ConceptNodeId, (ConceptNodeId, DerivedEdgeReference)> =
         BTreeMap::new();
     for edge in &basis.edges {
         if edge.kind != ConceptEdgeKind::ResolvesTo {
@@ -537,22 +544,26 @@ pub fn project_resolved_implementations(
                 });
             }
         }
-        // R2 P2-4 (review tur 1) — non-live target skip (structural validity SONRASI).
-        // Superseded/Deprecated CodeEntity geçerli tarihsel resolution hedefi olabilir.
-        // Projector "hâlihazırda etkin resolution'lar" projekte eder.
-        if !target.decision_status.is_live_code_identity() {
-            continue;
-        }
-        // Duplicate accepted resolution → error (R6 ihlali).
-        let edge_ref = DerivedEdgeReference::from_edge(edge);
-        if resolutions
-            .insert(edge.from.clone(), (edge.to.clone(), edge_ref))
+        // R1a P1 (review tur 3) — candidate-level R6 cardinality non-live skip'ten ÖNCE.
+        // Aynı candidate'in iki farklı entity'ye Accepted ResolvesTo edge'i R6 ihlalidir;
+        // biri non-live olsa bile structural validity önce doğrulanmalı.
+        if resolution_by_candidate
+            .insert(edge.from.clone(), edge.to.clone())
             .is_some()
         {
             return Err(ResolvedImplementationStructureError::MultipleResolutions {
                 candidate_id: edge.from.clone(),
             });
         }
+        // R2 P2-4 (review tur 1) — non-live target skip (structural validity SONRASI).
+        // Superseded/Deprecated CodeEntity geçerli tarihsel resolution hedefi olabilir.
+        // Projector "hâlihazırda etkin resolution'lar" projekte eder.
+        if !target.decision_status.is_live_code_identity() {
+            continue;
+        }
+        // Live projection index — sadece live target'lar ExpectedImplementation admission'da görünür.
+        let edge_ref = DerivedEdgeReference::from_edge(edge);
+        live_resolutions.insert(edge.from.clone(), (edge.to.clone(), edge_ref));
     }
 
     // 2b. R1a P1-1 (review tur 2) — Orphan record check (record → edge yönü).
@@ -605,7 +616,7 @@ pub fn project_resolved_implementations(
             continue;
         }
         // Resolution lookup — candidate resolve edildiyse lineage üret.
-        let Some((entity_id, resolution_ref)) = resolutions.get(&edge.to) else {
+        let Some((entity_id, resolution_ref)) = live_resolutions.get(&edge.to) else {
             continue;
         };
         let expected_ref = DerivedEdgeReference::from_edge(edge);
@@ -1288,6 +1299,41 @@ mod lineage_fold_tests {
         assert!(matches!(
             err,
             ResolvedImplementationStructureError::DuplicateNode { .. }
+        ));
+    }
+
+    #[test]
+    fn project_rejects_multiple_resolutions_when_one_target_is_non_live() {
+        // R1a P1 (review tur 3) — aynı candidate'in biri non-live iki farklı entity'ye
+        // Accepted ResolvesTo → R6 ihlali non-live skip'ten ÖNCE yakalanmalı.
+        let candidate = accepted_candidate("src/auth.rs");
+        let live_e = live_entity("CodeEntity:new");
+        let deprecated_e = ConceptNode {
+            id: ConceptNodeId("CodeEntity:old".into()),
+            canonical: "old".into(),
+            aliases: vec![],
+            node_kind: ConceptNodeKind::CodeEntity,
+            decision_status: DecisionStatus::Deprecated, // non-live
+            position_family: PositionFamily::PhysicalCode,
+        };
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let new_id = ConceptNodeId("CodeEntity:new".into());
+        let old_id = ConceptNodeId("CodeEntity:old".into());
+        let b = basis(
+            vec![candidate, live_e, deprecated_e],
+            vec![
+                resolves_to_edge(&candidate_id, &old_id),
+                resolves_to_edge(&candidate_id, &new_id),
+            ],
+            vec![
+                resolution_record(&candidate_id, &old_id),
+                resolution_record(&candidate_id, &new_id),
+            ],
+        );
+        let err = project_resolved_implementations(&b).unwrap_err();
+        assert!(matches!(
+            err,
+            ResolvedImplementationStructureError::MultipleResolutions { .. }
         ));
     }
 

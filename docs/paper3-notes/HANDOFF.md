@@ -14,10 +14,10 @@ PR #50 (`SupersedeSession` + crate-private authority issuer, INV-C15 production 
 (`mainline_query` deterministic ordering) tamam. Faz 8b'in dört PR'lık kemeri (varyant → atomik mekanizma →
 güvenilir sınır → deterministik projeksiyon) kapandı.
 
-**osp-core lib: 652 test** (PR G: 604→652 +48: ConceptPacketId Ord/round-trip + DerivedEdgeReference/Lineage/Expectation nested public ctor + ResolvedImplementationBasis + project_resolved_implementations pure projector fail-closed + RP1-RP4 lineage fold + review tur 1: ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b);
+**osp-core lib: 653 test** (PR G: 604→653 +49: ConceptPacketId Ord/round-trip + DerivedEdgeReference/Lineage/Expectation nested public ctor + ResolvedImplementationBasis + project_resolved_implementations pure projector fail-closed + RP1-RP4 lineage fold + review tur 1: ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b);
 **osp-cli: 155 unit** (PR G untouched);
 **30 compile-fail** (PR G eklemedi);
-**workspace total 1149** (osp-desktop hariç); **0 regression**; `RUSTFLAGS="-D warnings"` temiz.
+**workspace total 1150** (osp-desktop hariç); **0 regression**; `RUSTFLAGS="-D warnings"` temiz.
 Zenodo DOI'leri canlı (P1/P2/P3/pack). arXiv — Faz 8b epistemik çekirdek kapandığı için dondurma gerek yok artık.
 
 ## PR E2 — CLI scheme adoption (bu oturumda)
@@ -232,9 +232,9 @@ ConceptPacket:X ──ResolvedImplementationExpectation──→ CodeEntity:W
 - **RP4-b**: Store snapshot unchanged (RUNTIME export_snapshot equality)
 
 ### Testler (0 regression; `RUSTFLAGS="-D warnings"` temiz)
-- **osp-core lib:** 604 → 652 (+48: Katman 1 smart-ctor + Katman 2 lineage fold + Katman 3 RP3/RP4 + review tur 1: iki yönlü occurrence-aware ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b)
+- **osp-core lib:** 604 → 653 (+49: Katman 1 smart-ctor + Katman 2 lineage fold + Katman 3 RP3/RP4 + review tur 1: iki yönlü occurrence-aware ResolutionRecord triangulation + ExpectedImplementation fail-closed + 5 error dalı fixture + non-live skip + store integration RP4-b)
 - **compile-fail:** 30 (değişmedi — RP3 serde assertion, compile-fail YOK)
-- **workspace total:** 1101 → 1149 (osp-desktop hariç)
+- **workspace total:** 1101 → 1150 (osp-desktop hariç)
 
 ### 4 tur plan review'ün metodolojik dersi
 - **Tur 1:** 3 P0 ontolojik engel (lineage yok, edge status, primitive eksik) — koda karşı doğrulandı.
@@ -657,10 +657,10 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
 - `Imports → ConceptEdge` — ama önce physical relation vs conceptual edge ontolojik sözleşme tasarımı.
 
 ### Test envanteri (current protocol — PR G sonrası)
-- osp-core lib: 652 test
+- osp-core lib: 653 test
 - osp-cli unit: 155 test
 - compile-fail (trybuild): 30 (osp-core)
-- workspace total: 1149 (osp-desktop hariç)
+- workspace total: 1150 (osp-desktop hariç)
 - 0 regression; `RUSTFLAGS="-D warnings"` temiz.
 
 ---
