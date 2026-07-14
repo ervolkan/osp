@@ -36,7 +36,7 @@ Paper 3           ✅ v1.3 PUBLIC MANUSCRIPT — arXiv editorial pass tamam (52c
 
 Paper 3 **v1.3 public manuscript** — first-complete draft + Faz 8a real promotion + threat/limitations
 tightening + arXiv editorial pass + PR C axis-granular evidence + PR D evidence projection tamam. **Zenodo evidence pack hazır** (README + MANIFEST), DOI'ler
-için draft deposit bekliyor. **~1134 workspace test (osp-desktop hariç; osp-core 637 lib, osp-cli 155 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
+için draft deposit bekliyor. **~1145 workspace test (osp-desktop hariç; osp-core 648 lib, osp-cli 155 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards, osp-mcp +2 INV-C11), 0 development marker, 367 kelime abstract.**
 
 ### Bu oturumda yapılanlar (PR #37-#42)
 
@@ -91,7 +91,7 @@ için draft deposit bekliyor. **~1134 workspace test (osp-desktop hariç; osp-co
 ### Paper 3 kanıtları (Aşama 1 evidence freeze sertleştirildi)
 
 - **Frozen evidence snapshot (Aşama 1):** 18 type-level trybuild compile-fail (11 Paper 3'e özgü: INV-C + INV-P) — **current protocol envanteri 30** (PR F evidence identity trybuild'leri sonrası; bkz. run-metadata.md current protocol tablosu)
-- 637 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
+- 648 osp-core lib testi, 13 golden fixture + **5 held-out adversarial** (4 held_out + 1 regression_anchored)
 - **E2E binding chain replay** (Adım 1 gerçek pipeline koşusu) — `e2e-binding-chain-replay.json`
 - **E2E rejected paths replay** (4 negatif yol: AxisMismatch, AxisNotInCandidates, TemplateNotSuggested, NotAccepted) — `e2e-rejected-paths-replay.json`
 - **§0 pre-flight canonical + marker tablosu** (6 cümle × 4 sütun, gerçek pipeline koşusu) — `paper3_evidence.rs::preflight`

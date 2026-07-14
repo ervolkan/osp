@@ -46,14 +46,14 @@ impl ConceptPacketId {
     ///
     /// PR G — store.rs'tan types.rs'e taşındı (ID formatı store davranışı değil,
     /// ID tipinin sorumluluğu).
-    pub fn into_node_id(&self) -> ConceptNodeId {
+    pub fn to_node_id(&self) -> ConceptNodeId {
         ConceptNodeId(format!("{}{}", Self::NODE_PREFIX, self.0))
     }
 
     /// Canonical reverse parse (PR G).
     ///
-    /// `into_node_id` round-trip: non-empty packet IDs için total. Empty packet ID
-    /// `into_node_id` ile `"ConceptPacket:"` üretir ama `try_from_node_id` reject eder
+    /// `to_node_id` round-trip: non-empty packet IDs için total. Empty packet ID
+    /// `to_node_id` ile `"ConceptPacket:"` üretir ama `try_from_node_id` reject eder
     /// (non-empty contract). Bu yüzden round-trip partial — empty reject edilir.
     pub fn try_from_node_id(node_id: &ConceptNodeId) -> Result<Self, InvalidConceptPacketNodeId> {
         let raw = node_id

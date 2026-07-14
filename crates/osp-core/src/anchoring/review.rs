@@ -54,7 +54,7 @@ use std::time::SystemTime;
 pub struct SessionId(String);
 
 impl SessionId {
-    fn derive(operator: &OperatorId, opened_at: SystemTime) -> Self {
+    pub(crate) fn derive(operator: &OperatorId, opened_at: SystemTime) -> Self {
         let mut hash: u64 = 0xcbf29ce484222325;
         for b in operator.0.as_bytes() {
             hash ^= *b as u64;

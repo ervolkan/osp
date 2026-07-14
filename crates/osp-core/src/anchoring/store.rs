@@ -1142,7 +1142,7 @@ impl InMemoryAnchorStore {
 
             // Edge yaz (Candidate status, INV-C5)
             let edge = ConceptEdge {
-                from: plan.packet_id.clone().into_node_id(),
+                from: plan.packet_id.clone().to_node_id(),
                 to: c.target_node_id.clone(),
                 kind: c.edge_kind,
                 decision_status: DecisionStatus::Candidate,
@@ -1854,7 +1854,9 @@ impl AnchorStore for InMemoryAnchorStore {
         use crate::anchoring::resolved_implementation::ResolvedImplementationBasis;
         let nodes: Vec<ConceptNode> = self.graph.nodes_iter().cloned().collect();
         let edges: Vec<ConceptEdge> = self.graph.edges().cloned().collect();
-        Ok(ResolvedImplementationBasis::new(nodes, edges))
+        // R1a P1-1 (review tur 1) — resolution ledger snapshot (triangulation için).
+        let resolution_records = self.resolution_ledger();
+        Ok(ResolvedImplementationBasis::new(nodes, edges, resolution_records))
     }
 }
 
@@ -1917,7 +1919,7 @@ fn parse_target(id: &str) -> (crate::anchoring::types::ConceptNodeKind, String) 
     }
 }
 
-// PR G — `ConceptPacketId::into_node_id` + `try_from_node_id` types.rs'e taşındı
+// PR G — `ConceptPacketId::to_node_id` + `try_from_node_id` types.rs'e taşındı
 // (ID formatı store davranışı değil, ID tipinin sorumluluğu).
 
 // ═══════════════════════════════════════════════════════════════════════════════
