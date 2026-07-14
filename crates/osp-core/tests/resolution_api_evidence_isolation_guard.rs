@@ -9,14 +9,18 @@
 //! verified by a static architecture guard — it is not a type-level impossibility
 //! (violation can be written, the guard catches it before merge).
 //!
-//! Enforcement class: **ARCH-GUARD** (API-shape policy + static source-scan test).
+//! Enforcement class: **ARCH-GUARD** (API-shape policy + static AST-based source-scan test).
 //!
-//! ## What this guard checks
+//! ## What this guard checks (AST-based, via `syn`)
 //!
-//! The public resolution surface — `apply_resolution`, `CodeEntityResolutionSession::resolve`,
-//! `ResolutionApplication`, `PresentedResolutionBasis`, `ResolutionRecord` — must not carry
-//! evidence-source or evidence-mutation capability types in their public signatures
-//! (function parameters, return types, struct fields reachable through public accessors).
+//! The public resolution surface across `src/anchoring/{review,store,resolved_implementation}.rs`:
+//! - **Struct fields** of structs whose name contains a resolution-API fragment
+//!   (`ResolutionApplication`, `PresentedResolutionBasis`, `ResolutionRecord`, ...)
+//! - **Trait method signatures** whose name contains a resolution-API fragment
+//!   (`apply_resolution`, `resolution_target_for_identity`, ...) — trait metotları
+//!   public-by-definition, `pub fn` olmasalar bile taranır
+//! - **`impl` method signatures** that are `pub fn`/`pub(crate) fn` and either carry a
+//!   resolution-API fragment in their name or mention a resolution type in their signature
 //!
 //! Forbidden tokens (capability surface — generic `<P: CodeEvidenceProvider>` atlatma önlemi
 //! için tüm ilgili type isimleri listede):
@@ -25,27 +29,19 @@
 //! - `CodeEvidenceSource` (key-facing evidence source trait)
 //! - `ObservedCodeEvidence` (evidence object)
 //! - `InMemoryCodeEvidenceSource` (source implementation)
-//! - `&mut dyn CodeEvidenceProvider` (mutable evidence provider capability)
 //!
-//! ## What this guard does NOT check
+//! ## Red-kanıt test
 //!
-//! - Type-level impossibility (a determined caller could add the token; the guard surfaces
-//!   it as a CI failure before merge).
-//! - Internal implementation usage (a private helper inside a module may legitimately
-//!   compose evidence for its own purposes — the claim is about the public resolution API
-//!   surface, not the whole module).
-//! - That resolution "can never mutate evidence" in a global sense — only that the evaluated
-//!   public signatures do not accept or expose the capability.
-//!
-//! ## Relationship to existing guards
-//!
-//! `crates/osp-cli/tests/architecture_guards.rs` guards CLI production source for evidence
-//! construction ownership. This guard is the osp-core analog for the resolution API surface
-//! (a negative-capability claim: the resolution API does not carry evidence capability).
+//! `resolution_api_guard_catches_forbidden_evidence_in_synthetic_module`: sentetik bir Rust
+//! modülü içine forbidden token taşıyan struct field + trait method + impl accessor koyar ve
+//! guard'ın bunları yakaladığını (panik ile) doğrular. Bu, guard'ın gerçekten tarama
+//! yaptığının kanıtıdır; test yeşil olsa bile tarama çalışmıyorsa red-kanıt kırılır.
 
 use std::path::Path;
+use syn::visit::Visit;
+use quote::ToTokens;
 
-/// Forbidden evidence-capability tokens that must not appear in the public resolution
+/// Forbidden evidence-capability type names that must not appear in the public resolution
 /// API signature surface.
 const FORBIDDEN_TOKENS: &[&str] = &[
     "CodeEvidenceProvider",
@@ -55,214 +51,229 @@ const FORBIDDEN_TOKENS: &[&str] = &[
     "InMemoryCodeEvidenceSource",
 ];
 
-/// Public resolution API surface item names — the signatures we isolate.
-const RESOLUTION_API_ITEMS: &[&str] = &[
+/// Public resolution API surface item name fragments — the public types/functions we isolate.
+const RESOLUTION_API_FRAGMENTS: &[&str] = &[
     "apply_resolution",
-    "CodeEntityResolutionSession",
+    "resolution_target_for_identity",
     "ResolutionApplication",
     "PresentedResolutionBasis",
     "ResolutionRecord",
+    "CodeEntityResolutionSession",
+    "ResolutionBasisView",
+    "ResolutionOutcome",
 ];
 
-/// Strip Rust line comments (`//...` and `///...`) and block comments (`/* ... */`)
-/// from source text. Prevents documentation/comment false positives.
-fn strip_comments(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut chars = src.chars().peekable();
-    let mut in_str = false;
-    let mut str_delim = '\0';
-    let mut in_char = false;
-    let mut prev = '\0';
-
-    while let Some(c) = chars.next() {
-        // String/char literal tracking (skip comment detection inside literals).
-        if !in_char && !in_str && (c == '"' || c == '\'') {
-            // Heuristic: if previous non-ws was an identifier char or `)`, it's a lifetime/label
-            // or a char close; we still treat as string/char start conservatively except lifetimes.
-            if c == '\'' && (prev.is_alphanumeric() || prev == '_' || prev == ')') {
-                // Likely a lifetime — don't enter string mode. Emit and continue.
-                out.push(c);
-                prev = c;
-                continue;
-            }
-            if c == '"' {
-                in_str = true;
-                str_delim = '"';
-                out.push(c);
-                prev = c;
-                continue;
-            } else {
-                in_char = true;
-                str_delim = '\'';
-                out.push(c);
-                prev = c;
-                continue;
-            }
-        }
-        if in_str {
-            out.push(c);
-            if c == str_delim && prev != '\\' {
-                in_str = false;
-            }
-            prev = c;
-            continue;
-        }
-        if in_char {
-            out.push(c);
-            if c == str_delim && prev != '\\' {
-                in_char = false;
-            }
-            prev = c;
-            continue;
-        }
-        // Comment detection.
-        if c == '/' {
-            if let Some(&n) = chars.peek() {
-                if n == '/' {
-                    // Line comment — skip to end of line.
-                    for cc in chars.by_ref() {
-                        if cc == '\n' {
-                            out.push('\n');
-                            break;
-                        }
-                    }
-                    prev = '\n';
-                    continue;
-                }
-                if n == '*' {
-                    // Block comment — skip to closing `*/`.
-                    chars.next(); // consume '*'
-                    let mut prev_star = false;
-                    while let Some(cc) = chars.next() {
-                        if prev_star && cc == '/' {
-                            break;
-                        }
-                        prev_star = cc == '*';
-                    }
-                    out.push(' ');
-                    prev = ' ';
-                    continue;
-                }
-            }
-        }
-        out.push(c);
-        prev = c;
-    }
-    out
+/// `syn::Type` → string (token bazlı; `ToTokens::to_token_stream` üzerinden).
+fn type_to_tokens_string(ty: &syn::Type) -> String {
+    ty.to_token_stream().to_string().replace(' ', "")
 }
 
-/// Collect `pub` signature lines (function signatures, struct/enum/impl blocks) from
-/// comment-stripped source. A "signature line" is a line containing a `pub` keyword
-/// (or within a known public item context) that we treat as the API surface.
-///
-/// For robustness, this returns any line that either:
-/// (a) contains a forbidden token AND a resolution API item name (direct collision), or
-/// (b) is a `pub fn`/`pub struct`/`pub enum`/`pub trait`/`impl` signature line containing
-///     a resolution API item name.
-///
-/// We then check forbidden-token presence within those collected blocks.
-fn collect_resolution_api_signature_lines(stripped: &str) -> Vec<String> {
-    let mut hits = Vec::new();
-    let lines: Vec<&str> = stripped.lines().collect();
-
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        // Detect public signature anchors.
-        let is_pub_sig = trimmed.starts_with("pub fn ")
-            || trimmed.starts_with("pub(crate) fn ")
-            || trimmed.starts_with("pub unsafe fn ")
-            || trimmed.starts_with("pub const fn ")
-            || trimmed.starts_with("pub struct ")
-            || trimmed.starts_with("pub(crate) struct ")
-            || trimmed.starts_with("pub enum ")
-            || trimmed.starts_with("pub(crate) enum ")
-            || trimmed.starts_with("pub trait ")
-            || trimmed.starts_with("pub(crate) trait ")
-            || trimmed.starts_with("impl ")
-            || trimmed.starts_with("impl<");
-
-        if !is_pub_sig {
-            continue;
-        }
-
-        // Collect a signature block: the anchor line + continuation lines until we hit
-        // the opening `{` or terminating `;` (signatures may span multiple lines).
-        // We cap at 8 lines so a stray missing brace does not swallow the whole file.
-        let mut block = String::new();
-        for cont in lines[i..].iter().take(8) {
-            block.push_str(cont);
-            block.push('\n');
-            if cont.contains('{') || cont.trim_end().ends_with(';') {
-                break;
-            }
-        }
-
-        // Check if this signature block mentions a resolution API item.
-        let mentions_resolution_api =
-            RESOLUTION_API_ITEMS.iter().any(|item| block.contains(item));
-        if mentions_resolution_api {
-            hits.push(block);
-        }
-    }
-
-    hits
+/// Bir tip imzasında forbidden token geçiyor mu? Bulunan token listesini döndürür.
+fn type_mentions_forbidden(ty: &syn::Type) -> Vec<&'static str> {
+    let s = type_to_tokens_string(ty);
+    FORBIDDEN_TOKENS
+        .iter()
+        .copied()
+        .filter(|tok| s.contains(tok))
+        .collect()
 }
 
-/// Recursively collect `.rs` files under a directory.
-#[allow(dead_code)]
-fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rs_files(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            out.push(path);
+/// Bir isim resolution-API yüzeyine mi ait?
+fn is_resolution_item(ident: &str) -> bool {
+    RESOLUTION_API_FRAGMENTS.iter().any(|frag| ident.contains(frag))
+}
+
+/// AST ziyaretçisi: forbidden token içeren public resolution API yüzeylerini toplar.
+struct ViolationCollector {
+    violations: Vec<String>,
+    /// Şu an bir resolution-API type'ının impl bloğu içinde miyiz?
+    /// (`impl ResolutionApplication` gibi — tüm impl metotları resolution bağlamında.)
+    in_resolution_impl: bool,
+}
+
+impl ViolationCollector {
+    fn new() -> Self {
+        Self {
+            violations: Vec::new(),
+            in_resolution_impl: false,
         }
     }
+}
+
+/// Bir `Signature` üzerinde (parametreler + dönüş tipi) forbidden token ara.
+fn check_fn_signature(
+    collector: &mut ViolationCollector,
+    name: &str,
+    sig: &syn::Signature,
+    context: &str,
+) {
+    for arg in &sig.inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            for tok in type_mentions_forbidden(&pat_type.ty) {
+                collector.violations.push(format!(
+                    "{context}: fn `{name}` parametre tipi forbidden token `{tok}` taşıyor: `{}`",
+                    type_to_tokens_string(&pat_type.ty)
+                ));
+            }
+        }
+    }
+    if let syn::ReturnType::Type(_, ret_ty) = &sig.output {
+        for tok in type_mentions_forbidden(ret_ty) {
+            collector.violations.push(format!(
+                "{context}: fn `{name}` dönüş tipi forbidden token `{tok}` taşıyor: `{}`",
+                type_to_tokens_string(ret_ty)
+            ));
+        }
+    }
+}
+
+/// Bir struct field'ı üzerinde forbidden token ara.
+fn check_struct_field(
+    collector: &mut ViolationCollector,
+    struct_name: &str,
+    field: &syn::Field,
+) {
+    for tok in type_mentions_forbidden(&field.ty) {
+        collector.violations.push(format!(
+            "struct `{struct_name}` field forbidden token `{tok}` taşıyor: `{}`",
+            type_to_tokens_string(&field.ty)
+        ));
+    }
+}
+
+impl<'ast> Visit<'ast> for ViolationCollector {
+    fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+        let name = node.ident.to_string();
+        if !is_resolution_item(&name) {
+            return;
+        }
+        for field in &node.fields {
+            check_struct_field(self, &name, field);
+        }
+    }
+
+    fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+        // Trait metotları public-by-definition. Yalnızca resolution-API fragment'ı içeren
+        // metot isimlerini tara (AnchorStore trait'i apply_resolution içerir ama kendisi
+        // farklı isim; metot bazında filtre).
+        for item in &node.items {
+            if let syn::TraitItem::Fn(method) = item {
+                let method_name = method.sig.ident.to_string();
+                if is_resolution_item(&method_name) {
+                    check_fn_signature(
+                        self,
+                        &method_name,
+                        &method.sig,
+                        &format!("trait `{}` method", node.ident),
+                    );
+                }
+            }
+        }
+    }
+
+    fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
+        // impl bloğunun self tipi resolution-API type'ı ise (örn. `impl ResolutionApplication`),
+        // tüm impl metotları resolution bağlamında kabul edilir — scoping isim bazlı değil,
+        // impl context bazlı olur. Bu, `ResolutionApplication::evidence_source()` gibi
+        // accessor'ların yakalanmasını sağlar.
+        let self_is_resolution = node.self_ty.to_token_stream().to_string().replace(' ', "");
+        let in_resolution_impl = is_resolution_item(&self_is_resolution);
+
+        let old_in_impl = self.in_resolution_impl;
+        self.in_resolution_impl = in_resolution_impl;
+        syn::visit::visit_item_impl(self, node);
+        self.in_resolution_impl = old_in_impl;
+    }
+
+    fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+        // impl bloklarındaki public metotlar (pub veya pub(crate)).
+        let is_pub = !matches!(node.vis, syn::Visibility::Inherited);
+        if !is_pub {
+            return;
+        }
+        let method_name = node.sig.ident.to_string();
+        let name_is_resolution = is_resolution_item(&method_name);
+        // İsim resolution-API değilse, imzada resolution tipi var mı bak.
+        let mut mentions_resolution_in_sig = false;
+        for arg in &node.sig.inputs {
+            if let syn::FnArg::Typed(pt) = arg {
+                let s = type_to_tokens_string(&pt.ty);
+                if s.contains("Resolution") || s.contains("resolution") {
+                    mentions_resolution_in_sig = true;
+                }
+            }
+        }
+        if let syn::ReturnType::Type(_, rt) = &node.sig.output {
+            let s = type_to_tokens_string(rt);
+            if s.contains("Resolution") || s.contains("resolution") {
+                mentions_resolution_in_sig = true;
+            }
+        }
+        // Bir impl metodu resolution bağlamında sayılırsa:
+        //   (a) ismi resolution-API fragment'ı içeriyorsa, veya
+        //   (b) imzasında resolution tipi varsa, veya
+        //   (c) impl bloğunun self tipi resolution-API type'ı ise (örn. impl ResolutionApplication).
+        if name_is_resolution || mentions_resolution_in_sig || self.in_resolution_impl {
+            check_fn_signature(self, &method_name, &node.sig, "impl method");
+        }
+    }
+}
+
+/// Üç hedef dosyayı parse et ve violation topla. (violations, parsed_filenames) döndürür.
+fn collect_violations_from_resolution_surface(
+    files: &[&Path],
+) -> (Vec<String>, Vec<String>) {
+    let mut all_violations = Vec::new();
+    let mut parsed_files = Vec::new();
+    for path in files {
+        let src = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                all_violations.push(format!("dosya okunamadı {}: {e}", path.display()));
+                continue;
+            }
+        };
+        let file = match syn::parse_file(&src) {
+            Ok(f) => f,
+            Err(e) => {
+                all_violations.push(format!("syn parse hatası {}: {e}", path.display()));
+                continue;
+            }
+        };
+        parsed_files.push(path.file_name().unwrap_or_default().to_string_lossy().into_owned());
+        let mut collector = ViolationCollector::new();
+        collector.visit_file(&file);
+        all_violations.extend(collector.violations);
+    }
+    (all_violations, parsed_files)
 }
 
 /// EI3-a: the public resolution API signatures do not accept or expose evidence-source
 /// or evidence-mutation capability types.
-///
-/// This guard scans the three modules that define the resolution surface and asserts
-/// that no public signature block mentioning a resolution API item also contains a
-/// forbidden evidence-capability token.
 #[test]
 fn resolution_api_has_no_evidence_capability() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let anchoring_dir = manifest.join("src/anchoring");
-
-    // The resolution surface lives across these modules.
     let targets = [
         anchoring_dir.join("review.rs"),
         anchoring_dir.join("store.rs"),
         anchoring_dir.join("resolved_implementation.rs"),
     ];
+    let target_refs: Vec<&Path> = targets.iter().map(|p| p.as_path()).collect();
 
-    let mut violations: Vec<String> = Vec::new();
+    let (violations, parsed) = collect_violations_from_resolution_surface(&target_refs);
 
-    for target in &targets {
-        let src = std::fs::read_to_string(target)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", target.display()));
-        let stripped = strip_comments(&src);
-        let sig_blocks = collect_resolution_api_signature_lines(&stripped);
-
-        for block in &sig_blocks {
-            for token in FORBIDDEN_TOKENS {
-                if block.contains(token) {
-                    // Locate the first line of the block for a clearer error.
-                    let first_line = block.lines().next().unwrap_or("").trim();
-                    violations.push(format!(
-                        "{}: forbidden evidence-capability token `{token}` in resolution API signature block: `{first_line}`",
-                        target.file_name().unwrap_or_default().to_string_lossy()
-                    ));
-                }
-            }
-        }
-    }
+    // Sanity: store.rs ve review.rs parse edilmeli (apply_resolution her ikisinde de var).
+    assert!(
+        parsed.iter().any(|f| f == "store.rs"),
+        "EI3-a guard sanity: store.rs parse edilmedi, parse edilenler: {:?}",
+        parsed
+    );
+    assert!(
+        parsed.iter().any(|f| f == "review.rs"),
+        "EI3-a guard sanity: review.rs parse edilmedi, parse edilenler: {:?}",
+        parsed
+    );
 
     if !violations.is_empty() {
         panic!(
@@ -276,48 +287,71 @@ fn resolution_api_has_no_evidence_capability() {
             violations.join("\n  - ")
         );
     }
-
-    // Positive assertion: the guard ran and found the resolution surface (sanity check
-    // that the scan is not silently a no-op due to a path change). We verify at least one
-    // of the target files contains the apply_resolution trait method.
-    let mut found_apply_resolution = false;
-    for target in &targets {
-        let src = std::fs::read_to_string(target).unwrap_or_default();
-        if src.contains("fn apply_resolution") {
-            found_apply_resolution = true;
-            break;
-        }
-    }
-    assert!(
-        found_apply_resolution,
-        "EI3-a guard sanity check failed: `fn apply_resolution` not found in scanned targets — \
-         scan paths may be stale"
-    );
 }
 
-/// Sanity test: the comment-stripper correctly ignores documentation comments that
-/// mention forbidden tokens. Prevents false positives from doc comments like this file
-/// or the resolution modules' own documentation.
+/// Red-kanıt: guard gerçekten tarama yapıyor mu? Sentetik bir Rust kaynak parçasında
+/// forbidden token taşıyan struct field + trait method + impl accessor koy ve guard'ın
+/// bunları yakaladığını doğrula. Bu test kırılırsa guard pass-through (no-op) olmuş demektir.
 #[test]
-fn strip_comments_removes_doc_lines_mentioning_forbidden_tokens() {
-    let src = r#"
-/// Documents that `ObservedCodeEvidence` is NOT used here.
-pub fn apply_resolution(&mut self, app: ResolutionApplication) -> Result<ResolutionRecord, Self::Error> {
-    // Internal note: CodeEvidenceProvider is unrelated.
-    unimplemented!()
+fn resolution_api_guard_catches_forbidden_evidence_in_synthetic_module() {
+    let synthetic = r#"
+//! Sentetik test modülü — guard'ın tarama yaptığını kanıtlar.
+
+pub struct ResolutionApplication {
+    pub candidate_id: String,
+    // FORBIDDEN: evidence object resolution application içinde
+    pub evidence: ObservedCodeEvidence,
+}
+
+pub trait AnchorStore {
+    // FORBIDDEN: mutable evidence provider capability trait metodunda
+    fn apply_resolution_with_evidence(
+        &mut self,
+        app: ResolutionApplication,
+        provider: &mut dyn CodeEvidenceProvider,
+    ) -> Result<ResolutionRecord, ()>;
+
+    // Resolution-API fragment'ı içermeyen ama forbidden token taşıyan metot —
+    // bu yakalanMAMALI (resolution context dışında), guard'ın scoping'i doğruysa.
+    fn unrelated_method(&self, e: CodeEvidenceSource) -> bool {
+        let _ = e;
+        true
+    }
+}
+
+impl ResolutionApplication {
+    // FORBIDDEN: accessor forbidden token dönüyor
+    pub fn evidence_source(&self) -> &dyn CodeEvidenceSource {
+        unimplemented!()
+    }
 }
 "#;
-    let stripped = strip_comments(src);
+
+    let file = match syn::parse_file(synthetic) {
+        Ok(f) => f,
+        Err(e) => panic!("sentetik kaynak parse edilemedi: {e}"),
+    };
+    let mut collector = ViolationCollector::new();
+    collector.visit_file(&file);
+
+    // En az 3 violation beklenir:
+    // 1. ResolutionApplication.evidence field (ObservedCodeEvidence)
+    // 2. AnchorStore::apply_resolution_with_evidence parametresi (CodeEvidenceProvider)
+    // 3. ResolutionApplication::evidence_source dönüş tipi (CodeEvidenceSource)
+    // NOT: unrelated_method yakalanmamalı (resolution context dışında).
     assert!(
-        !stripped.contains("Documents that"),
-        "doc comment should be stripped"
+        collector.violations.len() >= 3,
+        "guard en az 3 violation yakalamalıydı (struct field + trait method param + impl accessor), {} buldu:\n{}",
+        collector.violations.len(),
+        collector.violations.join("\n")
     );
+
+    let joined = collector.violations.join("\n");
+    assert!(joined.contains("ObservedCodeEvidence"), "ObservedCodeEvidence violation yakalanmadı");
+    assert!(joined.contains("CodeEvidenceProvider"), "CodeEvidenceProvider violation yakalanmadı");
+    assert!(joined.contains("CodeEvidenceSource"), "CodeEvidenceSource violation yakalanmadı");
     assert!(
-        !stripped.contains("Internal note"),
-        "line comment should be stripped"
+        !joined.contains("unrelated_method"),
+        "guard yanlışlıkla unrelated_method'u yakaladı — scoping hatası"
     );
-    // The signature itself is preserved.
-    assert!(stripped.contains("pub fn apply_resolution"));
-    assert!(stripped.contains("ResolutionApplication"));
-    assert!(stripped.contains("ResolutionRecord"));
 }

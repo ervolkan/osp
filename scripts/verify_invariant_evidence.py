@@ -37,9 +37,18 @@ RUN_METADATA_MD = REPO_ROOT / "docs" / "paper3-notes" / "evidence" / "run-metada
 
 
 class Result:
-    def __init__(self, ok: bool, detail: str = ""):
+    """Verification result. `category` distinguishes how the entry was verified:
+    - 'verified'   : cargo test / trybuild / architecture guard ran green
+    - 'manually_asserted' : type-shape — path + symbol presence checked, but the
+                     semantic enforcement (sealed module / write path / newtype)
+                     requires manual inspection (no compile-fail fixture)
+    - 'skipped'    : gap entry — flagged for manual resolution, not counted as evidence
+    """
+
+    def __init__(self, ok: bool, detail: str = "", category: str = "verified"):
         self.ok = ok
         self.detail = detail
+        self.category = category
 
     def __bool__(self) -> bool:
         return self.ok
@@ -175,13 +184,47 @@ def verify_manifest_hashes(manifest: dict) -> list:
     return results
 
 
+def verify_type_shape(entry: dict) -> Result:
+    """type_shape: path + symbols varlığını kontrol eder. Enforcement'ın anlamı
+    (sealed module / unconditional write path / non-empty newtype) manuel inceleme
+    gerektirir; compile-fail fixture yok. Bu yüzden 'manually_asserted' kategorisidir."""
+    path = entry.get("path")
+    symbols = entry.get("symbols", [])
+    if not path:
+        return Result(
+            False,
+            "type_shape entry missing 'path' field (review P1 #2: path+symbols required)",
+            category="manually_asserted",
+        )
+    full_path = REPO_ROOT / path
+    if not full_path.exists():
+        return Result(
+            False,
+            f"type_shape path not found: {path}",
+            category="manually_asserted",
+        )
+    src = full_path.read_text(encoding="utf-8")
+    missing_symbols = [s for s in symbols if s not in src]
+    if missing_symbols:
+        return Result(
+            False,
+            f"type_shape symbols not found in {path}: {missing_symbols}",
+            category="manually_asserted",
+        )
+    return Result(
+        True,
+        f"path + {len(symbols)} symbol(s) present ({', '.join(symbols)}); enforcement "
+        "semantics manually asserted (no compile-fail fixture)",
+        category="manually_asserted",
+    )
+
+
 def verify_entry(entry: dict) -> Result:
     kind = entry.get("evidence_kind")
     if kind == "gap":
-        return Result(True, "skipped (gap — flagged for manual resolution)")
+        return Result(True, "skipped (gap — flagged for manual resolution)", category="skipped")
     if kind == "type_shape":
-        ref = entry.get("implementation_ref", "")
-        return Result(True, f"type-shape enforcement (no test); ref={ref}")
+        return verify_type_shape(entry)
     if kind == "architecture_guard":
         return run_cargo_test(
             package=entry["package"],
@@ -220,29 +263,96 @@ def verify_entry(entry: dict) -> Result:
 
 
 def verify_run_metadata_crosscheck() -> Result:
-    """Cross-check run-metadata.md vs run-metadata.json critical counts."""
+    """Cross-check run-metadata.md vs run-metadata.json critical counts.
+    Line-bazlı kontrol (review P2 #3): her sayının geçtiği satırda ilgili keyword
+    de olmalı; rastgele metin varlığı yeterli değildir, ama çok katı pattern de değil."""
     if not RUN_METADATA_JSON.exists():
         return Result(False, "run-metadata.json missing")
     if not RUN_METADATA_MD.exists():
         return Result(False, "run-metadata.md missing")
     j = json.loads(RUN_METADATA_JSON.read_text(encoding="utf-8"))
-    md = RUN_METADATA_MD.read_text(encoding="utf-8")
+    md_lines = RUN_METADATA_MD.read_text(encoding="utf-8").splitlines()
 
     cur = j.get("current_protocol", {})
+    # Her (label, json_value, line_keywords): sayıyı içeren en az bir satırda
+    # keyword'lerden en az biri de geçmeli. Line-bazlı proximity.
     checks = [
-        ("core_binding_invariants", str(cur.get("core_binding_invariants", ""))),
-        ("cumulative_workspace", str(cur.get("compile_fail", {}).get("cumulative_workspace", ""))),
-        ("paper3_specific", str(cur.get("compile_fail", {}).get("paper3_specific", ""))),
-        ("osp_core_tests", str(cur.get("osp_core_tests", ""))),
+        (
+            "core_binding_invariants",
+            cur.get("core_binding_invariants"),
+            ["invariant", "binding", "INV-C"],
+        ),
+        (
+            "cumulative_compile_fail",
+            cur.get("compile_fail", {}).get("cumulative_workspace"),
+            ["compile-fail", "compile_fail", "cumulative"],
+        ),
+        (
+            "paper3_specific_compile_fail",
+            cur.get("compile_fail", {}).get("paper3_specific"),
+            ["Paper-3-specific", "Paper 3", "paper3"],
+        ),
+        (
+            "osp_core_tests",
+            cur.get("osp_core_tests"),
+            ["osp-core", "osp_core", "lib"],
+        ),
     ]
     mismatches = []
-    for label, value in checks:
-        # md must mention the value somewhere.
-        if value and value not in md:
-            mismatches.append(f"{label}={value} not found in run-metadata.md")
+    for label, value, keywords in checks:
+        if value is None:
+            mismatches.append(f"{label}: json value missing")
+            continue
+        value_str = str(value)
+        # Sayıyı içeren satırları bul; en az birinde keyword'lerden biri geçmeli.
+        candidate_lines = [ln for ln in md_lines if value_str in ln]
+        if not candidate_lines:
+            mismatches.append(f"{label}={value_str}: value not found in any line of run-metadata.md")
+            continue
+        keyword_match = any(
+            any(kw in ln for kw in keywords) for ln in candidate_lines
+        )
+        if not keyword_match:
+            mismatches.append(
+                f"{label}={value_str}: found in line(s) but none contains keywords {keywords}"
+            )
     if mismatches:
         return Result(False, "; ".join(mismatches))
-    return Result(True, "run-metadata.md ↔ run-metadata.json critical counts aligned")
+    return Result(True, "run-metadata.md ↔ run-metadata.json critical counts aligned (line-based)")
+
+
+def verify_summary_consistency(matrix: dict, verified: int, manually_asserted: int, skipped: int, failed: int) -> Result:
+    """summary.total_evidence_entries == len(evidence_entries) ve
+    verified + manually_asserted + skipped + failed == len(entries) (review P2 #1, P2 #3)."""
+    entries = matrix.get("evidence_entries", [])
+    actual_count = len(entries)
+    summary = matrix.get("summary", {})
+    declared_total = summary.get("total_evidence_entries")
+    declared_verified = summary.get("verified_entries")
+    declared_manual = summary.get("manually_asserted_entries")
+
+    problems = []
+    if declared_total != actual_count:
+        problems.append(
+            f"summary.total_evidence_entries ({declared_total}) != len(evidence_entries) ({actual_count})"
+        )
+    runtime_total = verified + manually_asserted + skipped + failed
+    if runtime_total != actual_count:
+        problems.append(
+            f"verified({verified}) + manually_asserted({manually_asserted}) + skipped({skipped}) "
+            f"+ failed({failed}) = {runtime_total} != len(entries) ({actual_count})"
+        )
+    if declared_verified is not None and declared_verified != verified:
+        problems.append(
+            f"summary.verified_entries ({declared_verified}) != runtime verified ({verified})"
+        )
+    if declared_manual is not None and declared_manual != manually_asserted:
+        problems.append(
+            f"summary.manually_asserted_entries ({declared_manual}) != runtime manually_asserted ({manually_asserted})"
+        )
+    if problems:
+        return Result(False, "; ".join(problems))
+    return Result(True, f"summary consistent: {actual_count} entries, {verified} verified, {manually_asserted} manually asserted")
 
 
 def main() -> int:
@@ -254,7 +364,8 @@ def main() -> int:
     entries = matrix.get("evidence_entries", [])
 
     failures = []
-    passed = 0
+    verified = 0
+    manually_asserted = 0
     skipped = 0
 
     print(f"Verifying {len(entries)} evidence entries...")
@@ -263,23 +374,37 @@ def main() -> int:
         eid = entry.get("evidence_id", "?")
         kind = entry.get("evidence_kind", "?")
         r = verify_entry(entry)
-        if kind == "gap" or kind == "type_shape":
-            skipped += 1
-            status_str = "SKIP"
-        elif r:
-            passed += 1
-            status_str = "ok"
-        else:
+        if not r:
             failures.append((inv, eid, r.detail))
             status_str = "FAIL"
+        elif r.category == "skipped":
+            skipped += 1
+            status_str = "SKIP"
+        elif r.category == "manually_asserted":
+            manually_asserted += 1
+            status_str = "MANUAL"
+        else:
+            verified += 1
+            status_str = "ok"
         print(f"  [{status_str}] {eid:<18} {inv:<22} ({kind})")
-        if r.detail and status_str == "ok":
+        if r.detail and status_str in ("ok", "MANUAL"):
             print(f"          {r.detail}")
 
     print()
-    print(f"rust/trybuild/guard verified: {passed}")
-    print(f"skipped (gap/type-shape):    {skipped}")
-    print(f"failed:                      {len(failures)}")
+    print(f"verified (cargo test/trybuild/guard): {verified}")
+    print(f"manually asserted (type-shape):       {manually_asserted}")
+    print(f"skipped (gap):                        {skipped}")
+    print(f"failed:                               {len(failures)}")
+
+    # Summary consistency: total == len(entries) ve counts tutarlı (review P2 #1).
+    print()
+    print("Matrix summary consistency check...")
+    sr = verify_summary_consistency(matrix, verified, manually_asserted, skipped, len(failures))
+    if sr:
+        print(f"  [ok] {sr.detail}")
+    else:
+        print(f"  [FAIL] {sr.detail}")
+        failures.append(("summary", "consistency", sr.detail))
 
     # MANIFEST hash cross-check.
     print()

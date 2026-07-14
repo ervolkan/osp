@@ -42,7 +42,7 @@
 | ↳ runtime atomic transition invariant (INV-C16, PR E entity-resolution transition) | 1 |
 | **Toplam type-enforced** (genesis + lowering) | **13** |
 | **Toplam runtime-asserted** | **3** (C14 projection + C15 supersession transition + C16 entity-resolution transition) |
-| **PR F evidence identity invariantları (EI1-EI8)** | **8 clause-bazlı** (EI1-a TYPE, EI1-b RUNTIME, EI2 RUNTIME, EI3-a TYPE/API, EI3-b RUNTIME, EI4-a/b/c RUNTIME, EI5-a/b TYPE, EI6 RUNTIME, EI7 RUNTIME, EI8-V1 RUNTIME) — ayrı invariant ailesi; INV-Cx sayımına eklenmez (evidence identity layer, concept anchoring layer ile paralel) |
+| **PR F evidence identity invariantları (EI1-EI8)** | **8 clause-bazlı** (EI1-a TYPE, EI1-b RUNTIME, EI2 RUNTIME, EI3-a **ARCH-GUARD** (API-shape policy + static architecture guard `resolution_api_evidence_isolation_guard.rs`, AST-tabanlı syn tarama + red-kanıt testi), EI3-b RUNTIME, EI4-a/b/c RUNTIME (EI4-b defense-in-depth regression test), EI5-a/b TYPE, EI6 RUNTIME, EI7 RUNTIME, EI8-V1 RUNTIME) — ayrı invariant ailesi; INV-Cx sayımına eklenmez (evidence identity layer, concept anchoring layer ile paralel) |
 | **PR G projection invariantları (RP1-RP4)** | **5 clause-bazlı** (RP1 soundness RUNTIME, RP2 TYPE/API+RUNTIME/TRUST, RP3 TYPE+serde, RP4-a TYPE/API structural, RP4-b RUNTIME snapshot equality) — ayrı invariant ailesi; INV-Cx/EI sayımına eklenmez (lineage projection layer) |
 | Compile-fail test count | 30 cumulative workspace (28 Paper-3-specific + 2 INV-T2 Paper 2 inherited; PR F: cF1_resolved_code_identity_literal + cF1_code_identity_key_literal eklendi) |
 | `DecisionStatus` variants | 5 (Candidate, Accepted, Deprecated, Rejected, SupersededAccepted) |

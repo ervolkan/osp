@@ -19,3 +19,7 @@ unicode-normalization = "0.1"  # Faz 5.1: normalize_for_axis_match gerçek NFC (
 tempfile = "3"           # Faz 2.5 persistence test'leri için temp directory
 serde_json = { workspace = true }  # Intent invariant test (serde roundtrip)
 trybuild = "1"           # Faz 2 compile-fail testler (INV type-level garantiler)
+# EI3-a architecture guard: AST-tabanlı resolution API surface tarama (struct fields,
+# trait method imzaları, impl accessor'ları). String-scan'in eksiklerini kapatır.
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+quote = "1"             # ToTokens trait (syn Type → TokenStream string)

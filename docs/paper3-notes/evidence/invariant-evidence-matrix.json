@@ -16,7 +16,8 @@
       "evidence_id": "E-C1",
       "evidence_kind": "type_shape",
       "enforcement": "Sealed embedding module; AnchorScorer takes ScalarSimilarity(f64) newtype, never a vector. Structurally impossible — no dedicated trybuild.",
-      "implementation_ref": "crates/osp-core/src/anchoring/types.rs ScalarSimilarity newtype"
+      "path": "crates/osp-core/src/anchoring/types.rs",
+      "symbols": ["ScalarSimilarity"]
     },
     {
       "invariant": "INV-C2",
@@ -50,8 +51,9 @@
       "invariant": "INV-C5",
       "evidence_id": "E-C5",
       "evidence_kind": "type_shape",
-      "enforcement": "apply_plan is the only untrusted write path and unconditionally writes DecisionStatus::Candidate. Structurally enforced for the untrusted path; no dedicated trybuild.",
-      "implementation_ref": "crates/osp-core/src/anchoring/types.rs Candidate default newtypes"
+      "enforcement": "apply_plan is the only untrusted write path and unconditionally writes DecisionStatus::Candidate for every new node and edge; promotion requires the OperatorAcceptance token (the C3 gate). Structurally enforced for the untrusted path; no dedicated trybuild.",
+      "path": "crates/osp-core/src/anchoring/store.rs",
+      "symbols": ["apply_plan", "DecisionStatus::Candidate"]
     },
     {
       "invariant": "INV-C6",
@@ -72,8 +74,9 @@
       "invariant": "INV-C7",
       "evidence_id": "E-C7",
       "evidence_kind": "type_shape",
-      "enforcement": "NonEmptyExplanation newtype whose fallible new() rejects empty/whitespace; runtime gate covers high-stake edge subset. Structurally impossible at construction; no dedicated trybuild.",
-      "implementation_ref": "crates/osp-core/src/anchoring/types.rs NonEmptyExplanation"
+      "enforcement": "NonEmptyExplanation newtype whose fallible new() rejects empty/whitespace strings; runtime gate covers high-stake edge subset. Structurally impossible at construction; no dedicated trybuild.",
+      "path": "crates/osp-core/src/anchoring/types.rs",
+      "symbols": ["NonEmptyExplanation"]
     },
     {
       "invariant": "INV-C8",
@@ -502,14 +505,28 @@
   ],
   "gaps": [],
   "summary": {
-    "total_evidence_entries": 34,
-    "trybuild_fixtures": 30,
-    "rust_tests_canonical": 16,
+    "total_evidence_entries": 37,
+    "verified_entries": 34,
+    "manually_asserted_entries": 3,
+    "entry_count_by_kind": {
+      "type_shape": 3,
+      "trybuild_fixture": 14,
+      "rust_test": 17,
+      "rust_test_matrix": 2,
+      "architecture_guard": 1
+    },
+    "trybuild_fixtures_total": 30,
+    "rust_tests_canonical": 19,
     "type_shape_enforced": 3,
     "architecture_guards": 1,
     "gaps": 0,
     "paper3_specific_compile_fail": 28,
     "paper2_inherited_inv_t2_compile_fail": 2,
     "cumulative_workspace_compile_fail": 30
+  },
+  "summary_notes": {
+    "verified_entries": "trybuild_fixture (14) + rust_test (17) + rust_test_matrix (2) + architecture_guard (1) = 34 — validator cargo test -- --exact ile her birini doğrular.",
+    "manually_asserted_entries": "type_shape (3) — INV-C1/C5/C7. Validator path + symbols varlığını kontrol eder ama enforcement'ın anlamı (sealed module / unconditional write path / non-empty newtype) manuel inceleme gerektirir; compile-fail fixture'ı yok. Validator çıktısı 'manually asserted' olarak dürüstçe etiketler.",
+    "invariant_count_not_entry_count": "37 evidence entry ≠ 16 core binding-chain invariant veya EI/RP aile boyutları. Bazı invariant'lar (INV-C15, INV-C16, EI4) birden fazla evidence entry taşır (matrix + supporting_tests). Manuscript sayımları için §3 ve run-metadata.json'a bakın."
   }
 }
