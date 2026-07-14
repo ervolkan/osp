@@ -31,7 +31,7 @@
 git clone https://github.com/ervolkan/osp.git
 cd osp
 cargo build --workspace --exclude osp-desktop
-cargo test --workspace --exclude osp-desktop   # ~490+ tests across 7 crates
+cargo test --workspace --exclude osp-desktop   # 1153+ tests across 7 crates
 ```
 
 > `osp-desktop` is excluded from CI/headless builds (Tauri needs webkit2gtk/glib-sys on Linux).
@@ -149,13 +149,19 @@ osp/
 └── SoftwarePhysics.txt    # Vision source (immutable)
 ```
 
-### Two-Paper Strategy
+### Three-Paper Strategy
 
 - **Paper 1 (Static Space)** — ✅ done. SCIP + tree-sitter + 5-axis + vision + witness +
   tri-state. 23-repo corpus, 18,952 LCOM4 classes. [`docs/papers/paper1-static-space.md`](docs/papers/paper1-static-space.md)
-- **Paper 2 (Dynamic / Agent Trajectory)** — in progress. Task = measurement predicate,
+- **Paper 2 (Dynamic / Agent Trajectory)** — ✍️ draft. Task = measurement predicate,
   PredicateGate, navigator loop, calibration feedback. CLI + MCP truth surfaces done.
-  Paper writing **deferred to the end** (data-driven). [`docs/roadmap/paper2-roadmap.md`](docs/roadmap/paper2-roadmap.md)
+  Draft v1.2 written (arXiv candidate after review). [`docs/papers/paper2-agent-trajectory.md`](docs/papers/paper2-agent-trajectory.md)
+- **Paper 3 (Genesis Layer / Concept Anchoring)** — ✅ v1.3 public manuscript (Zenodo),
+  v1.4 derive in progress. Type-enforced binding chain: candidate isolation → operator
+  acceptance → predicate lowering → cross-family translation → operator binding →
+  capability-gated task genesis. 16 core binding-chain invariants (13 type-enforced +
+  3 runtime-asserted) + Evidence-Identity (EI1–EI8) + Derived-Projection (RP1–RP4)
+  parallel families. [`docs/papers/paper3-concept-anchoring.md`](docs/papers/paper3-concept-anchoring.md) · [evidence pack](docs/paper3-notes/evidence-pack/)
 
 ---
 
@@ -212,6 +218,7 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 | **8** | OSP Desktop UI | ✅ v0.3.4 (6 panels + role-aware vision + Node Inspector + Confidence) |
 | **9** | Custom Axis Marketplace | ⏸️ Planned |
 | **P2** | **Paper 2 — Agent Trajectory Navigation** | 🔶 Core + CLI + MCP done; SDK + paper writing pending |
+| **P3** | **Paper 3 — Genesis Layer (Concept Anchoring)** | ✅ v1.3 public manuscript (Zenodo); v1.4 derive in progress |
 
 **Paper 2 status (A→G1 done):** ontoloji → predicate gate → planner → navigator → gerçek
 measure → gerçek LLM → calibration → CLI → MCP (INV-T1 canlı doğrulandı).

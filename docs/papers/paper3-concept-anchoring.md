@@ -167,7 +167,7 @@ CodeEntityCandidate:Z ──ResolvesTo(Accepted)──→ CodeEntity:W
 ConceptPacket:X ──ResolvedImplementationExpectation──→ CodeEntity:W
 ```
 
-The type name is deliberate: `ResolvedImplementationExpectation`, not `EffectiveImplementation`. The candidate source carries an *expectation*; acceptance comes from the `ResolvesTo` edge. "Effective" would overclaim; the read model reports what the graph currently commits, nothing more. The projector does not correct the graph; it projects it losslessly over the admitted domain, after canonical occurrence deduplication.
+The type name is deliberate: `ResolvedImplementationExpectation`, not `EffectiveImplementation`. The candidate source carries an *expectation*; acceptance comes from the `ResolvesTo` edge. "Effective" would overclaim; the read model reports what the graph currently commits, nothing more. The projector does not correct the graph; it projects the admitted live resolved lineage domain without loss after canonical occurrence deduplication (RP1, §3.6).
 
 **Table RP — Resolved-Projection Invariants and Deliberate Exclusions.**
 

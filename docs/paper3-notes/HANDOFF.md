@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (CLI review + supersede + preview + analysis bridge + metric projection + PR C axis-granular evidence + PR D evidence projection + PR E entity resolution core + PR E2 CLI scheme adoption + PR F evidence identity migration + PR G lineage-aware effective projection TAMAM)
+# Paper 3 — Handoff Notu (v1.4 derive — Aşama A+B+C tamam; Aşama D publication transaction pending)
 
-> **Tarih:** 2026-07-14 (PR G merge sonrası — main `9254cf2`)
-> **Dal:** `main` (PR G `feat/resolved-implementation-expectation` merged; plan 4 tur + PR 3 tur review)
-> **Durum:** Faz 8b epistemik çekirdek + CLI accept/reject/supersede/preview + analysis bridge + metric projection + PR C/D/E/E2/F + **PR G (lineage-aware effective projection — packet-level derived read model)** TAMAM. On bir yüzey kapandı. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive adayı. Sırada: arXiv v1.4.
+> **Tarih:** 2026-07-14 (Paper 3 v1.4 derive Aşama A+B+C tamam — main `18ee7ef`)
+> **Dal:** `main` (v1.4 derive: evidence authority + ontolojik çekirdek + tam manuscript propagation)
+> **Durum:** v1.4 Aşama A (evidence authority + EI3-a guard + EI4-b gap closure) + Aşama B (§3.1-3.6 ontolojik çekirdek + INV-C16 + EI + RP + Abstract/Contribution1 taxonomy) + Aşama C (Contributions 5/6 + §7 + §9.5 + §10 + §11 tam propagation) TAMAM. Aşama D (publication transaction: Zenodo DOI reserve + final sync + arXiv derive + publish) pending. Paper 3 v1.3 Zenodo'da canlı; v1.4 derive A+B+C tamam.
 
 ---
 

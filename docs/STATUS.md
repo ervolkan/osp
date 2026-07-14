@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-14 (PR G merge — lineage-aware effective projection; main `9254cf2`; arXiv v1.4 adayı)
+> **Son güncelleme:** 2026-07-14 (Paper 3 v1.4 derive — Aşama A+B+C tamam; main `18ee7ef`; ontolojik çekirdek + tam manuscript propagation + evidence authority)
 > **Detaylı roadmap:** [`roadmap/paper2-roadmap.md`](roadmap/paper2-roadmap.md)
 > **Invariant spec:** [`spec/invariants.md`](spec/invariants.md)
 > **MCP tasarım:** [`spec/mcp-design.md`](spec/mcp-design.md)
@@ -162,28 +162,31 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 3 arXiv v1.4.** Tüm milestone'lar tamam:
-- v1.3 Zenodo'da canlı + epistemik çekirdek + CLI surface + evidence identity (PR F) + entity resolution (PR E/E2) + lineage projection (PR G) TAMAM
-- **v1.4 pending paper edits:** INV-C16 runtime invariant; PR C/D/E/E2/F/G Table'ları; EI1-EI8 (PR F) + RP1-RP4 (PR G) invariant aileleri; trybuild 24→30; compile-fail fixture adları
-- Endorsement hazır (Jimenez e-postası)
-- Evidence pack hazır: `docs/paper3-notes/evidence-pack/` (README + MANIFEST)
-- Detaylı handoff: [`paper3-notes/HANDOFF.md`](paper3-notes/HANDOFF.md)
+**Paper 3 arXiv v1.4 — Aşama A+B+C tamam, D (publication transaction) pending.**
+
+v1.4 derive ilerlemesi (main `18ee7ef`):
+- **Aşama A (evidence authority) ✅:** run-metadata.json v2 frozen/current ayrımı; invariant-evidence-matrix.json (37 entry, machine-readable source of truth); scripts/verify_invariant_evidence.py (34 verified, 0 failed, 0 gaps); EI3-a ARCH-GUARD (`resolution_api_evidence_isolation_guard.rs`); EI4-b gap closure (defense-in-depth regression test); C6 stale fixture rename; DOI kalıcı ifade.
+- **Aşama B (ontolojik çekirdek) ✅:** §3.1–3.6 başlık yapısı; §3.4 INV-C16 (4 yüzey + R6/N:1/R7 cardinality); §3.5 Evidence-Identity + Table EI (8 satır); §3.6 Derived-Projection + Table RP (4+1 satır, RP1 admitted-domain); Abstract + Contribution 1 minimum taxonomy.
+- **Aşama C (tam manuscript propagation) ✅:** Contributions 5/6 ("six"); §1.3 Terminology; §7.1 (Thirty/16/13/3 + C16 ayrı cümle); §7.5b (4 family evidence scope); §7.6 (üç yüzey preview ayrımı); §9.5 (üç boundary); §10 (3 yeni threat); §11 (rule/risk/ImplementedBy ayrımı).
+- **Aşama D (publication transaction) 🔶:** D1 claim-strength consistency ✓; D2 sayı tutarlılık ✓; D3 frozen/current cross-check ✓; D4 README sync ✓; D5 Zenodo DOI reserve + STATUS/HANDOFF final sync pending; D6 arXiv derive pending; D7-D8 publish + receipt pending.
+
+Test envanteri (v1.4 Aşama A sonrası): osp-core lib 654, workspace 1153, 30 compile-fail, 0 regression. Validator: `py scripts/verify_invariant_evidence.py` → All verifications passed.
 
 Paper 2 v1.2 review ile arXiv adayı (docs/papers/paper2-agent-trajectory.md).
-Paper 3 v1.4 derive adayı — arXiv yoluna çıkış.
+Paper 3 v1.4 — ontolojik çekirdek + evidence authority tamam; publication transaction sırada.
 
 ## Test Durumu
 
 ```
 cargo test --workspace --exclude osp-desktop
 ```
-- osp-core: 587 lib unit (503 + 21 AnchorStoreSnapshot/restore + 12 supersede-preview predicates + 14 PR C axis-granular evidence + 10 PR E identity + 25 PR E resolution + 2 misc) + 30 integration (anchoring_mvp/fixtures/evidence/heldout/typelevel) = 617; 28 type-level compile-fail (trybuild)
+- osp-core: 654 lib unit (PR G 604→653 +49 lineage projection; v1.4 Aşama A +1 EI4-b duplicate-live-identity regression) + integration (anchoring_mvp/fixtures/evidence/heldout/typelevel + resolution_api_evidence_isolation_guard EI3-a architecture guard); 30 type-level compile-fail (trybuild) = 28 Paper-3-specific + 2 INV-T2
 - osp-analyzer: ~148 + 4 smoke
 - osp-llm-runtime: ~12
-- osp-cli: 155 unit (store_io/repository/seed_file/review_session/mapper/preview-builder/canonical-identity/analysis-bridge/graph-seed-builder/metric-projection/evidence-projection + PR E2 resolution + 2 PR E v1→v2 migration) + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards integration
+- osp-cli: 155 unit + 21 review_flow + 20 supersede_flow + 12 preview_flow + 13 analyze_bridge_flow + 9 resolution_flow + 2 architecture_guards integration
 - osp-mcp: 8 unit + 7 INV-T1 integration + 2 INV-C11 agent-surface regression
 - osp-spike: ~32
-- **Toplam: ~1038 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); bu PR 0 yeni uyarı.
+- **Toplam: 1153 workspace test (osp-desktop hariç)**, hepsi yeşil. CI warning-only clippy (`|| true`); v1.4 Aşama A 0 yeni uyarı.
 
 ## Önemli Commit'ler
 
