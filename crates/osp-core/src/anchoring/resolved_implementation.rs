@@ -317,6 +317,18 @@ pub enum ResolvedImplementationStructureError {
         candidate_id: ConceptNodeId,
         entity_id: ConceptNodeId,
     },
+    /// R1a P1-1 (review tur 2) — Duplicate ResolutionRecord (aynı candidate→entity çifti).
+    #[error("duplicate resolution record: {candidate_id} -> {entity_id}")]
+    DuplicateResolutionRecord {
+        candidate_id: ConceptNodeId,
+        entity_id: ConceptNodeId,
+    },
+    /// R1a P1-1 (review tur 2) — Orphan ResolutionRecord (record var, edge yok).
+    #[error("orphan resolution record (no matching edge): {candidate_id} -> {entity_id}")]
+    OrphanResolutionRecord {
+        candidate_id: ConceptNodeId,
+        entity_id: ConceptNodeId,
+    },
     /// R1a P1-1 (review tur 1) — ResolutionRecord var ama edge endpoint'leri ile uyuşmuyor.
     #[error("resolution record edge mismatch: record {record_candidate} -> {record_entity}, edge {edge_candidate} -> {edge_entity}")]
     ResolutionRecordEdgeMismatch {
@@ -416,15 +428,26 @@ pub fn project_resolved_implementations(
         }
     }
 
-    // 1b. R1a P1-1 (review tur 1) — ResolutionRecord index (candidate_id → entity_id).
-    //     Accepted ResolvesTo edge ↔ ResolutionRecord triangulation (INV-C16 projection mirror).
-    let records_by_candidate: BTreeMap<&ConceptNodeId, &ConceptNodeId> = basis
-        .resolution_records
-        .iter()
-        .map(|r| (&r.candidate_id, &r.entity_id))
-        .collect();
+    // 1b. R1a P1-1 (review tur 2) — ResolutionRecord occurrence-aware index.
+    //     Duplicate record → fail-closed (BTreeMap::collect sessiz overwrite YOK).
+    //     İki yönlü triangulation: edge→record VE record→edge.
+    let mut record_pairs: BTreeMap<(ConceptNodeId, ConceptNodeId), usize> = BTreeMap::new();
+    for r in &basis.resolution_records {
+        let key = (r.candidate_id.clone(), r.entity_id.clone());
+        let count = record_pairs.entry(key).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            return Err(ResolvedImplementationStructureError::DuplicateResolutionRecord {
+                candidate_id: r.candidate_id.clone(),
+                entity_id: r.entity_id.clone(),
+            });
+        }
+    }
 
-    // 2. Accepted ResolvesTo index — full endpoint matris.
+    // 2. Accepted ResolvesTo index — full endpoint matris + triangulation.
+    //    R1a P1-2 (review tur 2): triangulation non-live skip'ten ÖNCE — structural validity
+    //    → sonra projection'a dahil etme.
+    let mut edge_pairs: BTreeMap<(ConceptNodeId, ConceptNodeId), usize> = BTreeMap::new();
     let mut resolutions: BTreeMap<ConceptNodeId, (ConceptNodeId, DerivedEdgeReference)> =
         BTreeMap::new();
     for edge in &basis.edges {
@@ -482,34 +505,43 @@ pub fn project_resolved_implementations(
                 found: target.position_family,
             });
         }
-        // R2 P2-4 (review tur 1) — non-live target skip (hard-error DEĞİL).
-        // Superseded/Deprecated CodeEntity geçerli tarihsel resolution hedefi olabilir.
-        // Projector "hâlihazırda etkin resolution'lar" projekte eder; tarihsel/bayat
-        // resolution'lar sessizce hariç tutulur (RP1 "kayıpsız" → "etkin resolution'lar").
-        if !target.decision_status.is_live_code_identity() {
-            continue;
+        // R1a P1-1 (review tur 2) — iki yönlü occurrence-aware triangulation.
+        // Non-live skip'ten ÖNCE: structural validity (edge ↔ record) doğrulanmalı.
+        let pair = (edge.from.clone(), edge.to.clone());
+        let edge_count = edge_pairs.entry(pair.clone()).or_insert(0);
+        *edge_count += 1;
+        if *edge_count > 1 {
+            return Err(ResolvedImplementationStructureError::MultipleResolutions {
+                candidate_id: edge.from.clone(),
+            });
         }
-        // R1a P1-1 (review tur 1) — ResolutionRecord triangulation (INV-C16 projection mirror).
-        // Accepted ResolvesTo edge'in `(candidate_id, entity_id)` çiftiyle eşleşen bir
-        // ResolutionRecord olmalı. Edge Accepted ama record yok → structural inconsistency.
-        match records_by_candidate.get(&edge.from) {
-            Some(record_entity) if *record_entity == &edge.to => {
+        // Edge → record yönü: bu edge'in record karşılığı var mı?
+        match record_pairs.get(&pair) {
+            Some(_) => {
                 // Triangulation başarılı — edge ↔ record eşleşiyor.
             }
-            Some(record_entity) => {
-                return Err(ResolvedImplementationStructureError::ResolutionRecordEdgeMismatch {
-                    record_candidate: edge.from.clone(),
-                    record_entity: (*record_entity).clone(),
-                    edge_candidate: edge.from.clone(),
-                    edge_entity: edge.to.clone(),
-                });
-            }
             None => {
+                // Record yok → belki farklı entity'ye record var (mismatch).
+                let mismatch = basis.resolution_records.iter().find(|r| r.candidate_id == edge.from);
+                if let Some(r) = mismatch {
+                    return Err(ResolvedImplementationStructureError::ResolutionRecordEdgeMismatch {
+                        record_candidate: r.candidate_id.clone(),
+                        record_entity: r.entity_id.clone(),
+                        edge_candidate: edge.from.clone(),
+                        edge_entity: edge.to.clone(),
+                    });
+                }
                 return Err(ResolvedImplementationStructureError::MissingResolutionRecord {
                     candidate_id: edge.from.clone(),
                     entity_id: edge.to.clone(),
                 });
             }
+        }
+        // R2 P2-4 (review tur 1) — non-live target skip (structural validity SONRASI).
+        // Superseded/Deprecated CodeEntity geçerli tarihsel resolution hedefi olabilir.
+        // Projector "hâlihazırda etkin resolution'lar" projekte eder.
+        if !target.decision_status.is_live_code_identity() {
+            continue;
         }
         // Duplicate accepted resolution → error (R6 ihlali).
         let edge_ref = DerivedEdgeReference::from_edge(edge);
@@ -519,6 +551,17 @@ pub fn project_resolved_implementations(
         {
             return Err(ResolvedImplementationStructureError::MultipleResolutions {
                 candidate_id: edge.from.clone(),
+            });
+        }
+    }
+
+    // 2b. R1a P1-1 (review tur 2) — Orphan record check (record → edge yönü).
+    //     Her record'un Accepted ResolvesTo edge karşılığı olmalı.
+    for (pair, _) in &record_pairs {
+        if !edge_pairs.contains_key(pair) {
+            return Err(ResolvedImplementationStructureError::OrphanResolutionRecord {
+                candidate_id: pair.0.clone(),
+                entity_id: pair.1.clone(),
             });
         }
     }
@@ -1589,6 +1632,68 @@ mod lineage_fold_tests {
                 | ResolvedImplementationStructureError::MissingResolutionRecord { .. }
         ));
     }
+
+    #[test]
+    fn project_rejects_duplicate_resolution_record() {
+        // R1a P1-1 (review tur 2) — duplicate ResolutionRecord (aynı candidate→entity).
+        let candidate = accepted_candidate("src/auth.rs");
+        let entity = live_entity("CodeEntity:abc");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let entity_id = ConceptNodeId("CodeEntity:abc".into());
+        let b = basis(
+            vec![candidate, entity],
+            vec![resolves_to_edge(&candidate_id, &entity_id)],
+            vec![
+                resolution_record(&candidate_id, &entity_id),
+                resolution_record(&candidate_id, &entity_id), // duplicate
+            ],
+        );
+        let err = project_resolved_implementations(&b).unwrap_err();
+        assert!(matches!(
+            err,
+            ResolvedImplementationStructureError::DuplicateResolutionRecord { .. }
+        ));
+    }
+
+    #[test]
+    fn project_rejects_orphan_resolution_record() {
+        // R1a P1-1 (review tur 2) — orphan record (record var, edge yok).
+        let candidate = accepted_candidate("src/auth.rs");
+        let entity = live_entity("CodeEntity:abc");
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let entity_id = ConceptNodeId("CodeEntity:abc".into());
+        let b = basis(
+            vec![candidate, entity],
+            vec![], // edge yok
+            vec![resolution_record(&candidate_id, &entity_id)], // record var → orphan
+        );
+        let err = project_resolved_implementations(&b).unwrap_err();
+        assert!(matches!(
+            err,
+            ResolvedImplementationStructureError::OrphanResolutionRecord { .. }
+        ));
+    }
+
+    #[test]
+    fn project_packet_id_whitespace_rejected() {
+        // R1a P2 (review tur 2) — whitespace/control packet ID reject.
+        let candidate = accepted_candidate("src/auth.rs");
+        let b = basis_no_records(
+            vec![candidate],
+            vec![ConceptEdge {
+                from: ConceptNodeId("ConceptPacket:   ".into()), // whitespace
+                to: ConceptNodeId("CodeEntityCandidate:src/auth.rs".into()),
+                kind: ConceptEdgeKind::ExpectedImplementation,
+                decision_status: DecisionStatus::Candidate,
+                explanation: None,
+            }],
+        );
+        let err = project_resolved_implementations(&b).unwrap_err();
+        assert!(matches!(
+            err,
+            ResolvedImplementationStructureError::InvalidPacketSource(_)
+        ));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1658,15 +1763,38 @@ mod store_integration_tests {
     }
 
     #[test]
-    fn store_query_returns_expected_projection() {
+    fn store_query_returns_expected_projection_with_expected_implementation() {
+        // R1a P1-3 (review tur 2) — gerçek ExpectedImplementation edge + resolution → non-empty.
+        // Tam akış: candidate seed + ExpectedImplementation edge (graph_mut) → binding →
+        //           apply_resolution → query → non-empty projection.
+        use crate::anchoring::types::ConceptEdge;
+
+        let mut store = store_with_resolved_candidate();
+        let candidate_id = ConceptNodeId("CodeEntityCandidate:src/auth.rs".into());
+        let packet = ConceptPacketId("pkt-integration".into());
+
+        // ExpectedImplementation edge'i graph'a ekle (packet → candidate, Candidate lane).
+        store.graph_mut().insert_edge(ConceptEdge {
+            from: packet.clone().to_node_id(),
+            to: candidate_id.clone(),
+            kind: ConceptEdgeKind::ExpectedImplementation,
+            decision_status: DecisionStatus::Candidate,
+            explanation: None,
+        });
+
+        // Query → non-empty projection.
+        let result = store.resolved_implementation_expectation_query().unwrap();
+        assert_eq!(result.len(), 1, "tek relation (packet → entity)");
+        assert_eq!(result[0].packet_id(), &packet);
+        assert_eq!(result[0].lineages().len(), 1, "tek lineage");
+        assert_eq!(result[0].lineages()[0].candidate_id(), &candidate_id);
+    }
+
+    #[test]
+    fn store_query_returns_empty_without_expected_implementation() {
+        // R1a P1-3 negatif — ExpectedImplementation edge yok → boş projection.
         let store = store_with_resolved_candidate();
         let result = store.resolved_implementation_expectation_query().unwrap();
-
-        // Gerçek store'da ExpectedImplementation edge YOK (apply_plan çağrılmadı).
-        // Sadece ResolvesTo edge var → projector ExpectedImplementation bulamaz → boş result.
-        // Bu beklenen davranış: query gerçek graph state'ini dürüst projekte eder.
-        // (Production'da apply_plan ExpectedImplementation edge ekler; bu test store setup
-        // sadece resolution yapıyor, plan uygulayıcı.)
         assert!(
             result.is_empty(),
             "ExpectedImplementation edge yok → boş projection (dürüst)"

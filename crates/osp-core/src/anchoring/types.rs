@@ -52,14 +52,14 @@ impl ConceptPacketId {
 
     /// Canonical reverse parse (PR G).
     ///
-    /// `to_node_id` round-trip: non-empty packet IDs için total. Empty packet ID
-    /// `to_node_id` ile `"ConceptPacket:"` üretir ama `try_from_node_id` reject eder
-    /// (non-empty contract). Bu yüzden round-trip partial — empty reject edilir.
+    /// `to_node_id` round-trip: non-empty, non-whitespace, non-control packet IDs için total.
+    /// Empty/whitespace/control reject (R1a P2 review — malformed packet ID'ler projection
+    /// admission boundary'sinde derived relation key'ine taşınmamalı).
     pub fn try_from_node_id(node_id: &ConceptNodeId) -> Result<Self, InvalidConceptPacketNodeId> {
         let raw = node_id
             .0
             .strip_prefix(Self::NODE_PREFIX)
-            .filter(|v| !v.is_empty())
+            .filter(|v| !v.trim().is_empty() && !v.chars().any(|c| c.is_control()))
             .ok_or_else(|| InvalidConceptPacketNodeId {
                 node_id: node_id.clone(),
             })?;
