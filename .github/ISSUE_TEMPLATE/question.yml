@@ -1,0 +1,73 @@
+name: Question
+description: Ask a usage, setup, or conceptual question about OSP.
+title: "[question]: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask how to install, use, or reason about OSP. This form exists until GitHub
+        Discussions are enabled, at which point it will be replaced by a contact link.
+
+        > **Do not report security vulnerabilities through public issues.**
+        > Follow the private reporting process in
+        > [SECURITY.md](https://github.com/ontologicalspace/.github/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: OSP version / commit
+      placeholder: "e.g. 0.1.0, or commit SHA"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - CLI
+        - MCP server
+        - Desktop app
+        - Library (osp-core / osp-analyzer)
+        - Conceptual / not interface-specific
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+    validations:
+      required: false
+
+  - type: textarea
+    id: command-output
+    attributes:
+      label: Relevant command / output
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: docs-consulted
+    attributes:
+      label: Documentation already consulted
+      description: Paper sections, spec files, README, or other sources you already checked.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confidentiality
+    attributes:
+      label: Confidentiality confirmation
+      options:
+        - label: This report does not contain a security vulnerability or sensitive exploit details.
+          required: true

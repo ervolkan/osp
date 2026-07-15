@@ -1,0 +1,6 @@
+# Issue template chooser configuration.
+# Notes:
+#   - blank_issues_enabled: false — users must pick a form (keeps a clean backlog).
+#   - No contact_links yet: GitHub Discussions are not enabled and /docs is not
+#     published. Do not add links until the targets exist and return HTTP 200.
+blank_issues_enabled: false
