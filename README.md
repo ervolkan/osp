@@ -156,8 +156,9 @@ osp/
 - **Paper 2 (Dynamic / Agent Trajectory)** — ✍️ draft. Task = measurement predicate,
   PredicateGate, navigator loop, calibration feedback. CLI + MCP truth surfaces done.
   Draft v1.2 written (arXiv candidate after review). [`docs/papers/paper2-agent-trajectory.md`](docs/papers/paper2-agent-trajectory.md)
-- **Paper 3 (Genesis Layer / Concept Anchoring)** — ✅ v1.4 manuscript (v1.3 on Zenodo;
-  v1.4 dist LaTeX+PDF hazır, arXiv yükleme pending). Type-enforced binding chain: candidate isolation → operator
+- **Paper 3 (Genesis Layer / Concept Anchoring)** — ✅ v1.4 manuscript on Zenodo
+  (version DOI `10.5281/zenodo.21376820`; concept DOI `10.5281/zenodo.21220992`;
+  arXiv yükleme pending). Type-enforced binding chain: candidate isolation → operator
   acceptance → predicate lowering → cross-family translation → operator binding →
   capability-gated task genesis. 16 core binding-chain invariants (13 type-enforced +
   3 runtime-asserted) + Evidence-Identity (EI1–EI8) + Derived-Projection (RP1–RP4)
@@ -218,7 +219,7 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 | **8** | OSP Desktop UI | ✅ v0.3.4 (6 panels + role-aware vision + Node Inspector + Confidence) |
 | **9** | Custom Axis Marketplace | ⏸️ Planned |
 | **P2** | **Paper 2 — Agent Trajectory Navigation** | 🔶 Core + CLI + MCP done; SDK + paper writing pending |
-| **P3** | **Paper 3 — Genesis Layer (Concept Anchoring)** | ✅ v1.3 on Zenodo; v1.4 manuscript + dist LaTeX/PDF hazır, arXiv pending |
+| **P3** | **Paper 3 — Genesis Layer (Concept Anchoring)** | ✅ v1.4 on Zenodo (`21376820`); concept DOI `21220992`; arXiv pending |
 
 **Paper 2 status (A→G1 done):** ontoloji → predicate gate → planner → navigator → gerçek
 measure → gerçek LLM → calibration → CLI → MCP (INV-T1 canlı doğrulandı).

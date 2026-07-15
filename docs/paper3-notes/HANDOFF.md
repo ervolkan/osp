@@ -1,8 +1,8 @@
-# Paper 3 — Handoff Notu (v1.4 derive — Aşama A+B+C+D6 (dist LaTeX+PDF) tamam; D5/D7/D8 publication transaction pending)
+# Paper 3 — Handoff Notu (v1.4 derive — Aşama A+B+C+D5+D6 (Zenodo v1.4 + dist LaTeX+PDF) tamam; D7/D8 arXiv publication pending)
 
 > **Tarih:** 2026-07-15 (Paper 3 v1.4 derive Aşama A+B+C+D6 tamam — main `18ee7ef`; dist derive `docs/paper3-v1.4-dist` dalında)
 > **Dal:** `docs/paper3-v1.4-dist` (v1.4 derive: evidence authority + ontolojik çekirdek + tam manuscript propagation + dist LaTeX/PDF)
-> **Durum:** v1.4 Aşama A (evidence authority + EI3-a guard + EI4-b gap closure) + Aşama B (§3.1-3.6 ontolojik çekirdek + INV-C16 + EI + RP + Abstract/Contribution1 taxonomy) + Aşama C (Contributions 5/6 + §7 + §9.5 + §10 + §11 tam propagation) + **Aşama D6 (dist LaTeX derive: `docs/dist/paper3.tex` v1.4 + `osp-paper3-v1.4.pdf` + build log + v1.3 PDF arşiv + release-claim validator)** TAMAM. Aşama D5/D7/D8 (Zenodo DOI reserve + arXiv upload + publish) pending. Paper 3 v1.3 Zenodo'da canlı; v1.4 manuscript + dist artifact'leri hazır.
+> **Durum:** v1.4 Aşama A (evidence authority + EI3-a guard + EI4-b gap closure) + Aşama B (§3.1-3.6 ontolojik çekirdek + INV-C16 + EI + RP + Abstract/Contribution1 taxonomy) + Aşama C (Contributions 5/6 + §7 + §9.5 + §10 + §11 tam propagation) + **Aşama D5 (Zenodo DOI reserve: v1.4 version DOI `10.5281/zenodo.21376820`)** + **Aşama D6 (dist LaTeX derive: `docs/dist/paper3.tex` v1.4 + `osp-paper3-v1.4.pdf` + build log + v1.3 PDF arşiv + release-claim validator)** TAMAM. Aşama D7/D8 (arXiv upload + publish + receipt) pending. Paper 3 v1.4 Zenodo'da canlı (concept DOI `21220992` → v1.4 version DOI `21376820`).
 
 ---
 
@@ -693,7 +693,7 @@ PR C + PR D + PR E tamamlandı (main `f68b2c6`). Bu bölüm tüm pending işleri
     `col_max_lens` formülüyle düzeltildi — eski hardcoded 6-kolon ağırlığı Table 2'de Gate kolonuna
     0.24 verip Takes kolonunu 0.15'te sıkıştırıyordu; yeni formül `[0.054, 0.158, 0.244, ...]` ile
     v1.3 golden `[0.045, 0.185, 0.180, ...]` değerine yakın, dengeli dağılım.)
-- **Pending (D5/D7/D8):** Zenodo DOI reserve → manuscript DOI güncelle → arXiv upload → publish → receipt commit.
+- **Pending (D7/D8):** arXiv upload → publish → receipt commit. (D5 Zenodo DOI reserve tamam — v1.4 version DOI `10.5281/zenodo.21376820`.)
 
 ### PR G sonrası future-work (kapsam dışı bırakılan)
 - **Concept-level lineage/write path:** Ayrı ontolojik milestone (packet→concept join cardinality).
@@ -1109,16 +1109,16 @@ en değerli çıktı bu oldu.
 
 ## Yayın durumu (v1.3 → v1.4 adayı)
 
-**Paper 3 v1.3 Zenodo'da yayımlandı** — Faz 8b supersession vocabulary tamam.
+**Paper 3 v1.4 Zenodo'da yayımlandı** — v1.3 → v1.4 New Version (concept DOI korunur, yeni version DOI).
 
-| Kayıt | Concept DOI | v1.3 Version DOI | License |
+| Kayıt | Concept DOI | v1.4 Version DOI | License |
 |---|---|---|---|
-| Paper 3 | `10.5281/zenodo.21220992` | `10.5281/zenodo.21251821` | CC-BY-4.0 |
+| Paper 3 | `10.5281/zenodo.21220992` | `10.5281/zenodo.21376820` | CC-BY-4.0 |
 | Paper 1 | `10.5281/zenodo.21206545` | (v2.6) | CC-BY-4.0 |
 | Paper 2 | `10.5281/zenodo.21207704` | (v1.2) | CC-BY-4.0 |
 | Evidence Pack | `10.5281/zenodo.21207762` | (frozen) | CC-BY-4.0 |
 
 - **License:** Üç makale + evidence pack **CC-BY-4.0** (kod Apache-2.0 kalır).
-- **Cite pratiği:** Concept DOI kullanılır (her zaman en son versiyona resolve). Version DOI belirli sürümü işaret eder (v1.3 = `21251821`).
-- **arXiv v1.4:** Epistemik çekirdek + CLI surface + evidence identity + entity resolution + lineage projection tamam. Endorsement hazır (Jimenez e-postası).
-- **v1.4 pending paper edits:** INV-C16 runtime invariant (16 invariant; 13 type-enforced + 3 runtime C14/C15/C16); PR C/D/E/E2/F/G Table'ları; EI1-EI8 (PR F) + RP1-RP4 (PR G) invariant aileleri; trybuild 24→30; compile-fail fixture adları.
+- **Cite pratiği:** Concept DOI kullanılır (her zaman en son versiyona resolve). Version DOI belirli sürümü işaret eder (v1.4 = `21376820`; v1.3 = `21251821` arşivde).
+- **arXiv v1.4:** Epistemik çekirdek + CLI surface + evidence identity + entity resolution + lineage projection tamam. Endorsement hazır (Jimenez e-postası). arXiv yükleme ertelendi (D7 pending).
+- **v1.4 manuscript edits tamam:** INV-C16 runtime invariant (16 invariant; 13 type-enforced + 3 runtime C14/C15/C16); PR C/D/E/E2/F/G Table'ları; EI1-EI8 (PR F) + RP1-RP4 (PR G) invariant aileleri; trybuild 24→30; compile-fail fixture adları; dist LaTeX derive (osp-paper3-v1.4.pdf, 27 sayfa).

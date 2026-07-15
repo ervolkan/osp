@@ -1,6 +1,6 @@
 # OSP — Proje Durumu (STATUS)
 
-> **Son güncelleme:** 2026-07-15 (Paper 3 v1.4 derive — Aşama A+B+C+D6 (dist LaTeX+PDF) tamam; main `18ee7ef`; D5/D7/D8 publication transaction pending)
+> **Son güncelleme:** 2026-07-15 (Paper 3 v1.4 derive — Aşama A+B+C+D5+D6 (Zenodo v1.4 DOI + dist LaTeX+PDF) tamam; main `18ee7ef`; D7/D8 arXiv publication pending)
 > **Detaylı roadmap:** [`roadmap/paper2-roadmap.md`](roadmap/paper2-roadmap.md)
 > **Invariant spec:** [`spec/invariants.md`](spec/invariants.md)
 > **MCP tasarım:** [`spec/mcp-design.md`](spec/mcp-design.md)
@@ -162,14 +162,15 @@ Paper 2 yazımı için katman bazında hazırlık durumu (review 4):
 
 ## Sonraki Adım Önerisi
 
-**Paper 3 arXiv v1.4 — Aşama A+B+C+D6 (dist derive) tamam; D5/D7/D8 (publication transaction) pending.**
+**Paper 3 arXiv v1.4 — Aşama A+B+C+D5+D6 (Zenodo v1.4 + dist derive) tamam; D7/D8 (arXiv publication) pending.**
 
 v1.4 derive ilerlemesi (main `18ee7ef`; dist derive `docs/paper3-v1.4-dist` dalında):
 - **Aşama A (evidence authority) ✅:** run-metadata.json v2 frozen/current ayrımı; invariant-evidence-matrix.json (37 entry, machine-readable source of truth); scripts/verify_invariant_evidence.py (34 verified, 0 failed, 0 gaps); EI3-a ARCH-GUARD (`resolution_api_evidence_isolation_guard.rs`); EI4-b gap closure (defense-in-depth regression test); C6 stale fixture rename; DOI kalıcı ifade.
 - **Aşama B (ontolojik çekirdek) ✅:** §3.1–3.6 başlık yapısı; §3.4 INV-C16 (4 yüzey + R6/N:1/R7 cardinality); §3.5 Evidence-Identity + Table EI (8 satır); §3.6 Derived-Projection + Table RP (4+1 satır, RP1 admitted-domain); Abstract + Contribution 1 minimum taxonomy.
 - **Aşama C (tam manuscript propagation) ✅:** Contributions 5/6 ("six"); §1.3 Terminology; §7.1 (Thirty/16/13/3 + C16 ayrı cümle); §7.5b (4 family evidence scope); §7.6 (üç yüzey preview ayrımı); §9.5 (üç boundary); §10 (3 yeni threat); §11 (rule/risk/ImplementedBy ayrımı).
 - **Aşama D6 (dist LaTeX derive) ✅:** `docs/dist/paper3.tex` v1.4 (deterministik converter `scripts/md_to_latex.py --paper-version v1.4` + repo-relative provenance header); `docs/dist/osp-paper3-v1.4.pdf` (27 sayfa, Tectonic 0.16.9); `docs/dist/paper3-build.log` (Tectonic `--print`, missing-glyph=0, undefined-ref=0); v1.3 PDF `old_version_pdf/` arşivlendi. Release-claim validator `scripts/validate_paper3_v14_dist.py` (source/tex/pdf üç kapı: marker manifest + per-layer canonicalization + structural row-key + golden column-spec pattern).
-- **Aşama D5/D7/D8 (publication transaction) 🔶:** D5 Zenodo DOI reserve pending; D7 arXiv upload pending; D8 publish + receipt pending.
+- **Aşama D5 (Zenodo DOI reserve) ✅:** Paper 3 v1.4 New Version — concept DOI `10.5281/zenodo.21220992` (korunur), v1.4 version DOI `10.5281/zenodo.21376820` (v1.3 `21251821` arşivde). License CC-BY-4.0 (değişmedi).
+- **Aşama D7/D8 (publication transaction) 🔶:** D7 arXiv upload pending (ertelendi); D8 publish + receipt pending.
 
 Test envanteri (v1.4 Aşama A sonrası): osp-core lib 654, workspace 1153, 30 compile-fail, 0 regression. Validator: `py scripts/verify_invariant_evidence.py` → All verifications passed.
 
