@@ -178,6 +178,7 @@ fn auth_service_observations() -> ObservedPhysicalMetrics {
 - `PhysicalCodeVector` unvalidated debt: raw pub fields (NaN coupling enjekte edilebilir) — PR C kapsamı dışı.
 - `measured_at` PR D interface: wall-clock kaynağı.
 - **v1.4 pending paper edits:** Table C6 fixture adları + trybuild 24→26.
+  > Resolved by the Paper 3 v1.4 dist derive change set (markdown v1.4 + `docs/dist/paper3.tex` v1.4 + `osp-paper3-v1.4.pdf`). C6 fixture rename + trybuild count v1.4 manuscript'te yapıldı.
 - `PhysicalCodeMetricAxis` placement note: canonical predicate_lowering.rs'te; neutral modüle taşıma future cleanup.
 
 ## run-metadata: current protocol 24→26; frozen snapshot 22 unchanged.

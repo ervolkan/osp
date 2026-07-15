@@ -8,19 +8,33 @@ olarak haritalar. Kapsam: basliklar, paragraflar, tablolar, kod bloklari,
 inline kod, kalin/italik, matematik semboller (Unicode -> LaTeX).
 
 Kullanim:
-    py scripts/md_to_latex.py docs/papers/paper1-static-space.md > docs/dist/paper1.tex
-    py scripts/md_to_latex.py docs/papers/paper2-agent-trajectory.md > docs/dist/paper2.tex
-    py scripts/md_to_latex.py docs/papers/paper3-concept-anchoring.md > docs/dist/paper3.tex
+    py scripts/md_to_latex.py docs/papers/paper1-static-space.md --paper-version v2.6 > docs/dist/paper1.tex
+    py scripts/md_to_latex.py docs/papers/paper2-agent-trajectory.md --paper-version v1.2 > docs/dist/paper2.tex
+    py scripts/md_to_latex.py docs/papers/paper3-concept-anchoring.md --paper-version v1.4 > docs/dist/paper3.tex
 
 Sonra Tectonic ile derle:
     tectonic docs/dist/paper1.tex
     tectonic docs/dist/paper2.tex
     tectonic docs/dist/paper3.tex
+
+--paper-version TEK version kaynagidir. Provenance header (comment satiri olarak
+cikti basina eklenir) ve PDF icindeki "OSP Paper N, vX.Y (Preprint)" etiketi
+buradan uretilir. Eski kaynakla yeniden uretim yapilirken version flag'i o
+kaynaganin yayinlanmis surumuyle uyumlu verilmelidir.
 """
+import argparse
 import re
 import sys
 import html
 from pathlib import Path
+
+
+# Longtable (4+ kolon) icin kolon-bazli ragged-right esigi. Bir kolonun en uzun
+# hucresi bu degerden KUCUKSE (kisa index/etiket kolonu: INV, Gate no, vb.)
+# bare p{} kalir; BUYUKSE (uzun serbest metin) >{\raggedright\arraybackslash}
+# prefix eklenir. v1.3 elle-curated tablo davranisini deterministik olarak
+# yeniden uretir (Table 1: col1 bare; Table 2: col1 bare; Appendix A: hepsi).
+SHORT_COLUMN_MAX_LEN = 6
 
 
 # Unicode -> LaTeX matematik sembol haritasi (makalelerde gecenler)
@@ -247,6 +261,16 @@ def transliterate_to_ascii(text):
         '≈': '~', '∼': '~', '…': '...', '—': '--', '–': '-',
         '"': '"', '"': '"', ''': "'", ''': "'",
         '°': 'deg', '×': 'x', '·': '.',
+        # Box-drawing ve diagram karakterleri (§3.5/§3.6 ASCII diyagramlari)
+        # texttt fontu (ec-lmtt10) bu glyph'leri desteklemez.
+        '─': '-',   # U+2500 box drawings light horizontal
+        '━': '=',   # U+2501 heavy horizontal
+        '│': '|',   # U+2502 light vertical
+        '┃': '|',   # U+2503 heavy vertical
+        '┌': '+', '┐': '+', '└': '+', '┘': '+',   # corners
+        '├': '+', '┤': '+', '┬': '+', '┴': '+', '┼': '+',  # tees
+        '↓': 'v',   # U+2193 downwards arrow (diyagram akis)
+        '↑': '^',   # U+2191 upwards arrow
     }
     for unicode_char, ascii_eq in translit.items():
         text = text.replace(unicode_char, ascii_eq)
@@ -515,7 +539,23 @@ def process_table(lines, start_idx):
         col_spec = ' '.join([f'p{{0.45{width_unit}}}'] * n_cols)
     else:
         # 3+ kolon: icerik uzunluguna gore agirlikli bol
-        col_spec = ' '.join([f'p{{{w:.3f}{width_unit}}}' for w in weights])
+        cols = [f'p{{{w:.3f}{width_unit}}}' for w in weights]
+        # Ragged-right + @{} kurali SADECE 4+ kolonlu longtable'lara uygulanir.
+        # 3-kolonlu genis tablolar (Terminology: n_cols>=3 + uzun icerik) v1.3'te
+        # bare oldugu icin converter-default'ta birakilir (zero-regression).
+        # Kisa index kolonu (INV/Gate no <= SHORT_COLUMN_MAX_LEN) bare; uzun
+        # kolonlara >{\raggedright\arraybackslash}; @{} iki uc ta padding kaldirir.
+        if use_full_width and n_cols >= 4:
+            prefixed = []
+            for i, col in enumerate(cols):
+                if col_max_lens[i] > SHORT_COLUMN_MAX_LEN:
+                    # LaTeX tek backslash: >{\raggedright\arraybackslash}
+                    prefixed.append(r'>{\raggedright\arraybackslash}' + col)
+                else:
+                    prefixed.append(col)
+            col_spec = '@{} ' + ' '.join(prefixed) + ' @{}'
+        else:
+            col_spec = ' '.join(cols)
 
     # Genis tablolar (4+ kolon veya geniş içerik) icin longtable — sayfalar arasi bolunur.
     # Dar tablolar (<=2 kolon veya kisa icerik) table/tabular kalir.
@@ -875,44 +915,79 @@ def build_preamble(title, author, orcid, version, date):
     return preamble
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: md_to_latex.py <input.md>", file=sys.stderr)
-        sys.exit(1)
+def build_provenance_header(input_path, paper_version):
+    r"""Uretim provenance header'i — comment satirlari (\documentclass'tan once).
+    Repo-relative source path (makine-ozel ciktiyol onler)."""
+    # Repo-relative path: mevcut calma dizinine gore input_path'in relative yolunu bul.
+    try:
+        repo_root = Path.cwd()
+        rel = input_path.resolve().relative_to(repo_root)
+        source_str = str(rel).replace('\\', '/')
+    except ValueError:
+        # input_path repo disindaysa mutlak yol fallback
+        source_str = str(input_path).replace('\\', '/')
+    return (
+        "% ============================================================\n"
+        "% GENERATED ARTIFACT - do not edit content by hand.\n"
+        f"% Source: {source_str}   (repo-relative)\n"
+        f"% Paper version: {paper_version}  (derived by scripts/md_to_latex.py)\n"
+        f"% Regenerate: py scripts/md_to_latex.py --paper-version {paper_version} <src.md> > docs/dist/paperN.tex\n"
+        "% ============================================================\n"
+    )
 
-    input_path = Path(sys.argv[1])
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='md_to_latex.py',
+        description='OSP Markdown -> LaTeX (Tectonic) converter.',
+    )
+    parser.add_argument('input_md', help='Markdown source file path')
+    parser.add_argument(
+        '--paper-version',
+        required=True,
+        help='Paper version label (e.g. v1.4). Tek version kaynagi; provenance header '
+             've PDF etiketi buradan uretilir.',
+    )
+    args = parser.parse_args()
+
+    input_path = Path(args.input_md)
+    if not input_path.is_file():
+        print(f"Error: input file not found: {input_path}", file=sys.stderr)
+        sys.exit(1)
     md_text = input_path.read_text(encoding='utf-8')
 
     # Normalize CRLF -> LF
     md_text = md_text.replace('\r\n', '\n').replace('\r', '\n')
 
-    # Paper metadata (path'ten tespit)
+    # Paper metadata (path'ten tespit); version artik --paper-version flag'inden.
     name = input_path.name
     if 'paper-draft' in name or 'paper1' in name:
         paper_num = 1
         title = "Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing"
-        version = "OSP Paper 1, v2.6 (Preprint)"
         date = "June 2026"
     elif 'paper2' in name:
         paper_num = 2
         title = "Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates"
-        version = "OSP Paper 2, v1.2 (Preprint)"
         date = "July 2026"
     elif 'paper3' in name:
         paper_num = 3
         title = "Concept Anchoring: From Human Sentences to Bound Project Work"
-        version = "OSP Paper 3, v1.3 (Preprint)"
         date = "July 2026"
     else:
         paper_num = 0
         title = "Untitled"
-        version = "Draft"
         date = "2026"
+
+    # Version: tek kaynak --paper-version flag'i ("OSP Paper N, vX.Y (Preprint)")
+    version = f"OSP Paper {paper_num if paper_num else 'N'}, {args.paper_version} (Preprint)"
 
     author = "Volkan Er"
     orcid = "0009-0001-3685-4820"
 
     latex = convert_markdown_to_latex(md_text, paper_num, title, author, orcid, version, date)
+
+    # Provenance header'i cikti basina ekle (\documentclass'tan once - gecerli LaTeX comment).
+    print(build_provenance_header(input_path, args.paper_version), end='')
     print(latex)
 
 

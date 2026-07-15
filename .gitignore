@@ -23,6 +23,11 @@ tmp/
 .playwright-mcp/
 space-browser-initial
 
+# Python bytecode cache
+__pycache__/
+*.py[cod]
+*.pyo
+
 # Build artifacts — derive çıktı (md_to_latex.py + tectonic ile yeniden üretilebilir)
 docs/dist/
 nul

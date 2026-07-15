@@ -483,6 +483,7 @@ authorized `evidence_projection.rs` içindeki constructor token'ları doğal ola
 - **EvidenceSource abstraction (future):** `EvidenceSource = fresh analysis` (PR D) →
   `EvidenceSource = validated persisted DTO` (PR G). Consumer değişmez; provider'ı besleyen source değişir.
 - **v1.4 pending paper edits:** evidence_projection.rs boundary + compatibility proof semantics.
+  > Resolved by the Paper 3 v1.4 dist derive change set (markdown v1.4 + `docs/dist/paper3.tex` v1.4 + `osp-paper3-v1.4.pdf`). Evidence projection boundary + compatibility proof v1.4 manuscript §3.6 (Derived-Projection, RP1-RP4) + §10/§11'de yapıldı.
 - **`measured_at` policy:** PR D `now_unix_secs()` fail-closed Result inject; PR G wall-clock source (NTP/system) policy.
 - **run-metadata.json frozen/current debt:** stratum 22 vs cumulative_trybuild_context 26 tutarsızlığı
   ayrı cleanup PR (tur 3 P3-10).
