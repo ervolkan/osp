@@ -1,0 +1,60 @@
+cff-version: 1.2.0
+message: "If you use OSP in your work, please cite it as below."
+title: "OSP: Ontological Space Protocol"
+type: software
+authors:
+  - given-names: Volkan
+    family-names: Er
+    orcid: "https://orcid.org/0009-0001-3685-4820"
+    email: ervolkan@gmail.com
+repository-code: "https://github.com/ontologicalspace/osp"
+url: "https://ontologicalspace.org"
+abstract: >-
+  Software projects as navigable conceptual spaces with physics-like
+  rules and BFT-inspired witnessing. OSP positions every module in a
+  multi-dimensional coordinate system (coupling, cohesion, instability,
+  entropy, witness-depth) and constrains AI-agent commits through
+  deterministic validity gates before mutation.
+keywords:
+  - agent-governance
+  - ai-agents
+  - software-architecture
+  - byzantine-fault-tolerance
+  - formal-methods
+  - rust
+license: Apache-2.0
+references:
+  - type: report
+    title: "Ontological Space Protocol: Modeling Software as a Conceptual Space with Epistemological Witnessing"
+    authors:
+      - given-names: Volkan
+        family-names: Er
+        orcid: "https://orcid.org/0009-0001-3685-4820"
+    doi: 10.5281/zenodo.21206545
+  - type: report
+    title: "Architectural Trajectory Navigation: From Target Coordinates to Measurement Predicates"
+    authors:
+      - given-names: Volkan
+        family-names: Er
+        orcid: "https://orcid.org/0009-0001-3685-4820"
+    doi: 10.5281/zenodo.21207704
+  - type: report
+    title: "Concept Anchoring: From Human Sentences to Bound Project Work"
+    authors:
+      - given-names: Volkan
+        family-names: Er
+        orcid: "https://orcid.org/0009-0001-3685-4820"
+    doi: 10.5281/zenodo.21220992
+  - type: data
+    title: "OSP Paper 3 — Evidence Pack (Frozen Verification Snapshots)"
+    authors:
+      - given-names: Volkan
+        family-names: Er
+        orcid: "https://orcid.org/0009-0001-3685-4820"
+    doi: 10.5281/zenodo.21207762
+# Software release DOI/version/date receipt will be added here at the first
+# real release. The paper DOIs above reference the companion manuscripts, not
+# the software itself.
+# doi: 10.5281/zenodo.XXXXXXX
+# version: 0.1.0
+# date-released: 2026-XX-XX

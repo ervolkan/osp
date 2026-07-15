@@ -14,12 +14,13 @@ members = [
 #   "crates/osp-viz"        (Faz 6: WASM görselleştirme)
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 authors = ["OSP Authors"]
-repository = "https://github.com/TODO/osp"
+repository = "https://github.com/ontologicalspace/osp"
+homepage = "https://ontologicalspace.org"
 description = "Ontological Space Protocol — software as a conceptual space"
 
 [workspace.dependencies]

@@ -1,6 +1,6 @@
 # OSP — Ontological Space Protocol
 
-[![CI](https://github.com/ervolkan/osp/actions/workflows/ci.yml/badge.svg)](https://github.com/ervolkan/osp/actions/workflows/ci.yml)
+[![CI](https://github.com/ontologicalspace/osp/actions/workflows/ci.yml/badge.svg)](https://github.com/ontologicalspace/osp/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > Software projects as navigable **conceptual spaces** with physics-like rules and
@@ -28,7 +28,7 @@
 ### Build & Test
 
 ```bash
-git clone https://github.com/ervolkan/osp.git
+git clone https://github.com/ontologicalspace/osp.git
 cd osp
 cargo build --workspace --exclude osp-desktop
 cargo test --workspace --exclude osp-desktop   # 1153+ tests across 7 crates
@@ -216,7 +216,7 @@ cargo run --release --example timing_bench -- /path/to/repo 5
 | **5** | Agent/LLM OSP Codec | 🔶 Stub types + validate gates + stateless runtime |
 | **6** | Multi-Agent Coordination | 📄 Proposal |
 | **7** | Academic Paper 1 (Static Space) | ✅ v2.6 (arXiv target) |
-| **8** | OSP Desktop UI | ✅ v0.3.4 (6 panels + role-aware vision + Node Inspector + Confidence) |
+| **8** | OSP Desktop UI | ✅ Evaluation snapshot 0.3.4; packaged desktop 0.1.0 (6 panels + role-aware vision + Node Inspector + Confidence) |
 | **9** | Custom Axis Marketplace | ⏸️ Planned |
 | **P2** | **Paper 2 — Agent Trajectory Navigation** | 🔶 Core + CLI + MCP done; SDK + paper writing pending |
 | **P3** | **Paper 3 — Genesis Layer (Concept Anchoring)** | ✅ v1.4 on Zenodo (`21376820`); concept DOI `21220992`; arXiv pending |
@@ -270,6 +270,13 @@ are maintained privately during development.*
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE).
+
+## Citation
+
+If you use OSP in academic work, please cite it using the metadata in
+[`CITATION.cff`](CITATION.cff). Three companion papers (Static Space, Agent
+Trajectory, Concept Anchoring) and an Evidence Pack are archived on Zenodo —
+see `CITATION.cff` for the DOIs.
 
 ## Contributing
 

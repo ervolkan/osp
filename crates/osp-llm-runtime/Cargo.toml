@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "OSP LLM runtime — OspPrompt to DeltaProposal via OpenAI-compatible chat completion API"
 
 [dependencies]
