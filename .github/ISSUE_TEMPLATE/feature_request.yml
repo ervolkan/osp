@@ -1,0 +1,55 @@
+name: Feature request
+description: Suggest a new capability or improvement for OSP.
+title: "[feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Do not report security vulnerabilities through public issues.**
+        > Follow the private reporting process in
+        > [SECURITY.md](https://github.com/ontologicalspace/.github/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature solve? What are you trying to do that you cannot?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the capability you would like, and how you imagine it working.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which authority surface does this touch?
+      description: See GOVERNANCE.md §2. This helps route the request.
+      options:
+        - Protocol (invariants, formal model, spec)
+        - Implementation (code, CI, tooling)
+        - Paper-Evidence (manuscripts, deposits)
+        - Release (versioning, DOI)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: public-safety
+    attributes:
+      label: Public disclosure confirmation
+      options:
+        - label: This request does not contain a security vulnerability or sensitive exploit details.
+          required: true

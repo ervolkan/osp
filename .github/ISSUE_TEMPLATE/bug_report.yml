@@ -1,0 +1,74 @@
+name: Bug report
+description: Report something that works incorrectly in OSP.
+title: "[bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Do not report security vulnerabilities through public issues.**
+        > Follow the private reporting process in
+        > [SECURITY.md](https://github.com/ontologicalspace/.github/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: OSP version / commit
+      placeholder: "e.g. 0.1.0, or commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - CLI
+        - MCP server
+        - Desktop app
+        - Library (osp-core / osp-analyzer)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Describe the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: The exact commands or inputs that trigger the bug.
+      placeholder: |
+        1. run `cargo run -p osp-cli -- analyze --repo ...`
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Rust toolchain, relevant tool versions (SCIP indexers, etc.).
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: public-safety
+    attributes:
+      label: Public disclosure confirmation
+      options:
+        - label: This report does not contain a security vulnerability or sensitive exploit details.
+          required: true

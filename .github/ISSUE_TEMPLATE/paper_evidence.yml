@@ -1,0 +1,99 @@
+name: Paper / evidence problem
+description: Report a missing, contradictory, or non-reproducible claim, invariant, or evidence record.
+title: "[evidence]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when something is wrong with OSP's evidence chain: a claim that
+        does not reproduce, an invariant that is contradicted by behavior, a stale
+        evidence record, or a mismatch between a claim and its evidence strength.
+
+        > **Do not report security vulnerabilities through public issues.**
+        > Follow the private reporting process in
+        > [SECURITY.md](https://github.com/ontologicalspace/.github/blob/main/SECURITY.md).
+
+  - type: dropdown
+    id: authority-surface
+    attributes:
+      label: Authority surface
+      description: Which surface is affected? See GOVERNANCE.md §2.
+      options:
+        - Protocol (invariant / formal model / spec)
+        - Implementation (code / CI / tests)
+        - Paper / claim (manuscript, RQ, stated result)
+        - Evidence pack (frozen verification snapshots)
+        - Release (version / DOI)
+    validations:
+      required: true
+
+  - type: input
+    id: artifact-id
+    attributes:
+      label: Artifact identifier
+      description: Invariant ID, Claim/RQ number, DOI, commit SHA, or release version.
+      placeholder: "e.g. INV-T1, RQ3, 10.5281/zenodo.xxxxxxx, a1b2c3d"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: evidence-class
+    attributes:
+      label: Evidence class
+      options:
+        - Missing — no evidence exists for the claim
+        - Contradictory — evidence conflicts with the claim
+        - Non-reproducible — evidence does not reproduce on rerun
+        - Stale — evidence predates a relevant change
+        - Misclassified — evidence is attached to the wrong claim
+        - Claim-strength mismatch — evidence supports a weaker/stronger claim than stated
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro-command
+    attributes:
+      label: Reproduction command
+      description: The exact command or procedure you used to check the evidence.
+      placeholder: "e.g. cargo test --workspace -p osp-core trajectory::inv_t1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed-result
+    attributes:
+      label: Observed result
+    validations:
+      required: true
+
+  - type: input
+    id: affected-artifact
+    attributes:
+      label: Affected publication or implementation
+      description: Paper section, spec section, crate, or file the claim lives in.
+      placeholder: "e.g. Paper 3 §4.2, docs/spec/invariants.md, crates/osp-core/src/trajectory.rs"
+    validations:
+      required: false
+
+  - type: textarea
+    id: claim-impact
+    attributes:
+      label: Potential claim impact
+      description: If this evidence is wrong, what published claim or invariant is affected?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confidentiality
+    attributes:
+      label: Confidentiality confirmation
+      options:
+        - label: This report does not contain a security vulnerability or sensitive exploit details.
+          required: true
