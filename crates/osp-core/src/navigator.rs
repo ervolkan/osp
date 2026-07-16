@@ -823,7 +823,7 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                     loss_before,
                     measured: measured.clone(),
                 }) {
-                Ok(crate::engine::EngineCommitResult::Applied(result)) => result,
+                Ok(crate::engine::EngineCommitResult::Evaluated(result)) => result,
                 Ok(crate::engine::EngineCommitResult::Held { reason, snapshot }) => {
                     // **INV-T9** — expected authorization bekleme. Agent retry DEĞİL.
                     // Budget tüketmez (continue YOK), LLM reinvocation YOK.
@@ -1460,7 +1460,7 @@ mod tests {
         // Q5.b çalıştı — Reject (witness yok) veya Ok (predicate reject NotApplied).
         // İkisi de Q5.b'nin çalıştığını gösterir. Witness boş → INV-T9 Held beklenir.
         match result {
-            Ok(crate::engine::EngineCommitResult::Applied(r)) => {
+            Ok(crate::engine::EngineCommitResult::Evaluated(r)) => {
                 assert!(
                     r.outcome.predicate_completion == PredicateCompletion::Completed
                         || r.outcome.predicate_completion == PredicateCompletion::NotCompleted

@@ -878,7 +878,7 @@ impl Workspace {
                 loss_before,
                 measured: measured.clone(),
             }) {
-            Ok(osp_core::engine::EngineCommitResult::Applied(r)) => r,
+            Ok(osp_core::engine::EngineCommitResult::Evaluated(r)) => r,
             Ok(osp_core::engine::EngineCommitResult::Held { reason, snapshot }) => {
                 // **INV-T9** — expected authorization bekleme. Agent failure DEĞİL.
                 return Ok(serde_json::json!({

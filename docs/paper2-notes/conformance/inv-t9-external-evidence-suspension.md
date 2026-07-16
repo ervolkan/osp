@@ -174,9 +174,9 @@ waiting consumes no additional maneuver budget (proposal generation counts once)
 
 ### `RevisionRequired` evidence preservation
 
-`NavigatorResult::RequiresRevision` carries task_id, claim_id, authorization basis
-digest, witness snapshot, attempt evidence id (Commit 4 expands this to full
-`RevisionRequired` struct).
+`NavigatorResult::RequiresRevision(RevisionRequired)` carries task_id, claim_id,
+authorization basis digest, witness reasons (NonEmpty), witness snapshot, attempt
+evidence id — full evidence-preserving struct.
 
 ## 6. Test evidence
 
@@ -304,32 +304,43 @@ non-breaking):
   osp-mcp submit_delta_attempt.
 - **`WitnessResult`:** now deprecated type alias for `WitnessDisposition`. Old
   `Commit/Hold/Reject` variants removed; use `Satisfied/Held/Rejected`. Migration:
-  mechanical rename. Legacy `commit()` (standalone/Paper 1) retains
-  `EngineCommitError::Witness(Reason)` via conversion helpers.
+  mechanical rename.
+- **`EngineCommitError::Witness(Reason)`:** REMOVED. Legacy `commit()` (standalone/Paper 1)
+  Held/Rejected now returns `Internal` error (use `commit_task_claim` for INV-T9
+  conformance — it returns `EngineCommitResult::Held/Rejected`).
+- **`EngineCommitError` new variants:** `InvalidWitnessEvidence(String)`, `Internal(String)`.
+- **`EngineCommitResult::Applied`:** renamed to `Evaluated` (covers NotApplied reject +
+  Mainline/Checkpoint applied — `apply_target` in `TaskCommitResult` carries the distinction).
 - **CLI exit codes:** new contract (`exit_codes` module). 0 Completed, 10
   AwaitingWitnesses, 11 RequiresRevision, 12 ExceededManeuverLimit, 13
-  RequiresOperatorApproval, 80 TaskNotFound, 90 LlmError. Snapshot tests will pin
-  these.
+  RequiresOperatorApproval, 20 WitnessEvaluationError, 40
+  PendingAuthorizationPersistenceFailure, 70 SystemFailure, 80 TaskNotFound, 90 LlmError.
+- **Navigator store/clock:** `Box<dyn PendingAuthorizationStore>` + `Box<dyn Clock>`
+  (ZORUNLU, not Optional). Production wires `FilesystemPendingAuthorizationStore` +
+  `SystemClock`; tests use `NullPendingAuthorizationStore` + `FixedClock`.
 - **Persisted evidence schema:** AttemptEvidence + AuthorizationEvent separation
   planned for P1 (currently single composite TrajectoryEvidence record).
 
 ## 9. Deferred boundary (P1 follow-up PR)
 
-This PR establishes suspension semantics, claim continuity, budget isolation, and
-the versioned pending record. The following are **deferred to the immediately
-following lifecycle PR**:
+This PR establishes suspension semantics, claim continuity, budget isolation,
+persist-before-return, exhaustive error taxonomy, canonical digest, and store
+hardening — all reviewer P1 findings addressed. The following are **deferred to the
+immediately following lifecycle PR**:
 
 - **Witness resume workflow:** `osp trajectory status`, `osp witness add`,
   `osp trajectory resume` CLI + store-backed persistence.
-- **Navigator persist-before-return wiring:** engine must expose
-  `evaluation_context_digest` + `base_space_view_revision` for full
-  `AuthorizationBasis` construction. Navigator currently passes
-  `pending_authorization_store: None` (store + envelope ready, wiring pending).
+- **Engine revision/context expose:** `current_space_view_revision()` and
+  `current_evaluation_context_digest()` are placeholder implementations (t_c-based).
+  P1 makes them real (full revision tracking + context digest from vision/rule config).
 - **Cross-process resume:** pending artifact load + staleness re-measure
   (`current_revision == base_revision` → continue; `!=` → remeasure).
 - **Stale authorization basis detection:** on resume, if gate policy (vision/
   rule-set) changed since basis measurement, remeasure before witness evaluation.
 - **`new_evidence_reuses_the_same_claim` test:** pending resume integration test.
+- **AuthorizationBasis construction from engine:** `suspend_for_witness` currently
+  builds a minimal basis (placeholder predicate content). P1 wires full structural
+  delta + predicate content from engine.
 
 The `PendingAuthorizationEnvelope` embeds the full `AuthorizationBasis`, so P1 can
 persist and resume without redesign — the data model is complete.

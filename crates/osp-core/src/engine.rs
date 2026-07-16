@@ -226,16 +226,17 @@ pub enum EngineCommitError {
 
 /// **INV-T9** — `commit_task_claim` expected domain outcome (HATA DEĞİL).
 ///
-/// `Applied` = AcceptAsCompleted (Mainline) VE AcceptAsProgress (TrajectoryCheckpoint)
-/// uygulandı. `Held` = expected authorization bekleme (INV-T9 suspended state).
-/// `Rejected` = explicit witness rejection (non-empty).
+/// `Evaluated` = commit pipeline tamamlandı (AcceptAsCompleted Mainline'e, AcceptAsProgress
+/// Checkpoint'e, Reject NotApplied — hepsi bu varyantta, apply_target ayrımı TaskCommitResult'ta).
+/// `Held` = expected authorization bekleme (INV-T9 suspended state). `Rejected` = explicit
+/// witness rejection (non-empty).
 ///
 /// Operational fault'lar (Syntax/Vision/Rule/Permission/Persistence/Internal +
 /// InvalidWitnessEvidence) `EngineCommitError`'da kalır.
 #[derive(Debug, Clone)]
 pub enum EngineCommitResult {
-    /// Mainline veya checkpoint'e uygulandı. TaskCommitResult tam witness + outcome taşır.
-    Applied(TaskCommitResult),
+    /// Pipeline evaluated — apply_target NotApplied (Reject) veya Lane (Mainline/Checkpoint).
+    Evaluated(TaskCommitResult),
     /// INV-T9 — expected authorization bekleme. Navigator AwaitingWitnesses'ye map'ler.
     Held {
         reason: crate::witness::WitnessHoldReason,
@@ -483,7 +484,7 @@ impl SpaceEngine {
         // Phase 0f: MutationDecision → ApplyTarget kontrolü (INV-T8).
         // Reject → NotApplied (commit yok, witness yok). Sadece evidence kaydı navigator'da.
         if matches!(apply_target, ApplyTarget::NotApplied) {
-            return Ok(EngineCommitResult::Applied(TaskCommitResult {
+            return Ok(EngineCommitResult::Evaluated(TaskCommitResult {
                 outcome,
                 apply_target,
                 loss_after,
@@ -501,7 +502,7 @@ impl SpaceEngine {
         match disposition {
             WitnessDisposition::Satisfied { .. } => {
                 self.t_c += 1;
-                Ok(EngineCommitResult::Applied(TaskCommitResult {
+                Ok(EngineCommitResult::Evaluated(TaskCommitResult {
                     outcome,
                     apply_target,
                     loss_after,
