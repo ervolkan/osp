@@ -1448,7 +1448,15 @@ mod tests {
         // loss_before yüksek → loss_after (measured target'a yakın değil) düşük değil;
         // ama improved için loss_after < loss_before - 0.05. measured 0.40, target 0.10
         // → loss = |0.40-0.10| benzeri. loss_before=1.0 verip improved sağlayalım.
-        let space_node_count_before = engine.space().node_count();
+        //
+        // **reviewer P1 (INV-T9 space-immutability):** Held durumunda engine space'e
+        // hiçbir structural delta uygulanmaz. node_count yalnız node sayısını karşılaştırır;
+        // edge ekleme/kaldırma, node alan değişimi, replacement yakalanmaz. SpaceDigest
+        // node'ların tüm canonical alanlarını (kind/mass/cohesion/classification/role) +
+        // tüm edge'leri encode eder; t_c Satisfied'ta ilerler. Held ikisinden de etkilenmemeli.
+        let space_digest_before =
+            crate::authorization::SpaceDigest::compute(engine.space()).unwrap();
+        let t_c_before = engine.t_c();
         let result = engine.commit_task_claim(TaskCommitInput {
             claim: &claim,
             omega: &omega,
@@ -1485,10 +1493,13 @@ mod tests {
         };
         let basis = &auth.basis;
 
-        // **reviewer P0-1:** improvement_policy tek nesne — gate ve basis paylaşır.
+        // **reviewer P0-1:** improvement_policy gate → output → basis tek propagation.
+        // `EffectiveImprovementPolicy` Copy value type olduğu için "same object" değil
+        // "same policy value": aynı girdiler → aynı policy değeri → basis'e taşınır.
+        // Kod incelemede tek construction akışını doğrular (engine.rs commit_task_claim).
         assert_eq!(
             basis.predicate_evaluation.improvement_policy, gate_out.improvement_policy,
-            "basis must share the SAME improvement policy object as the gate output"
+            "basis must carry the same improvement policy value as the gate output"
         );
         assert_eq!(
             basis.predicate_evaluation.improvement_policy,
@@ -1512,20 +1523,30 @@ mod tests {
         // target_vector = input.target (preferred_vector DEĞİL).
         assert_eq!(basis.predicate_evaluation.target_vector.x, target.x);
 
-        // **reviewer P0-2 (space dokunulmazlık):** Held → time.advance Satisfied DEĞİL
-        // → space mutasyonu yok (time.rs:61 other => other).
+        // **reviewer P1 (space dokunulmazlık — güçlendirilmiş):** Held → time.advance
+        // Satisfied DEĞİL → space mutasyonu yok (time.rs:61 other => other). INV-T9
+        // iddiası "node sayısı değişmedi" değil: structural delta hiç uygulanmadı.
+        // SpaceDigest tüm node alanlarını + edge'leri yakalar; t_c Satisfied'ta ilerler.
+        let space_digest_after =
+            crate::authorization::SpaceDigest::compute(engine.space()).unwrap();
         assert_eq!(
-            space_node_count_before,
-            engine.space().node_count(),
-            "Held must not mutate engine space"
+            space_digest_before, space_digest_after,
+            "Held must not mutate engine space (full content digest)"
+        );
+        assert_eq!(
+            t_c_before,
+            engine.t_c(),
+            "Held must not advance t_c (no Satisfied commit)"
         );
     }
 
-    // **reviewer P0-1 (single construction):** gate output ve authorization basis aynı
-    // improvement_policy nesnesini paylaşır — iki ayrı construction site oluşmadı.
-    // (AcceptAsProgress testi bunu assert ediyor; bu ayrı test semantik vurgu yapar.)
+    // **reviewer P0-1/P2 (single propagation — value equality):** gate output'tan çıkan
+    // improvement policy değeri authorization basis'e taşınır. `EffectiveImprovementPolicy`
+    // Copy value type olduğu için bu "same object" DEĞİL, "same policy value" — aynı
+    // girdiler aynı policy değerini üretir ve engine.rs tek propagation akışında taşır.
+    // (Kod inceleme: commit_task_claim gate_out.improvement_policy → build_authorization_context.)
     #[test]
-    fn gate_output_and_authorization_basis_share_same_improvement_policy() {
+    fn gate_output_policy_value_is_propagated_into_authorization_basis() {
         let mut engine = make_real_engine();
         let mut resolver = InMemoryTaskRegistry::new();
         let policy = TaskPolicy {
@@ -1568,7 +1589,8 @@ mod tests {
             Ok(crate::engine::EngineCommitResult::Held { authorization, .. }) => authorization,
             other => panic!("expected Held, got {other:?}"),
         };
-        // Tek construction site sözleşmesi: iki ayrı current_semantics() üretimi yok.
+        // Tek propagation: gate output policy değeri basis'e taşınır (value equality).
+        // İki ayrı construction site yok — engine gate_out.improvement_policy kullanır.
         assert_eq!(
             auth.basis.predicate_evaluation.improvement_policy,
             gate_out.improvement_policy
@@ -2538,7 +2560,12 @@ mod tests {
         let mut evidence = vec![];
 
         // Space state before (INV-T9: space unchanged after Held).
-        let space_before_nodes = engine.space().node_count();
+        // **reviewer P1:** node_count yalnız sayıyı karşılaştırır; edge/node-alan/replacement
+        // mutasyonlarını yakalamaz. SpaceDigest tüm node canonical alanlarını + edge'leri
+        // encode eder; t_c Satisfied'ta ilerler. Held ikisinden de etkilenmemeli.
+        let space_digest_before =
+            crate::authorization::SpaceDigest::compute(engine.space()).unwrap();
+        let t_c_before = engine.t_c();
 
         // Real filesystem store — temp directory.
         let tmp = tempfile::tempdir().expect("temp dir");
@@ -2602,10 +2629,18 @@ mod tests {
                 );
 
                 // Exact: space unchanged (Held → no mutation).
-                let space_after_nodes = nav.engine.space().node_count();
+                // **reviewer P1:** güçlendirilmiş — SpaceDigest (tüm node alanları +
+                // edge'ler) ve t_c birlikte. node_count yalnız sayıyı yakalar.
+                let space_digest_after =
+                    crate::authorization::SpaceDigest::compute(nav.engine.space()).unwrap();
                 assert_eq!(
-                    space_before_nodes, space_after_nodes,
-                    "INV-T9 exact: Held must not mutate engine space"
+                    space_digest_before, space_digest_after,
+                    "INV-T9 exact: Held must not mutate engine space (full content digest)"
+                );
+                assert_eq!(
+                    t_c_before,
+                    nav.engine.t_c(),
+                    "INV-T9 exact: Held must not advance t_c (no Satisfied commit)"
                 );
             }
             NavigatorResult::ExceededManeuverLimit { last_outcome, .. } => {

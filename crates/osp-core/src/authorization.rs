@@ -204,8 +204,12 @@ pub struct EffectiveMetricPredicate {
 /// `PredicateScope::Subgraph([])` ile aynıdır. Boş subgraph runtime'da üretiliyor
 /// (trajectory.rs decomposition fallback), bu yüzden reddedilmez.
 ///
-/// **Serde wire format:** opaque newtype olduğu için `Vec<u64>` olarak serileşir
-/// (serde(transparent)). Disk formatı değişmez; backward-compatible.
+/// **Artifact schema (reviewer P1):** The v1 artifact schema has not yet been
+/// published. PR #69 henüz merge edilmedi; önceki revizyonların ürettiği pending
+/// artifact'lar desteklenmez. Bu commit (external-tagged enum + validated newtype)
+/// ilk v1 representation'ı finalizes. Eski `{ scope_tag, identity_bytes }` struct
+/// wire formatı ile uyumlu DEĞİL — surrounding `CanonicalPredicateScope` enum
+/// externally tagged olarak serileştiği için enclosing JSON değişti.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct CanonicalSubgraphScope(Vec<u64>);
 

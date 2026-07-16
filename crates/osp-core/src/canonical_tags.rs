@@ -9,9 +9,11 @@
 //! `TryFrom<&DomainEnum>` sağlar. Yeni varyant eklendiğinde compiler mapping'in
 //! güncellenmesini zorunlu kılar (match exhaustive, `#[non_exhaustive]` DEĞİL).
 //!
-//! **Serde:** newtype'lar `u8` olarak serialize/deserialize edilir (transparent
-//! wrapper). Deserialize geçersiz tag'i reddetmez (forward-compat) ama construction
-//! yalnız `TryFrom<&DomainEnum>` veya `from_domain` ile olur — imkânsız tag üretilemez.
+//! **Serde (reviewer P1-1):** newtype'lar `u8` olarak serialize edilir. Deserialize
+//! GEÇERSİZ tag'i REDDER — custom `Deserialize → TryFrom<u8>` zinciri `VALID_TAGS` set
+//! dışındaki değeri `CanonicalizationError::InvalidCanonicalTag` ile reddeder (örn diskten
+//! `kind = 255`). Diskten yüklenen artifact construction'a varmadan valide edilir;
+//! imkânsız tag üretilemez ve korunamaz.
 
 use crate::coords::MetricSource;
 use crate::space::{NodeClassification, NodeRole};
