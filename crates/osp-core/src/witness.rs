@@ -293,7 +293,7 @@ impl WitnessHoldReason {
 }
 
 /// Tek witness'ın explicit reddi (Q3 honest-reject). Hold DEĞİL — gerçek ret.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WitnessRejection {
     /// Reddeden witness'ın agent ID'si.
     pub witness: AgentId,
@@ -305,8 +305,11 @@ pub struct WitnessRejection {
 ///
 /// Boş rejection listesi anlamsızdır (en az bir witness reddetmiş olmalı).
 /// `from_single` ve `from_vec` (non-empty kontrolü ile) dışında oluşturulamaz.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NonEmptyWitnessRejections(Vec<WitnessRejection>);
+/// Serde deserialize'da boş Vec → hata (smart constructor invariant).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NonEmptyWitnessRejections(
+    #[serde(deserialize_with = "deserialize_non_empty_rejections")] Vec<WitnessRejection>,
+);
 
 impl NonEmptyWitnessRejections {
     /// Tek rejection'dan oluştur.
@@ -351,6 +354,24 @@ impl NonEmptyWitnessRejections {
     pub fn is_empty(&self) -> bool {
         false
     }
+}
+
+/// Serde deserialize helper — boş Vec'i reddeder (NonEmpty invariant).
+fn deserialize_non_empty_rejections<'de, D>(
+    deserializer: D,
+) -> Result<Vec<WitnessRejection>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let v = Vec::<WitnessRejection>::deserialize(deserializer)?;
+    if v.is_empty() {
+        use serde::de::Error;
+        return Err(D::Error::custom(
+            "NonEmptyWitnessRejections cannot be empty (invariant)",
+        ));
+    }
+    Ok(v)
 }
 
 /// Canonical witness değerlendirme sonucu — TimeFSM::advance çıktısı.

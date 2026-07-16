@@ -328,15 +328,16 @@ fn e2e_insufficient_witnesses_hold() {
         removed_edges: vec![], // G2c-2
     };
 
-    // Only 1 witness → Hold (min_approvers=2 not met)
+    // Only 1 witness → Held (min_approvers=2 not met). Legacy commit() → Internal.
+    // INV-T9: commit_task_claim kullanırsanız EngineCommitResult::Held döner.
     let result = engine.commit(&claim, &one_witness());
 
     assert!(
-        matches!(result, Err(EngineCommitError::Witness(_))),
-        "1 witness should Hold — got: {:?}",
+        matches!(result, Err(EngineCommitError::Internal(ref msg)) if msg.contains("Held")),
+        "1 witness should Held (legacy commit → Internal): got {:?}",
         result.as_ref().err()
     );
-    assert_eq!(engine.space().node_count(), 3, "no mutation on Hold");
+    assert_eq!(engine.space().node_count(), 3, "no mutation on Held");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

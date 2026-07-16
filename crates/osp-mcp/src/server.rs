@@ -575,8 +575,11 @@ impl OspMcpServer {
                 output_contract: osp_core::agent::OutputContract::strict(),
                 // MCP server = production context → Production witness (min_approvers=2).
                 witness_policy: osp_core::navigator::NavigatorWitnessPolicy::Production,
-                pending_authorization_store: None,
-                clock: None,
+                // INV-T9: production filesystem store.
+                pending_authorization_store: Box::new(
+                    osp_core::authorization::FilesystemPendingAuthorizationStore::new("."),
+                ),
+                clock: Box::new(osp_core::authorization::SystemClock),
             };
             let result = nav.run_task(task_id, 1);
             // Evidence'ı store'a kaydet (RQ6 verisi).
@@ -658,32 +661,37 @@ fn serialize_navigator_result(result: &osp_core::navigator::NavigatorResult) -> 
             "last_mutation_decision": format!("{:?}", last_outcome.mutation_decision),
             "last_predicate_completion": format!("{:?}", last_outcome.predicate_completion),
         }),
-        NavigatorResult::AwaitingWitnesses {
-            task_id,
-            claim_id,
-            hold_reason,
-            attempts_used,
-        } => serde_json::json!({
+        NavigatorResult::AwaitingWitnesses { pending, persistence } => serde_json::json!({
             "outcome": "AwaitingWitnesses",
-            "task_id": task_id,
-            "claim_id": claim_id,
-            "witness_hold_reason": hold_reason.as_reason_str(),
-            "attempts_used": attempts_used,
+            "task_id": pending.task_id,
+            "claim_id": pending.claim_id,
+            "witness_hold_reason": pending.witness_hold_reason.as_reason_str(),
             "commit_state": "awaiting_witnesses",
             "mainline_mutation": "not_applied",
+            "pending_artifact": persistence.artifact_path.to_string_lossy(),
             "next_action": "await_external_evidence",
         }),
-        NavigatorResult::RequiresRevision {
-            task_id,
-            claim_id,
-            attempts_used,
-        } => serde_json::json!({
+        NavigatorResult::RequiresRevision(rev) => serde_json::json!({
             "outcome": "RequiresRevision",
-            "task_id": task_id,
-            "claim_id": claim_id,
-            "attempts_used": attempts_used,
+            "task_id": rev.task_id,
+            "claim_id": rev.claim_id,
+            "rejecting_witnesses": rev.reasons.as_slice().iter().map(|r| r.witness).collect::<Vec<_>>(),
             "commit_state": "rejected_by_witness",
             "next_action": "requires_revision",
+        }),
+        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, error } => serde_json::json!({
+            "outcome": "PendingAuthorizationPersistenceFailure",
+            "task_id": pending.task_id,
+            "claim_id": pending.claim_id,
+            "error": error.to_string(),
+        }),
+        NavigatorResult::WitnessEvaluationError(msg) => serde_json::json!({
+            "outcome": "WitnessEvaluationError",
+            "message": msg,
+        }),
+        NavigatorResult::SystemFailure(msg) => serde_json::json!({
+            "outcome": "SystemFailure",
+            "message": msg,
         }),
         NavigatorResult::TaskNotFound => serde_json::json!({ "outcome": "TaskNotFound" }),
         NavigatorResult::RequiresOperatorApproval {

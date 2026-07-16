@@ -2431,6 +2431,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake3",
+ "libc",
  "quote",
  "serde",
  "serde_json",

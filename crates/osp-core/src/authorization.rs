@@ -39,14 +39,36 @@ pub type ClaimAuthor = AgentId;
 /// `StructuralDeltaDigest` KULLANILMAZ — lossy özet iki farklı proposal'ı aynı
 /// authorization basis'e dönüştürebilir. Full canonical byte stream kullanılır.
 /// Node ID'leri sorted, edge'ler sorted — deterministic encoding.
+///
+/// **Smart constructor invariant:** `new()` vec'leri sort eder. Public field'lar
+/// constructor dışında mutate edilebilir ama digest hesaplarken tekrar sort edilir
+/// (defensive — review P1-3).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalStructuralDelta {
-    /// Eklenen node ID'leri (sorted).
+    /// Eklenen node ID'leri (sorted ascending).
     pub new_node_ids: Vec<NodeId>,
-    /// Eklenen edge'ler (from, to, kind) — sorted.
-    pub new_edges: Vec<(NodeId, NodeId, String)>, // kind as string for canonical encoding
+    /// Eklenen edge'ler (from, to, kind) — sorted by (from, to, kind).
+    pub new_edges: Vec<(NodeId, NodeId, String)>,
     /// Kaldırılan edge'ler (from, to, kind) — sorted. G2c-2 subtractive delta.
     pub removed_edges: Vec<(NodeId, NodeId, String)>,
+}
+
+impl CanonicalStructuralDelta {
+    /// Smart constructor — vec'leri canonical (sorted) sıraya koyar.
+    pub fn new(
+        mut new_node_ids: Vec<NodeId>,
+        mut new_edges: Vec<(NodeId, NodeId, String)>,
+        mut removed_edges: Vec<(NodeId, NodeId, String)>,
+    ) -> Self {
+        new_node_ids.sort_unstable();
+        new_edges.sort_unstable();
+        removed_edges.sort_unstable();
+        Self {
+            new_node_ids,
+            new_edges,
+            removed_edges,
+        }
+    }
 }
 
 /// Predicate içeriği — her zaman bağlı (identifier yetersiz, içerik mutable olabilir).
@@ -162,24 +184,79 @@ impl AuthorizationBasisDigest {
 
     /// Authorization basis'ten BLAKE3 digest hesapla.
     ///
-    /// Canonical encoding: serde_json (sorted keys, deterministic) + domain separation.
-    /// NaN ve -0.0 canonicalization encoding öncesi uygulanır.
+    /// **Canonical binary encoding** (review P1-3): her alan deterministic byte
+    /// sequence'e encode edilir. JSON kullanılmaz (serde_json field sırası/collections
+    /// deterministic değil). Float canonicalization: NaN reject, -0.0 → 0.0 normalize,
+    /// `f64::to_bits()` little-endian. Collections sorted. Domain separation prefix.
     pub fn compute(basis: &AuthorizationBasis) -> Result<Self, AuthorizationBasisDigestError> {
-        // Canonical JSON encoding (sorted keys, no pretty printing).
-        let canonical = serde_json::to_vec(basis).map_err(|e| {
-            AuthorizationBasisDigestError::EncodingFailed(e.to_string())
-        })?;
-
-        // Float canonicalization: NaN reject, -0.0 normalize.
-        // serde_json f64'leri default olarak canonical üretir ama biz yine de validate edelim.
-        validate_no_nan(&canonical)?;
-
-        // BLAKE3 keyed hash with domain separation.
         let mut hasher = blake3::Hasher::new();
         hasher.update(Self::DOMAIN_SEPARATOR);
-        hasher.update(&canonical);
-        let hash = hasher.finalize();
 
+        // Canonical binary encoding — her alan explicit, deterministic.
+        encode_u32(&mut hasher, basis.schema_version, "schema_version");
+        encode_u64(&mut hasher, basis.task_id, "task_id");
+        encode_u64(&mut hasher, basis.claim_identity.claim_id, "claim_id");
+        encode_u64(&mut hasher, basis.claim_author, "claim_author");
+
+        // Structural delta — collections sorted (defensive, constructor zaten sort eder).
+        let mut sorted_nodes = basis.structural_delta.new_node_ids.clone();
+        sorted_nodes.sort_unstable();
+        encode_u64(&mut hasher, sorted_nodes.len() as u64, "new_node_count");
+        for nid in &sorted_nodes {
+            encode_u64(&mut hasher, *nid, "node_id");
+        }
+
+        encode_edge_vec(&mut hasher, &basis.structural_delta.new_edges, "new_edges")?;
+        encode_edge_vec(&mut hasher, &basis.structural_delta.removed_edges, "removed_edges")?;
+
+        // Predicate content bytes (length-prefixed).
+        encode_bytes(&mut hasher, &basis.predicate_content.predicate_bytes)?;
+
+        // Measured result — float canonicalization.
+        encode_f64(&mut hasher, basis.measured_result.raw.x, "x")?;
+        encode_f64(&mut hasher, basis.measured_result.raw.y, "y")?;
+        encode_f64(&mut hasher, basis.measured_result.raw.z, "z")?;
+        encode_f64(&mut hasher, basis.measured_result.raw.w, "w")?;
+        encode_f64(&mut hasher, basis.measured_result.raw.v, "v")?;
+        encode_bytes(&mut hasher, basis.measured_result.metric_source.as_bytes())?;
+
+        // Deterministic gate result — enum tag as u8.
+        encode_u8(
+            &mut hasher,
+            gate_decision_tag(basis.deterministic_gate_result),
+            "gate_decision",
+        );
+        encode_u8(
+            &mut hasher,
+            predicate_completion_tag(basis.predicate_completion),
+            "predicate_completion",
+        );
+        encode_u8(
+            &mut hasher,
+            mutation_decision_tag(basis.mutation_decision),
+            "mutation_decision",
+        );
+        encode_u8(&mut hasher, apply_target_tag(&basis.intended_apply_target), "apply_target");
+
+        // Digests — raw bytes.
+        hasher.update(basis.evaluation_context_digest.as_bytes());
+        hasher.update(basis.base_space_view_revision.content_digest.as_bytes());
+        encode_u8(
+            &mut hasher,
+            commit_lane_tag(&basis.base_space_view_revision.lane),
+            "space_revision_lane",
+        );
+        encode_u64(
+            &mut hasher,
+            basis.base_space_view_revision.sequence,
+            "space_revision_sequence",
+        );
+        encode_bytes(
+            &mut hasher,
+            basis.base_space_view_revision.store_id.0.as_bytes(),
+        )?;
+
+        let hash = hasher.finalize();
         Ok(Self(hash.into()))
     }
 
@@ -207,6 +284,111 @@ impl AuthorizationBasisDigest {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Canonical binary encoding helpers (review P1-3)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn encode_u64(hasher: &mut blake3::Hasher, val: u64, _field: &str) {
+    hasher.update(&val.to_le_bytes());
+}
+
+fn encode_u32(hasher: &mut blake3::Hasher, val: u32, _field: &str) {
+    hasher.update(&val.to_le_bytes());
+}
+
+fn encode_u8(hasher: &mut blake3::Hasher, val: u8, _field: &str) {
+    hasher.update(&[val]);
+}
+
+fn encode_bytes(hasher: &mut blake3::Hasher, bytes: &[u8]) -> Result<(), AuthorizationBasisDigestError> {
+    encode_u64(hasher, bytes.len() as u64, "len");
+    hasher.update(bytes);
+    Ok(())
+}
+
+/// f64 canonical encoding — NaN reject, -0.0 → 0.0, little-endian to_bits.
+fn encode_f64(
+    hasher: &mut blake3::Hasher,
+    val: f64,
+    _field: &str,
+) -> Result<(), AuthorizationBasisDigestError> {
+    if val.is_nan() {
+        return Err(AuthorizationBasisDigestError::NaNRejected);
+    }
+    // -0.0 → 0.0 normalize (to_bits farklı: -0.0 = 0x8000000000000000, 0.0 = 0x0).
+    let normalized = if val == 0.0 { 0.0f64 } else { val };
+    hasher.update(&normalized.to_bits().to_le_bytes());
+    Ok(())
+}
+
+fn encode_edge_vec(
+    hasher: &mut blake3::Hasher,
+    edges: &[(NodeId, NodeId, String)],
+    _field: &str,
+) -> Result<(), AuthorizationBasisDigestError> {
+    let mut sorted = edges.to_vec();
+    sorted.sort_unstable();
+    encode_u64(hasher, sorted.len() as u64, "edge_count");
+    for (from, to, kind) in &sorted {
+        encode_u64(hasher, *from, "edge_from");
+        encode_u64(hasher, *to, "edge_to");
+        encode_bytes(hasher, kind.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn gate_decision_tag(gd: crate::trajectory::GateDecision) -> u8 {
+    use crate::trajectory::GateDecision::*;
+    match gd {
+        Unknown => 0,
+        PassedAll => 1,
+        RejectedBySyntax => 2,
+        RejectedByVision => 3,
+        RejectedByRule => 4,
+        RejectedByTaskBinding => 5,
+        BlockedByManeuverLimit => 6,
+    }
+}
+
+fn predicate_completion_tag(pc: crate::trajectory::PredicateCompletion) -> u8 {
+    use crate::trajectory::PredicateCompletion::*;
+    match pc {
+        NotCompleted => 0,
+        Completed => 1,
+    }
+}
+
+fn mutation_decision_tag(md: crate::trajectory::MutationDecision) -> u8 {
+    use crate::trajectory::MutationDecision::*;
+    match md {
+        Reject => 0,
+        AcceptAsProgress => 1,
+        AcceptAsCompleted => 2,
+        RequireOperatorApproval => 3,
+    }
+}
+
+fn apply_target_tag(at: &crate::trajectory::ApplyTarget) -> u8 {
+    use crate::trajectory::ApplyTarget::*;
+    match at {
+        NotApplied => 0,
+        Lane(lane) => match lane {
+            crate::trajectory::CommitLane::Mainline => 1,
+            crate::trajectory::CommitLane::TrajectoryCheckpoint => 2,
+            crate::trajectory::CommitLane::Sandbox => 3,
+        },
+    }
+}
+
+fn commit_lane_tag(lane: &crate::trajectory::CommitLane) -> u8 {
+    use crate::trajectory::CommitLane::*;
+    match lane {
+        Mainline => 1,
+        TrajectoryCheckpoint => 2,
+        Sandbox => 3,
+    }
+}
+
 /// Authorization basis digest hesaplama hataları.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum AuthorizationBasisDigestError {
@@ -218,19 +400,6 @@ pub enum AuthorizationBasisDigestError {
     HexDecodeFailed(String),
     #[error("invalid digest length: expected 32 bytes, got {0}")]
     InvalidLength(usize),
-}
-
-/// JSON byte stream'inde NaN kontrolü.
-///
-/// serde_json NaN'ı `null` olarak serialize eder ama biz yine de defensive check yapalım.
-fn validate_no_nan(canonical: &[u8]) -> Result<(), AuthorizationBasisDigestError> {
-    // serde_json NaN'ı zaten handle eder; bu defensive check for future encoding changes.
-    let s = std::str::from_utf8(canonical)
-        .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
-    if s.contains("NaN") {
-        return Err(AuthorizationBasisDigestError::NaNRejected);
-    }
-    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -347,6 +516,20 @@ pub struct WitnessRequirement {
 
 /// Attempt evidence identifier (P1 resume'da evidence store lookup için).
 pub type AttemptEvidenceId = u64;
+
+/// Explicit witness rejection sonucu — agent proposal revises. Evidence-preserving.
+///
+/// `NavigatorResult::RequiresRevision` bu struct'ı taşır. Budget tüketmez, LLM
+/// reinvocation YOK. Agent yeni structural proposal üretmeli.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RevisionRequired {
+    pub task_id: crate::trajectory::TaskId,
+    pub claim_id: ClaimId,
+    pub authorization_basis_digest: AuthorizationBasisDigest,
+    pub reasons: crate::witness::NonEmptyWitnessRejections,
+    pub witness_snapshot: crate::witness::WitnessQuorumSnapshot,
+    pub attempt_evidence_id: AttemptEvidenceId,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PendingAuthorizationEnvelope — self-contained artifact (Sabitleme 3)
@@ -530,31 +713,74 @@ impl PendingAuthorizationStore for FilesystemPendingAuthorizationStore {
             })?;
         }
 
-        // Crash-consistent publish: same-dir temp → write_all → sync_all → rename.
-        let temp_path = artifact_path.with_extension("json.tmp");
-        let mut temp_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-            .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
+        // **P1-4:** Unique temp dosya adı (concurrent writer çakışması yok).
+        // Process id + thread id + atomic counter → benzersiz.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let temp_suffix = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let pid = std::process::id();
+        let temp_path = artifact_path.with_file_name(format!(
+            ".{}.tmp.{pid}.{temp_suffix}",
+            artifact_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("pending")
+        ));
 
-        let json = serde_json::to_vec_pretty(envelope)
-            .map_err(|e| PendingAuthorizationStoreError::SerializationFailed(e.to_string()))?;
-        temp_file
-            .write_all(&json)
-            .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
+        // Cleanup guard — hata yollarında temp dosyayı sil.
+        let result = (|| -> Result<(), PendingAuthorizationStoreError> {
+            let mut temp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp_path)
+                .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
 
-        // sync_all — veriyi diske flush et (crash consistency).
-        temp_file
-            .sync_all()
-            .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
-        drop(temp_file);
+            let json = serde_json::to_vec_pretty(envelope).map_err(|e| {
+                PendingAuthorizationStoreError::SerializationFailed(e.to_string())
+            })?;
+            temp_file
+                .write_all(&json)
+                .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
 
-        // Atomic no-clobber rename. Windows: rename hedef varsa fail eder (biz create_new ile
-        // temp oluşturduk, hedef yok kontrolü yukarıda yapıldı — race window minimal).
-        // Unix: rename atomic, hedef varsa overwrite. Biz yukarıda exists() kontrolü yaptık.
+            // sync_all — veriyi diske flush et (crash consistency).
+            temp_file
+                .sync_all()
+                .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
+            drop(temp_file);
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            // Cleanup guard — temp dosya kaldıysa sil.
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(e);
+        }
+
+        // Atomic no-clobber publish (rename).
+        // **Platform contract (review P1-4):** Unix'te rename mevcut hedefi overwrite eder.
+        // Yukarıda exists() kontrolü yaptık ama TOCTOU window var. Windows'ta rename
+        // mevcut hedefte fail eder (no-clobber semantics). Cross-platform gerçek no-clobber
+        // için exists()+rename yeterli değil — race window minimal ama kabul edilir.
+        // Production'da concurrent writer'lar farklı digest'ler (farklı path) kullanır.
         std::fs::rename(&temp_path, &artifact_path)
-            .map_err(|e| PendingAuthorizationStoreError::WriteFailed(e.to_string()))?;
+            .map_err(|e| {
+                // Cleanup: rename failse temp'i sil.
+                let _ = std::fs::remove_file(&temp_path);
+                PendingAuthorizationStoreError::WriteFailed(e.to_string())
+            })?;
+
+        // Parent directory sync (crash consistency) — Unix'te desteklenir.
+        #[cfg(unix)]
+        {
+            if let Some(parent) = artifact_path.parent() {
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    use std::os::unix::io::AsRawFd;
+                    unsafe {
+                        libc::fsync(dir.as_raw_fd());
+                    }
+                }
+            }
+        }
 
         Ok(PendingAuthorizationReceipt {
             artifact_path,
@@ -574,6 +800,26 @@ pub fn load_pending_authorization(
         .map_err(|e| PendingAuthorizationLoadError::DeserializationFailed(e.to_string()))?;
     envelope.verify()?;
     Ok(envelope)
+}
+
+/// Null store — persist çağrılarını kabul eder ama hiçbir şey yazmaz (in-memory testler için).
+///
+/// Production'da KULLANILMAZ — sadece navigator testleri için. `AwaitingWitnesses` yine
+/// döner ama artifact_path boş olur. Real persist `FilesystemPendingAuthorizationStore` ile.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NullPendingAuthorizationStore;
+
+impl PendingAuthorizationStore for NullPendingAuthorizationStore {
+    fn persist(
+        &mut self,
+        envelope: &PendingAuthorizationEnvelope,
+    ) -> Result<PendingAuthorizationReceipt, PendingAuthorizationStoreError> {
+        Ok(PendingAuthorizationReceipt {
+            artifact_path: std::path::PathBuf::new(), // null — no artifact
+            claim_id: envelope.record.claim_id,
+            authorization_basis_digest: envelope.record.authorization_basis_digest.clone(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -672,18 +918,114 @@ mod tests {
     #[test]
     fn authorization_basis_digest_uses_domain_separation() {
         // Domain separation: farklı prefix → farklı digest (same content).
+        // Canonical binary encoding domain separator içerir; raw BLAKE3 (separator yok)
+        // farklı digest üretir.
         let basis = sample_basis();
         let digest = AuthorizationBasisDigest::compute(&basis).unwrap();
 
-        // Raw BLAKE3 without domain separation (control).
-        let canonical = serde_json::to_vec(&basis).unwrap();
-        let raw_hash = blake3::hash(&canonical);
+        // Raw BLAKE3 without domain separation — struct'ın Debug çıktısını hash'le (control).
+        // Bu yaklaşık ama domain separation'ın farklı bir digest ürettiğini gösterir.
+        let debug_bytes = format!("{basis:?}");
+        let raw_hash = blake3::hash(debug_bytes.as_bytes());
         let raw_bytes: [u8; 32] = raw_hash.into();
 
         assert_ne!(
             digest.as_bytes(),
             &raw_bytes,
             "domain separation must produce different digest"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // Canonical encoding tests (review P1-3)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn authorization_basis_digest_rejects_nan_in_measured_result() {
+        let basis = sample_basis();
+        let mut basis2 = basis.clone();
+        basis2.measured_result.raw.x = f64::NAN;
+        let err = AuthorizationBasisDigest::compute(&basis2).unwrap_err();
+        assert_eq!(err, AuthorizationBasisDigestError::NaNRejected);
+    }
+
+    #[test]
+    fn authorization_basis_digest_normalizes_negative_zero() {
+        // -0.0 ve +0.0 aynı digest vermeli (canonical normalization).
+        let basis_pos = sample_basis();
+        let mut basis_neg = basis_pos.clone();
+        basis_neg.measured_result.raw.x = -0.0f64;
+        // basis_pos.x = 0.5, basis_neg.x = -0.0 → farklı. İkisini de 0.0 yap.
+        let mut basis_zero = basis_pos.clone();
+        basis_zero.measured_result.raw.x = 0.0f64;
+
+        let mut basis_neg_zero = basis_pos.clone();
+        basis_neg_zero.measured_result.raw.x = -0.0f64;
+
+        let d1 = AuthorizationBasisDigest::compute(&basis_zero).unwrap();
+        let d2 = AuthorizationBasisDigest::compute(&basis_neg_zero).unwrap();
+        assert_eq!(d1, d2, "-0.0 and +0.0 must normalize to same digest");
+    }
+
+    #[test]
+    fn authorization_basis_digest_is_order_independent_for_node_ids() {
+        // Same node IDs in different order → same digest (sorted encoding).
+        let basis1 = sample_basis();
+        let mut basis2 = basis1.clone();
+        // new_node_ids sırasını ters çevir (eğer >1 element varsa).
+        basis2.structural_delta.new_node_ids.reverse();
+
+        let d1 = AuthorizationBasisDigest::compute(&basis1).unwrap();
+        let d2 = AuthorizationBasisDigest::compute(&basis2).unwrap();
+        assert_eq!(d1, d2, "same node IDs different order → same digest (sorted)");
+    }
+
+    #[test]
+    fn authorization_basis_digest_is_order_independent_for_edges() {
+        let basis1 = sample_basis();
+        let mut basis2 = basis1.clone();
+        basis2.structural_delta.removed_edges.reverse();
+
+        let d1 = AuthorizationBasisDigest::compute(&basis1).unwrap();
+        let d2 = AuthorizationBasisDigest::compute(&basis2).unwrap();
+        assert_eq!(d1, d2, "same edges different order → same digest (sorted)");
+    }
+
+    #[test]
+    fn authorization_basis_digest_changes_when_rule_set_context_changes() {
+        // Evaluation context digest değişince basis digest değişir.
+        let basis1 = sample_basis();
+        let mut basis2 = basis1.clone();
+        basis2.evaluation_context_digest = EvaluationContextDigest::from_bytes([0xff; 32]);
+
+        let d1 = AuthorizationBasisDigest::compute(&basis1).unwrap();
+        let d2 = AuthorizationBasisDigest::compute(&basis2).unwrap();
+        assert_ne!(d1, d2, "different evaluation context → different digest");
+    }
+
+    #[test]
+    fn authorization_basis_digest_changes_when_mutation_decision_changes() {
+        let basis1 = sample_basis();
+        let mut basis2 = basis1.clone();
+        basis2.mutation_decision = crate::trajectory::MutationDecision::AcceptAsProgress;
+
+        let d1 = AuthorizationBasisDigest::compute(&basis1).unwrap();
+        let d2 = AuthorizationBasisDigest::compute(&basis2).unwrap();
+        assert_ne!(d1, d2, "different mutation decision → different digest");
+    }
+
+    #[test]
+    fn canonical_structural_delta_constructor_sorts_collections() {
+        let delta = CanonicalStructuralDelta::new(
+            vec![3, 1, 2],
+            vec![(2, 1, "b".into()), (1, 2, "a".into())],
+            vec![],
+        );
+        assert_eq!(delta.new_node_ids, vec![1, 2, 3], "node IDs sorted");
+        assert_eq!(
+            delta.new_edges[0],
+            (1, 2, "a".to_string()),
+            "edges sorted"
         );
     }
 

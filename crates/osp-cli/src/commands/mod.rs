@@ -29,6 +29,12 @@ pub mod exit_codes {
     pub const EXCEEDED_MANEUVER_LIMIT: i32 = 12;
     /// Critical domain — insan review gerekli.
     pub const REQUIRES_OPERATOR_APPROVAL: i32 = 13;
+    /// Invalid witness evidence — operational fault (malformed/author-self/duplicate).
+    pub const WITNESS_EVALUATION_ERROR: i32 = 20;
+    /// Pending authorization persistence failure — terminal (non-retryable).
+    pub const PENDING_AUTHORIZATION_PERSISTENCE_FAILURE: i32 = 40;
+    /// System failure — persistence/internal error. Terminal.
+    pub const SYSTEM_FAILURE: i32 = 70;
     /// Task resolver'da bulunamadı.
     pub const TASK_NOT_FOUND: i32 = 80;
     /// LLM hatası (NoMoreProposals, parse, network).
@@ -329,8 +335,11 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
         output_contract: osp_core::agent::OutputContract::strict(),
         // CLI = production → Production witness (min_approvers=2, Paper 1 güven modeli).
         witness_policy: osp_core::navigator::NavigatorWitnessPolicy::Production,
-        pending_authorization_store: None,
-        clock: None,
+        // INV-T9: production filesystem store — cwd altında .osp/pending-authorizations/.
+        pending_authorization_store: Box::new(
+            osp_core::authorization::FilesystemPendingAuthorizationStore::new("."),
+        ),
+        clock: Box::new(osp_core::authorization::SystemClock),
     };
     let result = nav.run_task(args.task_id, 1);
     // 6. Sonuç yazdır + exit code.
@@ -347,29 +356,43 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
             println!("✗ Maneuver limit exceeded after {attempts} attempts");
             exit_codes::EXCEEDED_MANEUVER_LIMIT
         }
-        NavigatorResult::AwaitingWitnesses {
-            task_id,
-            claim_id,
-            hold_reason,
-            attempts_used,
-        } => {
+        NavigatorResult::AwaitingWitnesses { pending, persistence } => {
             // **INV-T9** — expected authorization bekleme. Domain outcome, hata DEĞİL.
-            println!("⏸ Awaiting witnesses (INV-T9) — task {task_id}, claim {claim_id}");
-            println!("  Witness hold reason: {}", hold_reason.as_reason_str());
-            println!("  Attempts used: {attempts_used} (no additional budget consumed)");
+            println!(
+                "⏸ Awaiting witnesses (INV-T9) — task {}, claim {}",
+                pending.task_id, pending.claim_id
+            );
+            println!(
+                "  Witness hold reason: {}",
+                pending.witness_hold_reason.as_reason_str()
+            );
             println!("  Commit state: awaiting_witnesses");
             println!("  Mainline mutation: not_applied");
             println!("  Next action: await external evidence");
+            println!("  Pending artifact: {}", persistence.artifact_path.display());
             exit_codes::AWAITING_WITNESSES
         }
-        NavigatorResult::RequiresRevision {
-            task_id,
-            claim_id,
-            attempts_used,
-        } => {
-            println!("↻ Requires revision (explicit witness rejection) — task {task_id}, claim {claim_id}");
-            println!("  Attempts used: {attempts_used}");
+        NavigatorResult::RequiresRevision(rev) => {
+            println!(
+                "↻ Requires revision (explicit witness rejection) — task {}, claim {}",
+                rev.task_id, rev.claim_id
+            );
             exit_codes::REQUIRES_REVISION
+        }
+        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, error } => {
+            println!(
+                "✗ Pending authorization persistence failed — task {}, claim {}: {error}",
+                pending.task_id, pending.claim_id
+            );
+            exit_codes::PENDING_AUTHORIZATION_PERSISTENCE_FAILURE
+        }
+        NavigatorResult::WitnessEvaluationError(msg) => {
+            println!("✗ Witness evaluation error: {msg}");
+            exit_codes::WITNESS_EVALUATION_ERROR
+        }
+        NavigatorResult::SystemFailure(msg) => {
+            println!("✗ System failure: {msg}");
+            exit_codes::SYSTEM_FAILURE
         }
         NavigatorResult::TaskNotFound => {
             println!("✗ Task {} not found", args.task_id);

@@ -30,48 +30,7 @@ use crate::space::{EdgeKind, NodeId, Space};
 use crate::time::{TimeFSM, TimeMachine};
 use crate::vision::{compute_derived, CosineDeviation, DeviationMetric, VisionVector};
 use crate::vision_config::VisionConfig;
-use crate::witness::{Claim, ClaimId, Reason, WitnessDisposition, WitnessHoldReason, WitnessSet};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// INV-T9 — Legacy conversion helpers (WitnessHoldReason/NonEmptyRejections → Reason)
-// ═══════════════════════════════════════════════════════════════════════════════
-//
-// commit_task_claim() EngineCommitResult döndürür (INV-T9 conformance). Legacy
-// commit() (standalone/Paper 1) EngineCommitError döndürmeye devam eder ve Held/Rejected
-// durumlarını Reason'a map'lemesi gerekir. Bu helper'lar o legacy dönüşümü yapar.
-
-fn legacy_hold_reason(reason: &WitnessHoldReason) -> Reason {
-    match reason {
-        WitnessHoldReason::MinApproversNotMet { distinct, required } => {
-            Reason::MinApproversNotMet {
-                distinct: *distinct,
-                required: *required,
-            }
-        }
-        WitnessHoldReason::QuorumInsufficient { support, threshold } => {
-            Reason::QuorumInsufficient {
-                support: *support,
-                threshold: *threshold,
-            }
-        }
-        WitnessHoldReason::EvidenceNotLocallyObservable { hint } => {
-            Reason::UnobservableLocally {
-                hint: hint.clone(),
-            }
-        }
-    }
-}
-
-fn legacy_reject_reason(reasons: &crate::witness::NonEmptyWitnessRejections) -> Reason {
-    // İlk rejection'ı HonestReject'e map'le (legacy single-Reason semantic).
-    let first = reasons
-        .as_slice()
-        .first()
-        .expect("NonEmptyWitnessRejections invariant — en az bir rejection");
-    Reason::HonestReject {
-        witness: first.witness,
-    }
-}
+use crate::witness::{Claim, ClaimId, WitnessDisposition, WitnessSet};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // EngineConfig
@@ -229,20 +188,19 @@ impl std::fmt::Display for VisionViolation {
     }
 }
 
-/// Engine-level commit error (thiserror). Claim-based (Q4-Q6) + witness-based (Q1-Q3).
-/// (osp-core-design.md §3.4). Witness Reject/Hold `evaluate()` → `WitnessResult` üzerinden
-/// gelir, `Reason` wrap edilir (space-engine-design.md §6.1).
+/// Engine-level commit error (thiserror). Sadece **operational fault**'lar.
+/// (osp-core-design.md §3.4).
 ///
-/// **INV-T9 notu:** `Witness(Reason)` varyantı legacy `commit()` (standalone/Paper 1)
-/// yolunda korunur. `commit_task_claim()` (Paper 2) artık `EngineCommitResult` döndürür
-/// — `Held`/`Rejected` expected domain outcome olarak `Err` DEĞİL `Ok` kanalında gelir.
+/// **INV-T9:** Witness Hold/Rejected artık expected domain outcome olarak
+/// `EngineCommitResult::Held`/`Rejected` üzerinden gelir (Err DEĞİL Ok kanalı).
+/// `Witness(Reason)` varyantı KALDIRILDI — hem `commit()` hem `commit_task_claim()`
+/// artık `EngineCommitResult` döndürür. Operational fault'lar (Syntax/Vision/Rule/
+/// Permission/Persistence/Internal/InvalidWitnessEvidence) burada kalır.
 ///
 /// Variant tasarımı: violation struct'lar tek kaynak (single-source-of-truth). theta/detail/
 /// rule_id gibi field'lar variant'ta TEKRAR EDİLMEZ — `Display` impl ile erişilir (drift risk yok).
 #[derive(Debug, thiserror::Error)]
 pub enum EngineCommitError {
-    #[error("witness gate (Q1-Q3): {0:?}")]
-    Witness(Reason),
     #[error("{violation}")]
     SyntaxViolation { violation: SyntaxViolation },
     #[error("{violation} (bound={bound:.3})")]
@@ -252,12 +210,18 @@ pub enum EngineCommitError {
     },
     #[error("{violation}")]
     RuleViolation { violation: RuleViolation },
+    /// Malformed/author-self/duplicate/wrong-binding evidence — terminal (agent retry ile çözülmez).
+    #[error("invalid witness evidence: {0}")]
+    InvalidWitnessEvidence(String),
     #[error("permission denied (inv #13): {0}")]
     PermissionDenied(String),
     #[error("persistence kapalı — restore/milestone kullanılamaz (snapshot_store None)")]
     NoPersistence,
     #[error("persistence hatası: {0}")]
     Persistence(#[from] PersistenceError),
+    /// Internal engine hatası — terminal system failure.
+    #[error("internal engine error: {0}")]
+    Internal(String),
 }
 
 /// **INV-T9** — `commit_task_claim` expected domain outcome (HATA DEĞİL).
@@ -397,14 +361,20 @@ impl SpaceEngine {
                 safety_weakened,
                 ..
             } => (delta, safety_weakened),
-            // INV-T9: Held/Rejected artık EngineCommitResult üzerinden gelir (commit_task_claim).
-            // Legacy commit() standalone yolu için bu durumlar hala Err olarak işlenir
-            // (Paper 1 uyumluluk — Held/Rejected Reason'a geri map'lenir).
+            // **INV-T9:** Legacy `commit()` (standalone/Paper 1) Held/Rejected'ı Err olarak
+            // işler. INV-T9 conformance `commit_task_claim` yolunda geçerli (EngineCommitResult).
+            // Legacy commit() production'da kullanılmıyor (navigator commit_task_claim kullanır);
+            // bu test/setup yolunda Held/Rejected witness shortage olarak Internal error döner.
+            // P1: legacy commit() refactor → EngineCommitResult (INV-T9 tam conformance).
             WitnessDisposition::Held { reason, .. } => {
-                return Err(EngineCommitError::Witness(legacy_hold_reason(&reason)))
+                return Err(EngineCommitError::Internal(format!(
+                    "legacy commit() witnessed Held (use commit_task_claim for INV-T9): {reason:?}"
+                )));
             }
             WitnessDisposition::Rejected { reasons, .. } => {
-                return Err(EngineCommitError::Witness(legacy_reject_reason(&reasons)))
+                return Err(EngineCommitError::Internal(format!(
+                    "legacy commit() witnessed Rejected (use commit_task_claim for INV-T9): {reasons:?}"
+                )));
             }
         };
 
@@ -902,6 +872,45 @@ impl SpaceEngine {
     pub fn t_c(&self) -> u64 {
         self.t_c
     }
+
+    /// **INV-T9** — Mevcut space view revision (store-scoped, lane-qualified).
+    ///
+    /// Engine tam revision tracking'i P1'de alacak; şimdilik t_c-based placeholder.
+    /// Authorization basis bu revision'ı taşır — P1 resume staleness kontrolü için.
+    pub fn current_space_view_revision(
+        &self,
+    ) -> crate::authorization::SpaceViewRevision {
+        use crate::authorization::{SpaceDigest, SpaceViewRevision, StoreId};
+        // Placeholder digest — t_c'den türetilmiş deterministic.
+        let mut digest_bytes = [0u8; 32];
+        let tc_bytes = self.t_c.to_le_bytes();
+        digest_bytes[..8].copy_from_slice(&tc_bytes);
+        SpaceViewRevision {
+            store_id: StoreId("osp-engine".to_string()),
+            lane: crate::trajectory::CommitLane::Mainline,
+            sequence: self.t_c,
+            content_digest: SpaceDigest::from_bytes(digest_bytes),
+        }
+    }
+
+    /// **INV-T9** — Mevcut evaluation context digest (vision config + rule-set).
+    ///
+    /// Engine tam context digest'i P1'de alacak; şimdilik vision θ_bound + rule count
+    /// tabanlı placeholder. Authorization basis stale measurement tespiti için.
+    pub fn current_evaluation_context_digest(
+        &self,
+    ) -> crate::authorization::EvaluationContextDigest {
+        use crate::authorization::EvaluationContextDigest;
+        // Placeholder — vision θ_bound + rule count'tan deterministic digest.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"osp.evaluation-context.v1\0");
+        hasher.update(&self.config.theta_bound.to_le_bytes());
+        hasher.update(&(self.rules.len() as u64).to_le_bytes());
+        let hash = hasher.finalize();
+        let bytes: [u8; 32] = hash.into();
+        EvaluationContextDigest::from_bytes(bytes)
+    }
+
     pub fn config(&self) -> &EngineConfig {
         &self.config
     }
@@ -1133,19 +1142,19 @@ mod tests {
     // --- commit Hold (witness insufficient) ---
 
     #[test]
-    fn commit_hold_returns_witness_error() {
+    fn commit_hold_returns_internal_error() {
+        // **INV-T9:** Legacy commit() Held/Rejected'ı Internal error olarak döner
+        // (commit_task_claim EngineCommitResult::Held/Rejected kullanır).
         let mut engine = make_engine();
         let claim = claim_with(100, CENTER);
-        let omega = WitnessSet::new(vec![ev(1, 200)]); // 1 witness → Hold
+        let omega = WitnessSet::new(vec![ev(1, 200)]); // 1 witness → Held
 
         let result = engine.commit(&claim, &omega);
-        assert!(matches!(
-            result,
-            Err(EngineCommitError::Witness(
-                Reason::MinApproversNotMet { .. }
-            ))
-        ));
-        assert_eq!(engine.space().node_count(), 0, "Hold → mutasyon yok");
+        assert!(
+            matches!(result, Err(EngineCommitError::Internal(ref msg)) if msg.contains("Held")),
+            "legacy commit() Held → Internal error: {result:?}"
+        );
+        assert_eq!(engine.space().node_count(), 0, "Held → mutasyon yok");
     }
 
     // --- reposition + drift warnings ---

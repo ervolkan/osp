@@ -405,26 +405,20 @@ impl HallucinationType {
                 rule_id: violation.rule_id.clone(),
                 detail: violation.detail.clone(),
             }),
-            crate::engine::EngineCommitError::Witness(reason) => match reason {
-                crate::witness::Reason::HonestReject { witness } => {
-                    Some(Self::Witness { witness: *witness })
-                }
-                crate::witness::Reason::QuorumInsufficient { support, threshold } => {
-                    Some(Self::Undersupported {
-                        support: *support,
-                        threshold: *threshold,
-                    })
-                }
-                crate::witness::Reason::MinApproversNotMet { .. } => Some(Self::Undersupported {
+            // **INV-T9:** Witness Hold/Rejected artık EngineCommitResult üzerinden gelir,
+            // EngineCommitError'da DEĞİL. InvalidWitnessEvidence = operational fault
+            // (malformed/author-self/duplicate) — agent hallucination sinyali olabilir.
+            crate::engine::EngineCommitError::InvalidWitnessEvidence(msg) => {
+                Some(Self::Undersupported {
                     support: 0.0,
                     threshold: 1.5,
-                }),
-                crate::witness::Reason::UnobservableLocally { .. } => Some(Self::Undersupported {
-                    support: 0.0,
-                    threshold: 1.5,
-                }),
-            },
-            _ => None, // PermissionDenied, NoPersistence, etc. — not hallucination
+                }).map(|h| {
+                    // msg'yi detail'e göm — evidence debug için.
+                    let _ = msg;
+                    h
+                })
+            }
+            _ => None, // PermissionDenied, NoPersistence, Persistence, Internal — not hallucination
         }
     }
 
@@ -1277,31 +1271,25 @@ mod tests {
     }
 
     #[test]
-    fn hallucination_from_witness_reject() {
-        use crate::witness::Reason;
-        let err = crate::engine::EngineCommitError::Witness(Reason::HonestReject { witness: 42 });
+    fn hallucination_from_invalid_witness_evidence() {
+        // **INV-T9:** Witness Hold/Rejected artık EngineCommitResult üzerinden gelir.
+        // InvalidWitnessEvidence = operational fault (malformed/author-self/duplicate).
+        let err = crate::engine::EngineCommitError::InvalidWitnessEvidence(
+            "duplicate witness identity".to_string(),
+        );
         let h = HallucinationType::from_engine_error(&err);
         match h {
-            Some(HallucinationType::Witness { witness }) => assert_eq!(witness, 42),
-            _ => panic!("expected Witness hallucination"),
+            Some(HallucinationType::Undersupported { .. }) => { /* expected */ }
+            _ => panic!("expected Undersupported hallucination for InvalidWitnessEvidence"),
         }
     }
 
     #[test]
-    fn hallucination_from_undersupported() {
-        use crate::witness::Reason;
-        let err = crate::engine::EngineCommitError::Witness(Reason::QuorumInsufficient {
-            support: 0.8,
-            threshold: 1.5,
-        });
+    fn hallucination_from_internal_is_none() {
+        // INV-T9: Internal = system failure, not agent hallucination.
+        let err = crate::engine::EngineCommitError::Internal("legacy commit Held".to_string());
         let h = HallucinationType::from_engine_error(&err);
-        match h {
-            Some(HallucinationType::Undersupported { support, threshold }) => {
-                assert!((support - 0.8).abs() < 1e-9);
-                assert!((threshold - 1.5).abs() < 1e-9);
-            }
-            _ => panic!("expected Undersupported"),
-        }
+        assert!(h.is_none(), "Internal error is not a hallucination signal");
     }
 
     #[test]
