@@ -837,7 +837,7 @@ mod tests {
     fn temp_dir() -> std::path::PathBuf {
         tempfile::tempdir()
             .expect("temp dir")
-            .into_path()
+            .keep()
     }
 
     #[test]

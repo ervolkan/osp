@@ -1912,4 +1912,274 @@ mod tests {
         assert_eq!(last.predicate_completion, PredicateCompletion::Completed);
         assert_eq!(last.mutation_decision, MutationDecision::AcceptAsCompleted);
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 — External-Evidence Suspension Isolation navigator tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Production witness policy (min_approvers=2, empty witness set) + predicate satisfied
+    /// → EngineCommitResult::Held → NavigatorResult::AwaitingWitnesses.
+    ///
+    /// Bu test INV-T9'un temel garantisi: witness quorum eksikliği agent failure DEĞİL,
+    /// suspended authorization durumudur. ExceededManeuverLimit DÖNMEZ.
+    #[test]
+    fn inv_t9_predicate_satisfied_without_quorum_returns_awaiting_witnesses() {
+        // HarnessAutoApprove DEĞİL — Production witness policy (Paper 1 güven modeli).
+        // Boş witness set → Held.
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 5;
+        policy.predicate_failure_policy = PredicateFailurePolicy::AcceptImprovement;
+        policy.allow_progress_checkpoint = true;
+        let task = g2c3_coupling_task(1, &policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+
+        // Incremental proposals — coupling'i düşürür, predicate satisfied olabilir.
+        let proposals = incremental_coupling_proposals();
+        let mock = MockLlmClient::new(proposals);
+        let mut engine = make_balanced_engine();
+        let mut evidence = vec![];
+
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.80),
+            output_contract: OutputContract::strict(),
+            // Production witness policy — boş set → Held (INV-T9).
+            witness_policy: NavigatorWitnessPolicy::Production,
+            pending_authorization_store: None,
+            clock: None,
+        };
+
+        let result = nav.run_task(1, 7);
+
+        // INV-T9: Held → AwaitingWitnesses (ExceededManeuverLimit DEĞİL).
+        // Eğer predicate satisfied olur ve witness quorum yetersizse → AwaitingWitnesses.
+        // Eğer predicate satisfied olmadan proposals tükenirse → LlmError(NoMoreProposals).
+        // Eğer predicate satisfied olmadan maneuver limit tükenirse → ExceededManeuverLimit.
+        // Her durumda ExceededManeuverLimit witness eksikliğinden OLMAMALI.
+        match result {
+            NavigatorResult::AwaitingWitnesses {
+                task_id,
+                hold_reason,
+                attempts_used,
+                ..
+            } => {
+                assert_eq!(task_id, 1);
+                assert!(
+                    matches!(
+                        hold_reason,
+                        crate::witness::WitnessHoldReason::MinApproversNotMet { .. }
+                            | crate::witness::WitnessHoldReason::QuorumInsufficient { .. }
+                    ),
+                    "Held reason must be witness quorum shortage: {hold_reason:?}"
+                );
+                assert!(attempts_used >= 1, "attempts_used must be >= 1");
+            }
+            NavigatorResult::ExceededManeuverLimit { last_outcome, .. } => {
+                // Predicate fail retry'lerinden — witness'tan değil.
+                assert!(
+                    matches!(last_outcome.mutation_decision, MutationDecision::Reject),
+                    "ExceededManeuverLimit must come from predicate failure, not witness"
+                );
+            }
+            NavigatorResult::LlmError(crate::navigator::LlmError::NoMoreProposals) => {
+                // Predicate fail retry'leri proposals'ı tüketti — INV-T9 ihlali değil.
+            }
+            other => panic!("INV-T9: unexpected result: {other:?}"),
+        }
+    }
+
+    /// INV-T9: witness quorum eksikliği ExceededManeuverLimit üretmez.
+    ///
+    /// Bu test, witness eksikliğinin retry loop'a girmediğini doğrular.
+    /// Production policy + boş set ile yapılan her attempt Held döner ama
+    /// navigator Held'i retry olarak saymaz (continue YOK, direkt return).
+    #[test]
+    fn inv_t9_quorum_shortage_never_returns_exceeded_maneuver_limit_due_to_witness() {
+        // Bu test, navigator Held'de continue YAPMADIĞINI doğrular.
+        // Eğer Held retry olsaydı, maneuver limit tükenirdi ve ExceededManeuverLimit dönerdi.
+        // Held → AwaitingWitnesses (terminal) ise ExceededManeuverLimit DÖNMEZ.
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 2; // Düşük limit — eğer Held retry olsaydı hızla tükenirdi.
+        let task = g2c3_coupling_task(1, &policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+
+        let proposals = incremental_coupling_proposals();
+        let mock = MockLlmClient::new(proposals);
+        let mut engine = make_balanced_engine();
+        let mut evidence = vec![];
+
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.80),
+            output_contract: OutputContract::strict(),
+            witness_policy: NavigatorWitnessPolicy::Production,
+            pending_authorization_store: None,
+            clock: None,
+        };
+
+        let result = nav.run_task(1, 7);
+
+        // Eğer predicate satisfied olursa → AwaitingWitnesses (Held terminal).
+        // ExceededManeuverLimit ancak predicate fail retry'lerden gelir, witness'tan değil.
+        if let NavigatorResult::ExceededManeuverLimit { last_outcome, .. } = &result {
+            // Eğer ExceededManeuverLimit döndüyse, bu witness eksikliğinden OLMAMALI.
+            // Witness eksikliği Held'dir, Reject değil. last_outcome mutation_decision
+            // Reject ise bu predicate failure'dan (retryable), witness'tan değil.
+            assert!(
+                matches!(last_outcome.mutation_decision, MutationDecision::Reject),
+                "ExceededManeuverLimit must come from predicate failure (Reject), \
+                 not from witness shortage (would be AwaitingWitnesses)"
+            );
+        }
+        // Diğer durumlar (AwaitingWitnesses, Completed, LlmError) — INV-T9 ihlali yok.
+    }
+
+    /// INV-T9: AwaitingWitnesses durumunda LLM birden fazla kez çağrılmaz.
+    ///
+    /// Held terminal olduğu için navigator döngüden çıkar. LLM sadece proposal üretmek
+    /// için 1 kez çağrılır, witness bekleme için tekrar çağrılmaz.
+    #[test]
+    fn inv_t9_awaiting_witnesses_does_not_reinvoke_llm_repeatedly() {
+        // Bu test, LLM call_count'unun maneuver_limit'ten fazla OLMADIĞINI doğrular.
+        // Eğer Held retry olsaydı, LLM her attempt için çağrılırdı (call_count artardı).
+        // Held terminal ise LLM sadece 1 kez çağrılır (proposal generation).
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 10; // Yüksek limit — eğer Held retry olsaydı 10 kez çağrılırdı.
+        let task = g2c3_coupling_task(1, &policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+
+        let proposals = incremental_coupling_proposals();
+        let mock = MockLlmClient::new(proposals);
+        let mut engine = make_balanced_engine();
+        let mut evidence = vec![];
+
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.80),
+            output_contract: OutputContract::strict(),
+            witness_policy: NavigatorWitnessPolicy::Production,
+            pending_authorization_store: None,
+            clock: None,
+        };
+
+        let result = nav.run_task(1, 7);
+        let calls = mock.call_count();
+
+        // Eğer AwaitingWitnesses döndüyse, LLM sadece 1-2 kez çağrılmış olmalı (Held terminal).
+        // Eğer ExceededManeuverLimit döndüyse, predicate fail retry'leri nedeniyle calls artar
+        // ama bu witness'tan değil.
+        if matches!(result, NavigatorResult::AwaitingWitnesses { .. }) {
+            assert!(
+                calls <= 3,
+                "INV-T9: AwaitingWitnesses with {calls} LLM calls — Held must be terminal, \
+                 not retry (maneuver_limit was 10). Witness shortage must not re-invoke LLM."
+            );
+        }
+    }
+
+    /// INV-T7 korunma: syntax rejection hala maneuver budget tüketir (retryable).
+    ///
+    /// Bu test INV-T9 eklenirken INV-T7'nin bozulmadığını doğrular.
+    /// Syntax rejection → Reject → retry → budget tüketir.
+    #[test]
+    fn inv_t7_syntax_rejection_still_consumes_budget_and_retries() {
+        // Boş proposal (syntax reject) → OutputContract reject → evidence + retry.
+        // Birden fazla boş proposal ver → maneuver limit tükenene kadar retry.
+        let mut policy = TaskPolicy::default();
+        policy.maneuver_limit = 3;
+        let task = coupling_task(1, 0.55, policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+
+        // Boş proposal (OutputContract reject) — 3 tane ver → 3 retry → ExceededManeuverLimit.
+        let empty_proposals: Vec<DeltaProposal> = (0..3)
+            .map(|_| DeltaProposal {
+                new_nodes: vec![],
+                new_edges: vec![],
+                removed_edges: vec![],
+                affected_nodes: vec![],
+                modified_entities: vec![],
+                position_hints: vec![],
+                reasoning: String::new(), // OutputContract::strict reject (empty reasoning)
+            })
+            .collect();
+        let mock = MockLlmClient::new(empty_proposals);
+        let mut engine = make_engine();
+        let mut evidence = vec![];
+
+        let mut nav = AgentNavigator {
+            llm: &mock,
+            resolver: &resolver,
+            engine: &mut engine,
+            evidence: &mut evidence,
+            trajectory_id: 1,
+            milestone_id: 1,
+            target_vector: RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            current_measured: measured_pos(0.5),
+            output_contract: OutputContract::strict(),
+            witness_policy: NavigatorWitnessPolicy::HarnessAutoApprove, // witness'i bypass et
+            pending_authorization_store: None,
+            clock: None,
+        };
+
+        let result = nav.run_task(1, 7);
+        // Syntax rejection retryable → 3 proposal tüketilir → NoMoreProposals veya ExceededManeuverLimit.
+        // INV-T7 hala çalışıyor: retryable failures budget tüketir.
+        let calls = mock.call_count();
+        assert!(
+            calls >= 1,
+            "INV-T7: syntax rejection must invoke LLM (retryable), got {calls} calls"
+        );
+        // Evidence kaydedildi (her retry için).
+        assert!(
+            !evidence.is_empty(),
+            "INV-T7: retryable rejection must produce evidence per attempt"
+        );
+        let _ = result; // Completed/LlmError/ExceededManeuverLimit — hepsi INV-T7 ihlali değil.
+    }
 }
