@@ -253,7 +253,7 @@ pub enum Reason {
 ///
 /// Hem satisfied hem hold/rejected durumlarında aynı yapı — navigator ve pending
 /// authorization record için tam kanıt taşır.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WitnessQuorumSnapshot {
     /// Distinct non-author approver sayısı (Q1).
     pub approvers: usize,
@@ -271,7 +271,7 @@ pub struct WitnessQuorumSnapshot {
 /// lokalde gözlemlenemiyor (squash/rebase + trailersız). Bu bozuk evidence değil,
 /// erişilemeyen evidence'dır. `InvalidWitnessEvidence` yalnızca gerçekten bozuk/
 /// yetkisiz evidence içindir (malformed, author-self, duplicate).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WitnessHoldReason {
     /// Q1: `distinct_non_author_approvers < min_approvers`.
     MinApproversNotMet { distinct: usize, required: usize },

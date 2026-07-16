@@ -12,10 +12,14 @@ description = "Ontological Space Protocol — core types (Node/Edge/Space, coord
 [dependencies]
 thiserror = "1"                # CommitError, DeviationError (library-level typed errors)
 serde = { workspace = true }   # Serialize/Deserialize — Faz 2 persistence (workspace derive feature inherited)
+serde_json = { workspace = true } # INV-T9: authorization basis canonical encoding (digest)
 bincode = "1"                  # Binary snapshot serialization — Faz 2 event-sourcing
 toml = "0.8"                   # Vision config parsing — Faz 2 vision_config
 tracing = { workspace = true } # Faz 2.5 persistence logging
 unicode-normalization = "0.1"  # Faz 5.1: normalize_for_axis_match gerçek NFC (decomposed → precomposed)
+# INV-T9: authorization basis digest — cryptographic, collision-resistant, domain-separated.
+# evidence integrity için FNV-1a yetersiz; BLAKE3 hızlı + güvenli.
+blake3 = "1"
 # Faz 1.5: git2 = "0.18" (lokal God-mode witness — inv #8: osp-core DEĞİL, osp-analyzer)
 
 [dev-dependencies]

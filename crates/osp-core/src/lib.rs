@@ -15,6 +15,7 @@
 
 pub mod agent;
 pub mod anchoring;
+pub mod authorization;
 pub mod axes;
 pub mod bigbang;
 pub mod coords;
