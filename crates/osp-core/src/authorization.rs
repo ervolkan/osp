@@ -385,9 +385,15 @@ impl TryFrom<&crate::witness::WitnessSet> for CanonicalWitnessPolicy {
 /// Ölçümün *ürettiği değer + source* `ProvenancedMeasuredResult`'da (basis'te).
 ///
 /// **reviewer (daraltma):** Placeholder `config_tag`, sahte source policy (`metric_source_config`),
-/// tekrar eden ölçüm değerleri (`repo_level_*`), evaluation girdileri (`theta_bound`/
-/// `abstractness` — `EvaluationContextDigest`'te) kaldırıldı. Yalnız core raw axis
-/// descriptor'ları (seçenek B): coupling/cohesion/instability/entropy/witness_depth.
+/// tekrar eden ölçüm değerleri (`repo_level_*`), evaluation girdileri (`theta_bound` —
+/// `EvaluationContextDigest`'te) kaldırıldı. Yalnız core raw axis descriptor'ları
+/// (seçenek B): coupling/cohesion/instability/entropy/witness_depth.
+///
+/// **Step 4c notu:** `abstractness` de `EvaluationContextDigest`'ten çıkarıldı — Q5/Q6
+/// authorization evaluation'ı etkilemiyor. `MeasurementInputContext`'e taşınmaz (axis
+/// tanımı değil, `raw_position_of` girdisi değil, `ProvenancedMeasuredResult` üretmez).
+/// Post-apply derived-position (`compute_derived`) etkisi için gelecekte ayrı bir
+/// `ApplySemanticsDigest` bağlanabilir.
 ///
 /// **v1 schema:** Henüz yayınlanmadı; bu commit ilk v1 representation'ı finalizes.
 /// Basis digest taşır (bound), full context taşımaz (readable) — self-description ileride.
@@ -1213,27 +1219,44 @@ impl EffectiveVisionGateContext {
 impl EvaluationContextDigest {
     const DOMAIN_SEPARATOR: &'static [u8] = b"osp.evaluation-context.v1\0";
 
-    /// **reviewer P0-3 / Step 4a / Step 4b:** Gerçek evaluation context digest.
+    /// **reviewer P0-3 / Step 4a / Step 4b / Step 4c:** Gerçek evaluation context digest.
+    ///
+    /// **Ontolojik kapsam (Step 4c):** Digest yalnız **Q5 vision-gate ve Q6 ordered-rule
+    /// evaluation girdilerini** ve bunların semantics version'larını bağlar. Q4 syntax
+    /// validation claim/structural içerikten çalışır; burada bağlanan ayrı bir Q4 config
+    /// girdisi yoktur.
     ///
     /// **Step 4a (ordinal-aware):** `RuleEvaluationContext` alır — sort ETMEZ, registration
     /// sırasını (ordinal) korur. `check_claim_rules` first-match short-circuit ile aynı
     /// sırayı kullanır. `rule_context.validate()` başında defensively çağrılır.
     ///
-    /// **Step 4b (claim-specific vision):** Artık captured `EffectiveVisionGateContext`
-    /// alır — Q5 ile aynı effective vision + theta_bound + semantics versions bağlanır.
-    /// **Kaldırıldı (reviewer P0-2):** global `vision_vector` (5-axis), `config.theta_bound`,
-    /// `config.role_overrides` (bütün map). Bunlar artık claim-specific context içinde.
-    /// Config'te kalan: min_approvers, quorum_threshold, milestone_interval, abstractness,
-    /// merge_ratio_observable (4c kaldıracak).
+    /// **Step 4b (claim-specific vision):** captured `EffectiveVisionGateContext` alır —
+    /// Q5 ile aynı effective vision + theta_bound + semantics versions bağlanır.
+    ///
+    /// **Step 4c (kapsam daraltma):** `config: &EngineConfig` parametresi KALDIRILDI.
+    /// Beş config alanı evaluation context'in ontolojik kapsamına ait değildi:
+    /// - `min_approvers`/`quorum_threshold`: authorization'a ait ama **evaluation context'e
+    ///   değil** — `CanonicalWitnessPolicy` (omega'dan) `AuthorizationBasisDigest`'te bağlı.
+    /// - `milestone_interval`: persistence cadence (per-instance, claim dışı).
+    /// - `abstractness`: Q5/Q6 evaluation'ı etkilemiyor; yalnız legacy `commit()` reposition
+    ///   post-apply derived position'ı etkiliyor. `MeasurementInputDigest`'e taşınmaz (axis
+    ///   tanımı değil, raw-axis measurement üretmez). Post-apply derived-position etkisi
+    ///   gelecekte bir `ApplySemanticsDigest` bağlayabilir.
+    /// - `merge_ratio_observable`: hiçbir hesaplamada kullanılmıyor (digest filler).
     ///
     /// `pub(crate)` — runtime context tipleri wire schema DEĞİL (`RuleEvaluationContext`,
     /// `EffectiveVisionGateContext` pub(crate)); sadece engine + testler çağırır. Reviewer:
     /// "intermediate runtime context types are not persisted wire schemas."
     ///
+    /// **DOMAIN_SEPARATOR v1:** No published or compatibility-supported v1
+    /// evaluation-context encoding exists — PR pre-merge, runtime context opak taşınır
+    /// (AuthorizationBasis digest baytlarını saklar, reload'da recompute). Step 6 golden
+    /// vector v1 sözleşmesini kilitler; sonraki breaking değişiklik (canonical field/order/
+    /// tag/encoding) explicit v2 kararı gerektirir.
+    ///
     /// **Rule + vision versioning:** Rule impl veya vision selection semantics değişip
     /// `semantics_version` artırılırsa context digest değişir → stale measurement tespiti.
     pub(crate) fn compute(
-        config: &crate::engine::EngineConfig,
         rule_context: &RuleEvaluationContext,
         vision_context: &EffectiveVisionGateContext,
     ) -> Result<Self, AuthorizationBasisDigestError> {
@@ -1248,17 +1271,6 @@ impl EvaluationContextDigest {
 
         let mut hasher = blake3::Hasher::new();
         hasher.update(Self::DOMAIN_SEPARATOR);
-
-        // EngineConfig — ölçüm-atan alanlar (theta_bound + role_overrides KALDIRILDI).
-        encode_u32(&mut hasher, config.min_approvers as u32, "ec_min_approvers");
-        encode_f64(&mut hasher, config.quorum_threshold, "ec_quorum")?;
-        encode_u64(
-            &mut hasher,
-            config.milestone_interval,
-            "ec_milestone_interval",
-        );
-        encode_f64(&mut hasher, config.abstractness, "ec_abstractness")?;
-        encode_f64(&mut hasher, config.merge_ratio_observable, "ec_merge_ratio")?;
 
         // **Step 4a:** Rule evaluation context — semantics_version + ordinal-aware
         // ordered rules. Sort EDİLMEZ (registration sırası semantik — Q6 ile aynı).
@@ -3519,17 +3531,9 @@ mod tests {
 
     #[test]
     fn evaluation_context_digest_is_stable_for_identical_context() {
-        // **reviewer P0-3 (A8) / Step 4a / Step 4b:** EvaluationContextDigest gerçek
-        // içerik + ordinal-aware RuleEvaluationContext + claim-specific effective vision.
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
+        // **reviewer P0-3 (A8) / Step 4a / Step 4b / Step 4c:** EvaluationContextDigest
+        // gerçek içerik + ordinal-aware RuleEvaluationContext + claim-specific effective
+        // vision. Step 4c: config parametresi KALDIRILDI — digest yalnız Q5/Q6 girdileri.
         let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
             ordinal: 0,
             descriptor: RuleDescriptor {
@@ -3540,8 +3544,8 @@ mod tests {
         }])
         .unwrap();
         let vision_ctx = mk_vision_context(0.3);
-        let d1 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap();
-        let d2 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap();
+        let d1 = EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap();
+        let d2 = EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap();
         assert_eq!(d1, d2);
     }
 
@@ -3549,38 +3553,20 @@ mod tests {
     fn evaluation_context_digest_changes_when_theta_bound_changes() {
         // **Step 4b:** theta_bound artık vision_context'te (config'ten KALDIRILDI).
         // vision_context.theta_bound değişince digest değişmeli.
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
         let mk = |theta: f64| {
             let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
             let vision_ctx = mk_vision_context(theta);
-            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap()
         };
         assert_ne!(mk(0.3), mk(0.5));
     }
 
     #[test]
     fn evaluation_context_digest_changes_when_rule_added() {
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
         let vision_ctx = mk_vision_context(0.3);
         let d_no_rules = {
             let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap()
         };
         let d_one_rule = {
             let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
@@ -3592,7 +3578,7 @@ mod tests {
                 },
             }])
             .unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap()
         };
         assert_ne!(d_no_rules, d_one_rule);
     }
@@ -3600,15 +3586,6 @@ mod tests {
     #[test]
     fn evaluation_context_digest_changes_when_rule_semantics_version_changes() {
         // **plan-review #4:** semantics_version artarsa digest değişmeli.
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
         let vision_ctx = mk_vision_context(0.3);
         let mk = |semver: u32| {
             let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
@@ -3620,7 +3597,7 @@ mod tests {
                 },
             }])
             .unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &vision_ctx).unwrap()
         };
         assert_ne!(mk(1), mk(2));
     }
@@ -3892,15 +3869,6 @@ mod tests {
     fn evaluation_context_changes_when_rule_order_changes() {
         // **Step 4a:** Registration sırası semantik — farklı sıra → farklı digest
         // (sort-by-rule_id KALDIRILDI, ordinal korundu).
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
         // Sıra A: alpha, beta
         let ctx_a = RuleEvaluationContext::try_new(vec![
             OrderedRuleDescriptor {
@@ -3926,22 +3894,13 @@ mod tests {
         ])
         .unwrap();
         let vision_ctx = mk_vision_context(0.3);
-        let d_a = EvaluationContextDigest::compute(&config, &ctx_a, &vision_ctx).unwrap();
-        let d_b = EvaluationContextDigest::compute(&config, &ctx_b, &vision_ctx).unwrap();
+        let d_a = EvaluationContextDigest::compute(&ctx_a, &vision_ctx).unwrap();
+        let d_b = EvaluationContextDigest::compute(&ctx_b, &vision_ctx).unwrap();
         assert_ne!(d_a, d_b, "registration order must change digest");
     }
 
     #[test]
     fn same_rules_same_order_produce_same_digest() {
-        let config = crate::engine::EngineConfig {
-            min_approvers: 2,
-            quorum_threshold: 1.5,
-            theta_bound: 0.3,
-            milestone_interval: 1000,
-            abstractness: 0.5,
-            merge_ratio_observable: 0.1,
-            role_overrides: std::collections::HashMap::new(),
-        };
         let mk_ctx = || {
             RuleEvaluationContext::try_new(vec![
                 OrderedRuleDescriptor {
@@ -3956,8 +3915,8 @@ mod tests {
             .unwrap()
         };
         let vision_ctx = mk_vision_context(0.3);
-        let d1 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision_ctx).unwrap();
-        let d2 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision_ctx).unwrap();
+        let d1 = EvaluationContextDigest::compute(&mk_ctx(), &vision_ctx).unwrap();
+        let d2 = EvaluationContextDigest::compute(&mk_ctx(), &vision_ctx).unwrap();
         assert_eq!(d1, d2, "same rules + same order → same digest");
     }
 
@@ -4349,7 +4308,6 @@ mod tests {
     #[test]
     fn evaluation_context_binds_claim_specific_effective_vision() {
         // Claim-specific effective vision digest'e bağlı — farklı vision → farklı digest.
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let mk = |x: f64| {
             use crate::vision::{VisionSource, VisionVector};
@@ -4369,7 +4327,7 @@ mod tests {
                 vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
             };
             let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &ctx).unwrap()
         };
         assert_ne!(
             mk(0.5),
@@ -4381,11 +4339,10 @@ mod tests {
     #[test]
     fn evaluation_context_changes_when_effective_theta_bound_changes() {
         // theta_bound artık vision_context'te — değişince digest değişir.
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let mk = |theta: f64| {
             let ctx = mk_vision_context(theta);
-            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &ctx).unwrap()
         };
         assert_ne!(mk(0.2), mk(0.4));
     }
@@ -4393,7 +4350,6 @@ mod tests {
     #[test]
     fn evaluation_context_changes_when_only_vision_source_changes() {
         // Same vector, same subject, farklı source → farklı digest (provenance bağlı).
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let raw = crate::coords::RawPosition {
             x: 0.5,
@@ -4413,7 +4369,7 @@ mod tests {
             };
             let sel = mk_selection(source, subject, raw);
             let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &ctx).unwrap()
         };
         assert_ne!(
             mk(crate::vision::VisionSource::UserLoaded),
@@ -4426,7 +4382,6 @@ mod tests {
     fn evaluation_context_changes_when_only_subject_changes() {
         // Same vector, same source (UserLoaded), farklı subject → farklı digest.
         // Not: UserLoaded + Role subject geçerli (kullanıcı global vision ama role ata).
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let raw = crate::coords::RawPosition {
             x: 0.5,
@@ -4438,7 +4393,7 @@ mod tests {
         let mk = |subject: CanonicalVisionSubject| {
             let sel = mk_selection(crate::vision::VisionSource::UserLoaded, subject, raw);
             let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+            EvaluationContextDigest::compute(&rule_ctx, &ctx).unwrap()
         };
         let role_tag = CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap();
         assert_ne!(
@@ -4627,7 +4582,6 @@ mod tests {
         // GlobalDefault source → validate_for_authorization reject → compute Err.
         // `try_new` GlobalDefault'ı zaten reject eder; bu yüzden raw context ile compute
         // çağrılır (defensive digest katmanı da authority validation yapar — P0-3).
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let sel = mk_selection(
             crate::vision::VisionSource::GlobalDefault,
@@ -4652,7 +4606,7 @@ mod tests {
             theta_bound: 0.3,
             deviation_semver: DEVIATION_SEMANTICS_VERSION,
         };
-        let result = EvaluationContextDigest::compute(&config, &rule_ctx, &raw_ctx);
+        let result = EvaluationContextDigest::compute(&rule_ctx, &raw_ctx);
         assert!(
             result.is_err(),
             "GlobalDefault must not produce a digest (authority rejected)"
@@ -4662,7 +4616,6 @@ mod tests {
     #[test]
     fn vision_source_none_does_not_create_evaluation_context_digest() {
         // None source → validate_for_authorization reject → compute Err.
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         let sel = mk_selection(
             crate::vision::VisionSource::None,
@@ -4675,7 +4628,7 @@ mod tests {
             theta_bound: 0.3,
             deviation_semver: DEVIATION_SEMANTICS_VERSION,
         };
-        let result = EvaluationContextDigest::compute(&config, &rule_ctx, &raw_ctx);
+        let result = EvaluationContextDigest::compute(&rule_ctx, &raw_ctx);
         assert!(
             result.is_err(),
             "None source must not produce a digest (vision unavailable)"
@@ -4982,7 +4935,6 @@ v = 0.5
             removed_edges: vec![],
         };
         let engine = mk_engine();
-        let config = crate::engine::EngineConfig::default_calibrated();
         let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
         // Runtime claim (Production) → Role(Runtime) + BuiltinRole override.
         // Support claim (Test) → Role(Support) + global inherit (builtin None).
@@ -4998,8 +4950,8 @@ v = 0.5
         );
         let runtime_ctx = EffectiveVisionGateContext::try_new(runtime_sel, 0.3).unwrap();
         let support_ctx = EffectiveVisionGateContext::try_new(support_sel, 0.3).unwrap();
-        let d_runtime = EvaluationContextDigest::compute(&config, &rule_ctx, &runtime_ctx).unwrap();
-        let d_support = EvaluationContextDigest::compute(&config, &rule_ctx, &support_ctx).unwrap();
+        let d_runtime = EvaluationContextDigest::compute(&rule_ctx, &runtime_ctx).unwrap();
+        let d_support = EvaluationContextDigest::compute(&rule_ctx, &support_ctx).unwrap();
         assert_ne!(
             d_runtime, d_support,
             "different inferred role contexts → different digest"

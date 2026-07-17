@@ -121,8 +121,9 @@ struct does not exist. `WitnessHoldReason`:
 
 `AuthorizationBasisDigest` — BLAKE3 with `"osp.authorization-basis.v1\0"` domain
 separation. Full canonical structural delta (not a lossy digest). Predicate content
-always bound (id alone insufficient). `EvaluationContextDigest` covers vision config +
-rule-set + semantics versions. `SpaceViewRevision` is store-scoped + lane-qualified.
+always bound (id alone insufficient). `EvaluationContextDigest` covers the claim-specific
+effective vision-gate context, the ordered rule-evaluation context, and their semantics
+versions. `SpaceViewRevision` is store-scoped + lane-qualified.
 Float canonicalization: NaN rejected, -0.0 normalized, little-endian, sorted
 collections, `f64::to_bits()`. `created_at` NOT in digest. `Clock` trait
 (`SystemClock`/`FixedClock`) — core never calls `SystemTime::now()` directly.

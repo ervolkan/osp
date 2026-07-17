@@ -816,16 +816,14 @@ impl SpaceEngine {
         let measurement_input_digest =
             MeasurementInputDigest::compute(&measurement_input).map_err(|e| e.to_string())?;
 
-        // **reviewer (Step 4a + 4b closure):** Evaluation context digest — captured
+        // **reviewer (Step 4a + 4b + 4c closure):** Evaluation context digest — captured
         // `rule_context` + `vision_context` kullanır (commit_task_claim'in ürettiği
         // snapshot'lar). Yeniden `current_evaluation_context_digest()` çağrısı YOK —
         // Q5/Q6 ve digest aynı captured context'lerden türetilir (drift risk kapalı).
-        let evaluation_context_digest = crate::authorization::EvaluationContextDigest::compute(
-            &self.config,
-            rule_context,
-            vision_context,
-        )
-        .map_err(|e| e.to_string())?;
+        // **Step 4c:** config parametresi KALDIRILDI — digest yalnız Q5/Q6 girdilerini bağlar.
+        let evaluation_context_digest =
+            crate::authorization::EvaluationContextDigest::compute(rule_context, vision_context)
+                .map_err(|e| e.to_string())?;
         let base_space_view_revision = self.current_space_view_revision()?;
 
         let basis = AuthorizationBasis {
@@ -2262,6 +2260,213 @@ v = 0.5
             (raw.y - 0.85).abs() < 1e-9,
             "cohesion should come from node.cohesion, got {}",
             raw.y
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 Step 4c — production-path regression: kaldırılan 5 config field digest'i etkilemiyor
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// **Step 4c test helper:** `commit_task_claim → Held` production yolundan gerçek
+    /// `AuthorizationContext.basis.evaluation_context_digest` üret. Boş `WitnessSet`
+    /// (min_approvers=2 kendi içinde) + predicate satisfied → Held (quorum yetersiz).
+    ///
+    /// **Omega kaynağı:** `WitnessSet::new(vec![])` kendi `min_approvers: 2, quorum_threshold:
+    /// 1.5` değerlerini taşır (engine.rs:113-118, EngineConfig'ten bağımsız). Held sebebi
+    /// `input.omega`'dan gelir — `EngineConfig.min_approvers/quorum_threshold` değil.
+    fn held_authorization_for_config(
+        config: EngineConfig,
+    ) -> crate::authorization::AuthorizationContext {
+        use crate::trajectory::{
+            InMemoryTaskRegistry, MetricPredicate, PredicateAxis, PredicateMode, PredicateSet,
+            Task, TaskPolicy, TaskStatus, WeightedPredicate,
+        };
+        use crate::witness::WitnessSet;
+
+        // Minimal space: tek node + tek edge (coupling ölçülebilir).
+        let mut space = crate::space::Space::default();
+        space.nodes.insert(
+            0,
+            Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                ..Default::default()
+            },
+        );
+        let cs = CoordinateSystem::default_raw_five(
+            CohesionAxis::new(),
+            EntropyAxis::from_commit_entropy(0.0),
+            WitnessDepthAxis::from_witness(0.0, 0),
+        )
+        .unwrap();
+        // UserLoaded vision — authority yeterli (GlobalDefault reject edilmez).
+        let vision = crate::vision::VisionVector::with_source(
+            RawPosition {
+                x: 0.5,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.5,
+            },
+            crate::vision::VisionSource::UserLoaded,
+        );
+        let mut engine = SpaceEngine::new(space, cs, vision, config);
+
+        // Task: coupling ≤ 0.9 (measured 0.0 ≤ 0.9 → predicate satisfied).
+        let task = Task {
+            id: 1,
+            milestone_id: 1,
+            label: "coupling gate".into(),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![WeightedPredicate {
+                    predicate: MetricPredicate {
+                        metric: PredicateAxis::Coupling,
+                        operator: crate::trajectory::ComparisonOp::Le,
+                        threshold: 0.9,
+                        scope: crate::trajectory::PredicateScope::Node(0),
+                        required_source: Some(crate::coords::MetricSource::Scip),
+                        tolerance: 0.0,
+                    },
+                    weight: None,
+                }],
+                preferred_vector: Some(RawPosition {
+                    x: 0.5,
+                    y: 0.5,
+                    z: 0.5,
+                    w: 0.5,
+                    v: 0.5,
+                }),
+            },
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+
+        // Claim: tek node, computed_raw vision'a hizalı (θ küçük, Q5 geçer).
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: Intent::new(0, RawPosition::default()),
+            author: 0,
+            computed_raw: RawPosition {
+                x: 0.5,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.5,
+            },
+            delta_nodes: vec![Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                ..Default::default()
+            }],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+
+        // measured: coupling 0.5 (predicate threshold ≤ 0.9 → satisfied).
+        let measured = crate::trajectory::ProvenancedRawPosition {
+            coupling: crate::trajectory::AxisMetric {
+                value: 0.5,
+                source: crate::coords::MetricSource::Scip,
+            },
+            cohesion: crate::trajectory::AxisMetric {
+                value: 0.5,
+                source: crate::coords::MetricSource::Scip,
+            },
+            instability: crate::trajectory::AxisMetric {
+                value: 0.5,
+                source: crate::coords::MetricSource::Scip,
+            },
+            entropy: crate::trajectory::AxisMetric {
+                value: 0.5,
+                source: crate::coords::MetricSource::Scip,
+            },
+            witness_depth: crate::trajectory::AxisMetric {
+                value: 0.0,
+                source: crate::coords::MetricSource::Scip,
+            },
+        };
+
+        // Omega: boş WitnessSet → kendi min_approvers=2/quorum=1.5 taşır → Held.
+        let omega = WitnessSet::new(vec![]);
+
+        let input = TaskCommitInput {
+            claim: &claim,
+            omega: &omega,
+            task_resolver: &resolver,
+            target: RawPosition {
+                x: 0.5,
+                y: 0.5,
+                z: 0.5,
+                w: 0.5,
+                v: 0.5,
+            },
+            loss_before: 1.0,
+            measured,
+        };
+
+        match engine.commit_task_claim(input) {
+            Ok(crate::engine::EngineCommitResult::Held { authorization, .. }) => authorization,
+            other => panic!(
+                "fixture must reach Held (empty WitnessSet, predicate satisfied); got: {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn evaluation_context_excludes_non_evaluation_config_fields() {
+        // **Step 4c:** Beş config field (min_approvers, quorum_threshold, milestone_interval,
+        // abstractness, merge_ratio_observable) artık EvaluationContextDigest'i etkilemiyor.
+        //
+        // Production yolu: commit_task_claim → Held → AuthorizationContext.basis
+        // .evaluation_context_digest. Bu, config'in başka yoldan bağlanmadığını da kanıtlar.
+        //
+        // Sabit tutulanlar: space, coord_system, rules, claim, task, predicate girdileri,
+        // effective vision, theta_bound, WitnessSet (omega). Yalnız kaldırılan 5 field değişir.
+        //
+        // Omega izolasyonu: iki çağrıda da aynı WitnessSet::new(vec![]) kullanılır.
+        // EngineConfig.min_approvers/quorum_threshold farklı ama gerçek witness policy
+        // (omega'dan) değişmedi → Held sebebi/snapshot/witness_policy aynı kalmalı.
+        let config_a = EngineConfig {
+            min_approvers: 2,
+            quorum_threshold: 1.5,
+            theta_bound: 0.3,
+            milestone_interval: 1000,
+            abstractness: 0.5,
+            merge_ratio_observable: 0.1,
+            role_overrides: std::collections::HashMap::new(),
+        };
+        let config_b = EngineConfig {
+            min_approvers: 7, // omega'yı ETKİLEMEZ — WitnessSet kendi değerini taşır
+            quorum_threshold: 4.0,
+            theta_bound: 0.3,
+            milestone_interval: 50,
+            abstractness: 0.9,
+            merge_ratio_observable: 0.75,
+            role_overrides: std::collections::HashMap::new(),
+        };
+
+        let auth_a = held_authorization_for_config(config_a);
+        let auth_b = held_authorization_for_config(config_b);
+
+        // Fixture izolasyonu: EngineConfig farklı, omega aynı → Held çıktıları aynı.
+        assert_eq!(
+            auth_a.basis.witness_policy, auth_b.basis.witness_policy,
+            "witness policy derives from omega, not EngineConfig"
+        );
+
+        // **Step 4c sınırı:** kaldırılan 5 config field digest'i etkilemiyor.
+        assert_eq!(
+            auth_a.basis.evaluation_context_digest, auth_b.basis.evaluation_context_digest,
+            "removed config fields (min_approvers/quorum_threshold/milestone_interval/\
+             abstractness/merge_ratio_observable) must NOT affect evaluation context digest"
         );
     }
 }

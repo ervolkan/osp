@@ -1,5 +1,11 @@
 # INV-T9 Step 4b — Claim-specific EffectiveVisionGateContext (Handoff/Plan)
 
+> **Status: Historical implementation handoff.**
+> Step 4b has been completed (commits `fd9db55`, `37aaa31`, `b71198e`, `47477a1`).
+> The commands, commit SHAs, and test counts below describe the pre-Step-4b
+> implementation state and must not be treated as current execution instructions.
+> See PR #69 and the Step 4c plan for current state.
+
 **Tarih:** 2026-07-17
 **Branch:** `fix/inv-t9-witness-suspension`
 **PR:** #69 (https://github.com/ontologicalspace/osp/pull/69)
