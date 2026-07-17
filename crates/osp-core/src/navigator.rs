@@ -212,6 +212,9 @@ pub fn gate_decision_from_engine_error(err: &crate::engine::EngineCommitError) -
         EngineCommitError::Internal(_) => GateDecision::Unknown,
         // AuthorizationContextFailed = system failure (fail-closed) — gate değil.
         EngineCommitError::AuthorizationContextFailed(_) => GateDecision::Unknown,
+        // **INV-T9 Step 4b (reviewer P0-4):** VisionContextInvalid = terminal —
+        // maneuver budget tüketmez, yeni LLM attempt başlatmaz, witness'a ulaşmaz.
+        EngineCommitError::VisionContextInvalid(_) => GateDecision::Unknown,
     }
 }
 
@@ -853,6 +856,12 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                         // basis üretilemedi, sıfır digest'e düşülmedi, terminal.
                         EngineCommitError::AuthorizationContextFailed(msg) => {
                             return NavigatorResult::SystemFailure(msg);
+                        }
+                        // **INV-T9 Step 4b (reviewer P0-4):** VisionContextInvalid =
+                        // terminal — maneuver budget tüketmez, yeni LLM attempt
+                        // başlatmaz, witness'a ulaşmaz. SystemFailure olarak map'lenir.
+                        EngineCommitError::VisionContextInvalid(err) => {
+                            return NavigatorResult::SystemFailure(err.to_string());
                         }
                     }
                 }
@@ -2095,15 +2104,21 @@ mod tests {
             WitnessDepthAxis::from_witness(0.3, 5),
         )
         .unwrap();
-        // Değerlendirilebilir vision (GlobalDefault) — θ küçük, Q5 vision geçer.
-        // Vision instability = measured (~0.80) ile aynı — loss coupling'den düşer, vision geçer.
-        let vision = VisionVector::new(RawPosition {
-            x: 0.55,
-            y: 0.6,
-            z: 0.80,
-            w: 0.5,
-            v: 0.3,
-        });
+        // Değerlendirilebilir vision (UserLoaded) — θ küçük, Q5 vision geçer.
+        // **INV-T9 Step 4b:** mutation yüzeyinde `GlobalDefault` authority'de reject
+        // edilir; test fixture'ları `commit_task_claim` çağırdığı için `UserLoaded`
+        // (kullanıcı-onaylı) kullanır. Vision instability = measured (~0.80) ile aynı —
+        // loss coupling'den düşer, vision geçer.
+        let vision = VisionVector::with_source(
+            RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.80,
+                w: 0.5,
+                v: 0.3,
+            },
+            crate::vision::VisionSource::UserLoaded,
+        );
         // G2c-3 test: navigator boş witness set geçirir → min_approvers 0 (auto-approve).
         // Gerçek deployment'ta witness policy ayrı (operator approval).
         let mut config = EngineConfig::default_calibrated();

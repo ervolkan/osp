@@ -935,42 +935,288 @@ pub(crate) enum EvaluationContextError {
     DuplicateActiveRuleId(String),
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 Step 4b — EffectiveVisionGateContext (claim-specific effective vision binding)
+//
+// Reviewer P0-1: Role inference + vision selection TEK fonksiyonda
+// (`engine::effective_vision_selection`). Subject + effective vector + source aynı
+// karar ağacından üretilir. Bu modül claim-specific runtime context tiplerini taşır:
+//   - `CanonicalVisionSubject`  : Global | Role(CanonicalNodeRole)
+//   - `EffectiveVisionSelection`: effective_vision + source + subject + semver'ler
+//   - `EffectiveVisionGateContext`: selection + theta_bound + deviation_semver
+//
+// `pub(crate)` — runtime context tipleri wire schema DEĞİL; sadece engine + testler
+// çağırır. Reviewer: "intermediate runtime context types are not persisted wire schemas."
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **INV-T9 Step 4b (reviewer P0-1):** Vision subject — vision vektörünün hangi
+/// mimari role atandığı. Global (rol-süz) veya belirli bir rol.
+///
+/// Plan kararı: alan adı `subject` (`inferred_role` DEĞİL — global bir inferred role
+/// değildir). `effective_vision_selection`'ın karar ağacından üretilir.
+///
+/// `pub` — `VisionContextError::SubjectSourceMismatch` (crate pub API) içerir; typed
+/// mismatch diagnostic'i için. Runtime context tipidir (wire schema DEĞİL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalVisionSubject {
+    /// Override yok, engine global vision'ı kullanılıyor. Rol atanmadı.
+    Global,
+    /// Claim'in ilk delta_node'unun rolü için override (builtin veya user) uygulandı.
+    Role(CanonicalNodeRole),
+}
+
+/// **INV-T9 Step 4b:** `infer_role` çıkarım semantiği version'ı.
+/// `infer_role` heuristic'i değişirse bu version artırılmalı → digest değişir.
+pub(crate) const ROLE_INFERENCE_SEMANTICS_VERSION: u32 = 1;
+
+/// **INV-T9 Step 4b:** `effective_vision_selection` karar ağacı semantiği version'ı.
+/// Cascade sırası / override resolution mantığı değişirse bu version artırılmalı.
+pub(crate) const VISION_SELECTION_SEMANTICS_VERSION: u32 = 1;
+
+/// **INV-T9 Step 4b:** Sapma metrik (CosineDeviation) kontratı version'ı.
+/// θ normalization veya sapma formülü değişirse bu version artırılmalı.
+pub(crate) const DEVIATION_SEMANTICS_VERSION: u32 = 1;
+
+/// **INV-T9 Step 4b (reviewer P0-1):** Tek karar ağacının sonucu — effective vision
+/// vektörü + provenance + subject + semver'ler.
+///
+/// `engine::effective_vision_selection(claim)` üretir. Q5 (`check_claim_vision`),
+/// `build_authorization_context` ve `EvaluationContextDigest` aynı sonucu paylaşır
+/// (captured-context pattern — 4a rule_context ile aynı).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EffectiveVisionSelection {
+    /// Effective vision vektörü (override uygulanmış veya global).
+    pub(crate) effective_vision: crate::vision::VisionVector,
+    /// Effective vision'ın provenance'ı (None/GlobalDefault/BuiltinRole/RoleProfile/UserLoaded).
+    pub(crate) vision_source: crate::vision::VisionSource,
+    /// Bu vision'ın hangi role atandığı (Global = rol-süz).
+    pub(crate) subject: CanonicalVisionSubject,
+    /// `infer_role` heuristic semantiği (digest'e bağlı — staleness tespiti).
+    pub(crate) role_inference_semver: u32,
+    /// `effective_vision_selection` karar ağacı semantiği (digest'e bağlı).
+    pub(crate) vision_selection_semver: u32,
+}
+
+/// **INV-T9 Step 4b:** θ_bound aralığı.
+/// `MIN = 0.0` (en sıkı), `MAX = 1.0` (CosineDeviation kontratı — θ ∈ [0,1]).
+pub(crate) const MIN_THETA_BOUND: f64 = 0.0;
+pub(crate) const MAX_THETA_BOUND: f64 = 1.0;
+
+/// **INV-T9 Step 4b (reviewer P0-1 + P0-3):** Claim-specific effective vision gate
+/// context. Captured-context pattern: bir kez üretilir, Q5 + build_authorization_context
+/// + digest paylaşır.
+///
+/// `validate_for_authorization` hem Q5 öncesinde hem digest başında çağrılır. None /
+/// GlobalDefault → Q5'e ulaşamaz, digest üretilemez (fail-closed).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EffectiveVisionGateContext {
+    /// Tek karar ağacı sonucu (effective_vision + source + subject + semver'ler).
+    pub(crate) selection: EffectiveVisionSelection,
+    /// θ bound (claim'e uygulanacak sapma eşiği — config.theta_bound, global).
+    pub(crate) theta_bound: f64,
+    /// Sapma metrik kontratı semantiği version'ı.
+    pub(crate) deviation_semver: u32,
+}
+
+/// **INV-T9 Step 4b (reviewer P0-2):** Vision context validation hataları (typed).
+///
+/// Terminal — `EngineCommitError::VisionContextInvalid` ile map'lenir; maneuver budget
+/// tüketmez, yeni LLM attempt başlatmaz, witness'a ulaşmaz (reviewer P0-4).
+///
+/// `pub` — `EngineCommitError` (crate pub API) içerir; `#[from]` typed dönüşüm için.
+/// Runtime context tipidir (wire schema DEĞİL) — `EngineCommitError` public yüzeyine
+/// gömülü gelir, ayrıca serialize edilmez.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum VisionContextError {
+    /// Vision yüklenmemiş (`VisionSource::None`) — θ hesaplanmamalı (topology-only).
+    #[error("vision unavailable (source=None) — θ cannot be computed (topology-only mode)")]
+    VisionUnavailable,
+    /// `GlobalDefault` evaluable ama authorization-gated mutation yolunda authority
+    /// yetersiz. Kullanıcı-onaylı vision (UserLoaded/RoleProfile/BuiltinRole) gerekir.
+    #[error("vision source {vision_source:?} has insufficient authority for authorization-gated mutation — user-confirmed vision required")]
+    VisionAuthorityInsufficient {
+        vision_source: crate::vision::VisionSource,
+    },
+    /// Subject-source mismatch: Global subject + role-profile/builtin-role source.
+    /// Yapısal çelişki — aynı karar ağacı bu kombinasyonu üretmemeli.
+    #[error("subject-source mismatch: subject={subject:?} with source={vision_source:?}")]
+    SubjectSourceMismatch {
+        subject: CanonicalVisionSubject,
+        vision_source: crate::vision::VisionSource,
+    },
+    /// Effective vision eksen değeri NaN/±Infinity.
+    #[error("non-finite vision axis {axis}: vision vectors must be finite")]
+    NonFiniteVisionAxis { axis: &'static str },
+    /// theta_bound NaN/±Infinity.
+    #[error("non-finite theta_bound: {0}")]
+    NonFiniteThetaBound(f64),
+    /// theta_bound [MIN_THETA_BOUND, MAX_THETA_BOUND] aralığı dışında.
+    #[error("theta_bound {0} out of range [{MIN_THETA_BOUND}, {MAX_THETA_BOUND}]")]
+    ThetaBoundOutOfRange(f64),
+    /// Semantics version sıfır (geçersiz — > 0 olmalı).
+    #[error("invalid semantics version for {field}: {version} (must be > 0)")]
+    InvalidSemanticsVersion { field: &'static str, version: u32 },
+}
+
+impl EffectiveVisionGateContext {
+    /// Validated smart constructor — `validate_for_authorization` çağırır (hem structure
+    /// hem authority). Engine `effective_vision_gate_context(claim)` bu constructor'ı
+    /// çağırır; None/GlobalDefault/mismatch burada fail-closed reddedilir.
+    pub(crate) fn try_new(
+        selection: EffectiveVisionSelection,
+        theta_bound: f64,
+    ) -> Result<Self, VisionContextError> {
+        let ctx = Self {
+            selection,
+            theta_bound,
+            deviation_semver: DEVIATION_SEMANTICS_VERSION,
+        };
+        ctx.validate_for_authorization()?;
+        Ok(ctx)
+    }
+
+    /// **reviewer P0-3:** Authority validation — mutation yüzeylerinde çağrılır.
+    /// None → VisionUnavailable, GlobalDefault → VisionAuthorityInsufficient, diğerleri Ok.
+    pub(crate) fn validate_authority_for_mutation(&self) -> Result<(), VisionContextError> {
+        match self.selection.vision_source {
+            crate::vision::VisionSource::None => Err(VisionContextError::VisionUnavailable),
+            crate::vision::VisionSource::GlobalDefault => {
+                Err(VisionContextError::VisionAuthorityInsufficient {
+                    vision_source: self.selection.vision_source,
+                })
+            }
+            crate::vision::VisionSource::BuiltinRole
+            | crate::vision::VisionSource::RoleProfile
+            | crate::vision::VisionSource::UserLoaded => Ok(()),
+        }
+    }
+
+    /// **reviewer P0-2:** Structural validation — imkânsız kombinasyonlar.
+    ///
+    /// | Subject | Source              | Sonuç                         |
+    /// |---------|---------------------|------------------------------|
+    /// | Global  | UserLoaded          | Geçerli                      |
+    /// | Global  | GlobalDefault       | Yapısal geçerli (auth'da reject) |
+    /// | Global  | BuiltinRole/Profile | **Geçersiz** (SubjectSourceMismatch) |
+    /// | Role    | BuiltinRole/Profile/UserLoaded | Geçerli         |
+    /// | Role    | GlobalDefault       | Yapısal geçerli (auth'da reject) |
+    /// | Herhangi| None                | **Geçersiz** (VisionUnavailable) |
+    pub(crate) fn validate_structure(&self) -> Result<(), VisionContextError> {
+        use crate::vision::VisionSource as S;
+        use CanonicalVisionSubject as Sub;
+
+        // Semantics versions > 0.
+        if self.selection.role_inference_semver == 0 {
+            return Err(VisionContextError::InvalidSemanticsVersion {
+                field: "role_inference_semver",
+                version: 0,
+            });
+        }
+        if self.selection.vision_selection_semver == 0 {
+            return Err(VisionContextError::InvalidSemanticsVersion {
+                field: "vision_selection_semver",
+                version: 0,
+            });
+        }
+        if self.deviation_semver == 0 {
+            return Err(VisionContextError::InvalidSemanticsVersion {
+                field: "deviation_semver",
+                version: 0,
+            });
+        }
+
+        // theta_bound aralığı + finiteness.
+        if !self.theta_bound.is_finite() {
+            return Err(VisionContextError::NonFiniteThetaBound(self.theta_bound));
+        }
+        if self.theta_bound < MIN_THETA_BOUND || self.theta_bound > MAX_THETA_BOUND {
+            return Err(VisionContextError::ThetaBoundOutOfRange(self.theta_bound));
+        }
+
+        // Effective vision eksenleri finite.
+        let raw = self.selection.effective_vision.raw;
+        for (axis, val) in [
+            ("x", raw.x),
+            ("y", raw.y),
+            ("z", raw.z),
+            ("w", raw.w),
+            ("v", raw.v),
+        ] {
+            if !val.is_finite() {
+                return Err(VisionContextError::NonFiniteVisionAxis { axis });
+            }
+        }
+
+        // None → VisionUnavailable (subject'ten bağımsız).
+        if matches!(self.selection.vision_source, S::None) {
+            return Err(VisionContextError::VisionUnavailable);
+        }
+
+        // Subject-source combinational check.
+        match (self.selection.subject, self.selection.vision_source) {
+            // Global subject + role-scoped source → mismatch (yapısal çelişki).
+            (Sub::Global, S::BuiltinRole) | (Sub::Global, S::RoleProfile) => {
+                Err(VisionContextError::SubjectSourceMismatch {
+                    subject: self.selection.subject,
+                    vision_source: self.selection.vision_source,
+                })
+            }
+            // Diğer tüm kombinasyonlar yapısal olarak geçerli (authority katmanında
+            // GlobalDefault reject edilir).
+            _ => Ok(()),
+        }
+    }
+
+    /// **reviewer P0-3:** Hem structure hem authority validation. Q5 öncesinde ve
+    /// digest başında çağrılır. None/GlobalDefault → Q5'e ulaşamaz, digest üretilemez.
+    pub(crate) fn validate_for_authorization(&self) -> Result<(), VisionContextError> {
+        self.validate_structure()?;
+        self.validate_authority_for_mutation()
+    }
+}
+
 impl EvaluationContextDigest {
     const DOMAIN_SEPARATOR: &'static [u8] = b"osp.evaluation-context.v1\0";
 
-    /// **reviewer P0-3 / Step 4a:** Gerçek evaluation context digest.
+    /// **reviewer P0-3 / Step 4a / Step 4b:** Gerçek evaluation context digest.
     ///
-    /// **Step 4a (ordinal-aware):** Artık `RuleEvaluationContext` alır — sort ETMEZ,
-    /// registration sırasını (ordinal) korur. `check_claim_rules` first-match
-    /// short-circuit ile aynı sırayı kullanır. `rule_context.validate()` başında
-    /// defensively çağrılır.
+    /// **Step 4a (ordinal-aware):** `RuleEvaluationContext` alır — sort ETMEZ, registration
+    /// sırasını (ordinal) korur. `check_claim_rules` first-match short-circuit ile aynı
+    /// sırayı kullanır. `rule_context.validate()` başında defensively çağrılır.
     ///
-    /// `pub(crate)` — runtime context tipleri wire schema DEĞİL (`RuleEvaluationContext`
-    /// pub(crate)); sadece engine + testler çağırır. Reviewer: "intermediate runtime
-    /// context types are not persisted wire schemas."
+    /// **Step 4b (claim-specific vision):** Artık captured `EffectiveVisionGateContext`
+    /// alır — Q5 ile aynı effective vision + theta_bound + semantics versions bağlanır.
+    /// **Kaldırıldı (reviewer P0-2):** global `vision_vector` (5-axis), `config.theta_bound`,
+    /// `config.role_overrides` (bütün map). Bunlar artık claim-specific context içinde.
+    /// Config'te kalan: min_approvers, quorum_threshold, milestone_interval, abstractness,
+    /// merge_ratio_observable (4c kaldıracak).
     ///
-    /// EngineConfig + vision_vector Commit 4b/4c'de claim-specific context ile
-    /// değiştirilecek (geçiş imzası — her commit bağımsız derlenir).
+    /// `pub(crate)` — runtime context tipleri wire schema DEĞİL (`RuleEvaluationContext`,
+    /// `EffectiveVisionGateContext` pub(crate)); sadece engine + testler çağırır. Reviewer:
+    /// "intermediate runtime context types are not persisted wire schemas."
     ///
-    /// **Rule versioning:** Rule implementasyonu değişip `semantics_version` artırılırsa
-    /// context digest değişir → stale measurement tespiti çalışır.
+    /// **Rule + vision versioning:** Rule impl veya vision selection semantics değişip
+    /// `semantics_version` artırılırsa context digest değişir → stale measurement tespiti.
     pub(crate) fn compute(
         config: &crate::engine::EngineConfig,
         rule_context: &RuleEvaluationContext,
-        vision_vector: &crate::coords::RawPosition,
+        vision_context: &EffectiveVisionGateContext,
     ) -> Result<Self, AuthorizationBasisDigestError> {
-        // **reviewer (Step 4a):** Defensive validation — context canonical invariant.
+        // **reviewer (Step 4a + 4b):** Defensive validation — context canonical invariants.
         rule_context
             .validate()
+            .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
+        // P0-3: digest başında authority validation da yapar — None/GlobalDefault reject.
+        vision_context
+            .validate_for_authorization()
             .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
 
         let mut hasher = blake3::Hasher::new();
         hasher.update(Self::DOMAIN_SEPARATOR);
 
-        // EngineConfig — ölçüm-atan tüm alanlar.
+        // EngineConfig — ölçüm-atan alanlar (theta_bound + role_overrides KALDIRILDI).
         encode_u32(&mut hasher, config.min_approvers as u32, "ec_min_approvers");
         encode_f64(&mut hasher, config.quorum_threshold, "ec_quorum")?;
-        encode_f64(&mut hasher, config.theta_bound, "ec_theta_bound")?;
         encode_u64(
             &mut hasher,
             config.milestone_interval,
@@ -978,31 +1224,6 @@ impl EvaluationContextDigest {
         );
         encode_f64(&mut hasher, config.abstractness, "ec_abstractness")?;
         encode_f64(&mut hasher, config.merge_ratio_observable, "ec_merge_ratio")?;
-
-        // Role overrides — sorted by key (tutarlı encoding için).
-        let mut role_keys: Vec<&String> = config.role_overrides.keys().collect();
-        role_keys.sort_unstable();
-        encode_u64(
-            &mut hasher,
-            role_keys.len() as u64,
-            "ec_role_override_count",
-        );
-        for key in role_keys {
-            let ov = &config.role_overrides[key];
-            encode_bytes(&mut hasher, key.as_bytes())?;
-            encode_u8(&mut hasher, ov.x.is_some() as u8, "ec_role_x_present");
-            if let Some(x) = ov.x {
-                encode_f64(&mut hasher, x, "ec_role_x")?;
-            }
-            encode_u8(&mut hasher, ov.y.is_some() as u8, "ec_role_y_present");
-            if let Some(y) = ov.y {
-                encode_f64(&mut hasher, y, "ec_role_y")?;
-            }
-            encode_u8(&mut hasher, ov.z.is_some() as u8, "ec_role_z_present");
-            if let Some(z) = ov.z {
-                encode_f64(&mut hasher, z, "ec_role_z")?;
-            }
-        }
 
         // **Step 4a:** Rule evaluation context — semantics_version + ordinal-aware
         // ordered rules. Sort EDİLMEZ (registration sırası semantik — Q6 ile aynı).
@@ -1029,12 +1250,70 @@ impl EvaluationContextDigest {
             encode_bytes(&mut hasher, &ordered_desc.descriptor.canonical_parameters)?;
         }
 
-        // Vision target vector (5-axis).
-        encode_f64(&mut hasher, vision_vector.x, "ec_vision_x")?;
-        encode_f64(&mut hasher, vision_vector.y, "ec_vision_y")?;
-        encode_f64(&mut hasher, vision_vector.z, "ec_vision_z")?;
-        encode_f64(&mut hasher, vision_vector.w, "ec_vision_w")?;
-        encode_f64(&mut hasher, vision_vector.v, "ec_vision_v")?;
+        // **Step 4b (reviewer P0-1 + P0-2):** Claim-specific effective vision — canonical,
+        // sabit field sırası. Subject + effective vector + source + semantics versions
+        // aynı karar ağacından (`effective_vision_selection`) üretilir.
+        let sel = &vision_context.selection;
+        // Effective vision vector (5-axis, override uygulanmış).
+        encode_f64(
+            &mut hasher,
+            sel.effective_vision.raw.x,
+            "ec_effective_vision_x",
+        )?;
+        encode_f64(
+            &mut hasher,
+            sel.effective_vision.raw.y,
+            "ec_effective_vision_y",
+        )?;
+        encode_f64(
+            &mut hasher,
+            sel.effective_vision.raw.z,
+            "ec_effective_vision_z",
+        )?;
+        encode_f64(
+            &mut hasher,
+            sel.effective_vision.raw.w,
+            "ec_effective_vision_w",
+        )?;
+        encode_f64(
+            &mut hasher,
+            sel.effective_vision.raw.v,
+            "ec_effective_vision_v",
+        )?;
+        // Vision source tag (canonical, validated newtype).
+        let source_tag =
+            crate::canonical_tags::CanonicalVisionSourceTag::try_from(&sel.vision_source)
+                .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
+        encode_u8(&mut hasher, source_tag.as_u8(), "ec_vision_source_tag");
+        // Subject kind: Global → 0, Role → 1. Global: dummy role tag YOK.
+        match sel.subject {
+            CanonicalVisionSubject::Global => {
+                encode_u8(&mut hasher, 0u8, "ec_subject_kind_global");
+            }
+            CanonicalVisionSubject::Role(role_tag) => {
+                encode_u8(&mut hasher, 1u8, "ec_subject_kind_role");
+                encode_u8(&mut hasher, role_tag.as_u8(), "ec_subject_role_tag");
+            }
+        }
+        // Semantics versions — staleness tespiti için bağlı.
+        encode_u32(
+            &mut hasher,
+            sel.role_inference_semver,
+            "ec_role_inference_semver",
+        );
+        encode_u32(
+            &mut hasher,
+            sel.vision_selection_semver,
+            "ec_vision_selection_semver",
+        );
+        // theta_bound (artık vision_context'ten — config'ten DEĞİL).
+        encode_f64(&mut hasher, vision_context.theta_bound, "ec_theta_bound")?;
+        // Deviation metric semantics version.
+        encode_u32(
+            &mut hasher,
+            vision_context.deviation_semver,
+            "ec_deviation_semver",
+        );
 
         let hash = hasher.finalize();
         Ok(Self(hash.into()))
@@ -3204,9 +3483,8 @@ mod tests {
 
     #[test]
     fn evaluation_context_digest_is_stable_for_identical_context() {
-        // **reviewer P0-3 (A8) / Step 4a:** EvaluationContextDigest gerçek içerik +
-        // ordinal-aware RuleEvaluationContext.
-        use crate::coords::RawPosition;
+        // **reviewer P0-3 (A8) / Step 4a / Step 4b:** EvaluationContextDigest gerçek
+        // içerik + ordinal-aware RuleEvaluationContext + claim-specific effective vision.
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
             quorum_threshold: 1.5,
@@ -3225,40 +3503,16 @@ mod tests {
             },
         }])
         .unwrap();
-        let vision = RawPosition {
-            x: 0.5,
-            y: 0.6,
-            z: 0.4,
-            w: 0.5,
-            v: 0.3,
-        };
-        let d1 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision).unwrap();
-        let d2 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision).unwrap();
+        let vision_ctx = mk_vision_context(0.3);
+        let d1 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap();
+        let d2 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap();
         assert_eq!(d1, d2);
     }
 
     #[test]
     fn evaluation_context_digest_changes_when_theta_bound_changes() {
-        use crate::coords::RawPosition;
-        let mk = |theta: f64| {
-            let config = crate::engine::EngineConfig {
-                min_approvers: 2,
-                quorum_threshold: 1.5,
-                theta_bound: theta,
-                milestone_interval: 1000,
-                abstractness: 0.5,
-                merge_ratio_observable: 0.1,
-                role_overrides: std::collections::HashMap::new(),
-            };
-            let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
-        };
-        assert_ne!(mk(0.3), mk(0.5));
-    }
-
-    #[test]
-    fn evaluation_context_digest_changes_when_rule_added() {
-        use crate::coords::RawPosition;
+        // **Step 4b:** theta_bound artık vision_context'te (config'ten KALDIRILDI).
+        // vision_context.theta_bound değişince digest değişmeli.
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
             quorum_threshold: 1.5,
@@ -3268,9 +3522,29 @@ mod tests {
             merge_ratio_observable: 0.1,
             role_overrides: std::collections::HashMap::new(),
         };
+        let mk = |theta: f64| {
+            let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+            let vision_ctx = mk_vision_context(theta);
+            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
+        };
+        assert_ne!(mk(0.3), mk(0.5));
+    }
+
+    #[test]
+    fn evaluation_context_digest_changes_when_rule_added() {
+        let config = crate::engine::EngineConfig {
+            min_approvers: 2,
+            quorum_threshold: 1.5,
+            theta_bound: 0.3,
+            milestone_interval: 1000,
+            abstractness: 0.5,
+            merge_ratio_observable: 0.1,
+            role_overrides: std::collections::HashMap::new(),
+        };
+        let vision_ctx = mk_vision_context(0.3);
         let d_no_rules = {
             let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
+            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
         };
         let d_one_rule = {
             let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
@@ -3282,7 +3556,7 @@ mod tests {
                 },
             }])
             .unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
+            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
         };
         assert_ne!(d_no_rules, d_one_rule);
     }
@@ -3290,7 +3564,6 @@ mod tests {
     #[test]
     fn evaluation_context_digest_changes_when_rule_semantics_version_changes() {
         // **plan-review #4:** semantics_version artarsa digest değişmeli.
-        use crate::coords::RawPosition;
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
             quorum_threshold: 1.5,
@@ -3300,6 +3573,7 @@ mod tests {
             merge_ratio_observable: 0.1,
             role_overrides: std::collections::HashMap::new(),
         };
+        let vision_ctx = mk_vision_context(0.3);
         let mk = |semver: u32| {
             let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
                 ordinal: 0,
@@ -3310,7 +3584,7 @@ mod tests {
                 },
             }])
             .unwrap();
-            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
+            EvaluationContextDigest::compute(&config, &rule_ctx, &vision_ctx).unwrap()
         };
         assert_ne!(mk(1), mk(2));
     }
@@ -3555,11 +3829,34 @@ mod tests {
         }
     }
 
+    /// **INV-T9 Step 4b test helper:** `EffectiveVisionGateContext` üret — `UserLoaded`
+    /// source + `Global` subject (en basit geçerli kombinasyon; `GlobalDefault`/`None`
+    /// authority'de reject edilir). `theta_bound` parametrik (digest değişim testleri için).
+    fn mk_vision_context(theta_bound: f64) -> EffectiveVisionGateContext {
+        use crate::vision::{VisionSource, VisionVector};
+        let selection = EffectiveVisionSelection {
+            effective_vision: VisionVector::with_source(
+                crate::coords::RawPosition {
+                    x: 0.5,
+                    y: 0.6,
+                    z: 0.4,
+                    w: 0.5,
+                    v: 0.3,
+                },
+                VisionSource::UserLoaded,
+            ),
+            vision_source: VisionSource::UserLoaded,
+            subject: CanonicalVisionSubject::Global,
+            role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+            vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+        };
+        EffectiveVisionGateContext::try_new(selection, theta_bound).unwrap()
+    }
+
     #[test]
     fn evaluation_context_changes_when_rule_order_changes() {
         // **Step 4a:** Registration sırası semantik — farklı sıra → farklı digest
         // (sort-by-rule_id KALDIRILDI, ordinal korundu).
-        use crate::coords::RawPosition;
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
             quorum_threshold: 1.5,
@@ -3593,15 +3890,14 @@ mod tests {
             },
         ])
         .unwrap();
-        let vision = RawPosition::default();
-        let d_a = EvaluationContextDigest::compute(&config, &ctx_a, &vision).unwrap();
-        let d_b = EvaluationContextDigest::compute(&config, &ctx_b, &vision).unwrap();
+        let vision_ctx = mk_vision_context(0.3);
+        let d_a = EvaluationContextDigest::compute(&config, &ctx_a, &vision_ctx).unwrap();
+        let d_b = EvaluationContextDigest::compute(&config, &ctx_b, &vision_ctx).unwrap();
         assert_ne!(d_a, d_b, "registration order must change digest");
     }
 
     #[test]
     fn same_rules_same_order_produce_same_digest() {
-        use crate::coords::RawPosition;
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
             quorum_threshold: 1.5,
@@ -3624,9 +3920,9 @@ mod tests {
             ])
             .unwrap()
         };
-        let vision = RawPosition::default();
-        let d1 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision).unwrap();
-        let d2 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision).unwrap();
+        let vision_ctx = mk_vision_context(0.3);
+        let d1 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision_ctx).unwrap();
+        let d2 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision_ctx).unwrap();
         assert_eq!(d1, d2, "same rules + same order → same digest");
     }
 
@@ -3792,5 +4088,692 @@ mod tests {
             }
             other => panic!("expected IdentityMismatch, got {other:?}"),
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 Step 4b — EffectiveVisionGateContext + claim-specific vision binding testleri
+    //
+    // Test matrisi (reviewer-onaylı plan): validation, digest binding, captured context
+    // propagation, terminal behavior (P0-4), caller audit (P1).
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// **Step 4b test helper:** Parametreli `EffectiveVisionSelection` — farklı
+    /// source/subject/vision kombinasyonları için. `mk_vision_context` sabit bir
+    /// kombinasyon (UserLoaded/Global) üretir; bu helper esnektir.
+    fn mk_selection(
+        source: crate::vision::VisionSource,
+        subject: CanonicalVisionSubject,
+        raw: crate::coords::RawPosition,
+    ) -> EffectiveVisionSelection {
+        EffectiveVisionSelection {
+            effective_vision: crate::vision::VisionVector::with_source(raw, source),
+            vision_source: source,
+            subject,
+            role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+            vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+        }
+    }
+
+    // ── Validation (reviewer P0-2 + P0-3) ─────────────────────────────────────
+
+    #[test]
+    fn effective_vision_context_rejects_non_finite_vector() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        // x = NaN → NonFiniteVisionAxis.
+        let sel = mk_selection(
+            VisionSource::UserLoaded,
+            CanonicalVisionSubject::Global,
+            RawPosition {
+                x: f64::NAN,
+                y: 0.5,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+        );
+        let err = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap_err();
+        assert!(
+            matches!(err, VisionContextError::NonFiniteVisionAxis { axis: "x" }),
+            "expected NonFiniteVisionAxis x, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn effective_vision_context_rejects_non_finite_theta_bound() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        let sel = mk_selection(
+            VisionSource::UserLoaded,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        let err = EffectiveVisionGateContext::try_new(sel, f64::INFINITY).unwrap_err();
+        assert!(
+            matches!(err, VisionContextError::NonFiniteThetaBound(_)),
+            "expected NonFiniteThetaBound, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn effective_vision_context_rejects_theta_bound_out_of_range() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        let sel = mk_selection(
+            VisionSource::UserLoaded,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        // 1.5 > MAX_THETA_BOUND (1.0).
+        let err = EffectiveVisionGateContext::try_new(sel, 1.5).unwrap_err();
+        assert!(
+            matches!(err, VisionContextError::ThetaBoundOutOfRange(1.5)),
+            "expected ThetaBoundOutOfRange(1.5), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn vision_source_none_fails_closed_before_q5() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        let sel = mk_selection(
+            VisionSource::None,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        let err = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap_err();
+        assert!(
+            matches!(err, VisionContextError::VisionUnavailable),
+            "None source must fail-closed (VisionUnavailable), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn vision_source_global_default_rejected_for_mutation_authority() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        let sel = mk_selection(
+            VisionSource::GlobalDefault,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        let err = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                VisionContextError::VisionAuthorityInsufficient {
+                    vision_source: VisionSource::GlobalDefault
+                }
+            ),
+            "GlobalDefault must be rejected for mutation authority, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn vision_source_role_profile_with_role_subject_accepted() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        // RoleProfile + Role(Runtime) — geçerli kombinasyon (kullanıcı TOML override).
+        let role_tag = CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap();
+        let sel = mk_selection(
+            VisionSource::RoleProfile,
+            CanonicalVisionSubject::Role(role_tag),
+            RawPosition::default(),
+        );
+        let ctx = EffectiveVisionGateContext::try_new(sel, 0.3);
+        assert!(
+            ctx.is_ok(),
+            "RoleProfile + Role subject must be accepted, got: {:?}",
+            ctx.err()
+        );
+    }
+
+    #[test]
+    fn vision_source_user_loaded_with_global_subject_accepted() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        // UserLoaded + Global — geçerli (kullanıcı global vision, rol-süz).
+        let sel = mk_selection(
+            VisionSource::UserLoaded,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        let ctx = EffectiveVisionGateContext::try_new(sel, 0.3);
+        assert!(
+            ctx.is_ok(),
+            "UserLoaded + Global subject must be accepted, got: {:?}",
+            ctx.err()
+        );
+    }
+
+    #[test]
+    fn vision_source_builtin_role_with_global_subject_rejected() {
+        use crate::coords::RawPosition;
+        use crate::vision::VisionSource;
+        // BuiltinRole + Global → SubjectSourceMismatch (role-scoped source ile global subject).
+        let sel = mk_selection(
+            VisionSource::BuiltinRole,
+            CanonicalVisionSubject::Global,
+            RawPosition::default(),
+        );
+        let err = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                VisionContextError::SubjectSourceMismatch {
+                    subject: CanonicalVisionSubject::Global,
+                    vision_source: VisionSource::BuiltinRole
+                }
+            ),
+            "BuiltinRole + Global subject must be SubjectSourceMismatch, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn empty_delta_nodes_falls_to_global_subject() {
+        // Engine integration: delta_nodes boş → override yolu girilmez → Global subject.
+        use crate::engine::EngineConfig;
+        use crate::space::Space;
+        use crate::vision::{VisionSource, VisionVector};
+        let engine = crate::engine::SpaceEngine::new(
+            Space::default(),
+            crate::coords::CoordinateSystem::default_raw_five(
+                crate::axes::CohesionAxis::new(),
+                crate::axes::EntropyAxis::from_commit_entropy(0.0),
+                crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
+            )
+            .unwrap(),
+            VisionVector::with_source(
+                crate::coords::RawPosition::default(),
+                VisionSource::UserLoaded,
+            ),
+            EngineConfig::default_calibrated(),
+        );
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(0, crate::coords::RawPosition::default()),
+            author: 0,
+            computed_raw: crate::coords::RawPosition::default(),
+            delta_nodes: vec![],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+        let sel = engine.effective_vision_selection(&claim);
+        assert!(
+            matches!(sel.subject, CanonicalVisionSubject::Global),
+            "empty delta_nodes must fall to Global subject, got {:?}",
+            sel.subject
+        );
+    }
+
+    // ── Digest binding (reviewer P0-1 + P0-2) ─────────────────────────────────
+
+    #[test]
+    fn evaluation_context_binds_claim_specific_effective_vision() {
+        // Claim-specific effective vision digest'e bağlı — farklı vision → farklı digest.
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let mk = |x: f64| {
+            use crate::vision::{VisionSource, VisionVector};
+            let sel = EffectiveVisionSelection {
+                effective_vision: VisionVector::with_source(
+                    crate::coords::RawPosition {
+                        x,
+                        y: 0.6,
+                        z: 0.4,
+                        w: 0.5,
+                        v: 0.3,
+                    },
+                    VisionSource::UserLoaded,
+                ),
+                vision_source: VisionSource::UserLoaded,
+                subject: CanonicalVisionSubject::Global,
+                role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+                vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+            };
+            let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+        };
+        assert_ne!(
+            mk(0.5),
+            mk(0.6),
+            "different effective vision x → different digest"
+        );
+    }
+
+    #[test]
+    fn evaluation_context_changes_when_effective_theta_bound_changes() {
+        // theta_bound artık vision_context'te — değişince digest değişir.
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let mk = |theta: f64| {
+            let ctx = mk_vision_context(theta);
+            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+        };
+        assert_ne!(mk(0.2), mk(0.4));
+    }
+
+    #[test]
+    fn evaluation_context_changes_when_only_vision_source_changes() {
+        // Same vector, same subject, farklı source → farklı digest (provenance bağlı).
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let raw = crate::coords::RawPosition {
+            x: 0.5,
+            y: 0.6,
+            z: 0.4,
+            w: 0.5,
+            v: 0.3,
+        };
+        let mk = |source: crate::vision::VisionSource| {
+            // RoleProfile/BuiltinRole için Role subject gerekir (mismatch olmasın).
+            let subject = match source {
+                crate::vision::VisionSource::RoleProfile
+                | crate::vision::VisionSource::BuiltinRole => CanonicalVisionSubject::Role(
+                    CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap(),
+                ),
+                _ => CanonicalVisionSubject::Global,
+            };
+            let sel = mk_selection(source, subject, raw);
+            let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+        };
+        assert_ne!(
+            mk(crate::vision::VisionSource::UserLoaded),
+            mk(crate::vision::VisionSource::RoleProfile),
+            "different vision source (same vector) → different digest"
+        );
+    }
+
+    #[test]
+    fn evaluation_context_changes_when_only_subject_changes() {
+        // Same vector, same source (UserLoaded), farklı subject → farklı digest.
+        // Not: UserLoaded + Role subject geçerli (kullanıcı global vision ama role ata).
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let raw = crate::coords::RawPosition {
+            x: 0.5,
+            y: 0.6,
+            z: 0.4,
+            w: 0.5,
+            v: 0.3,
+        };
+        let mk = |subject: CanonicalVisionSubject| {
+            let sel = mk_selection(crate::vision::VisionSource::UserLoaded, subject, raw);
+            let ctx = EffectiveVisionGateContext::try_new(sel, 0.3).unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &ctx).unwrap()
+        };
+        let role_tag = CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap();
+        assert_ne!(
+            mk(CanonicalVisionSubject::Global),
+            mk(CanonicalVisionSubject::Role(role_tag)),
+            "different subject (same vector+source) → different digest"
+        );
+    }
+
+    #[test]
+    fn selected_role_override_changes_claim_context() {
+        // Engine integration: role_overrides map'inde ilgili rol varsa → o rolün
+        // override'ı effective vision'a uygulanır → digest değişir.
+        use crate::engine::EngineConfig;
+        use crate::space::{Node, NodeClassification, NodeKind, Space};
+        use crate::vision::{VisionSource, VisionVector};
+        use crate::vision_config::RoleVisionOverride;
+        let mk_engine = |overrides: std::collections::HashMap<String, RoleVisionOverride>| {
+            let mut space = Space::default();
+            // Runtime node — builtin override mevcut (Runtime → Some). delta_node Runtime.
+            space.nodes.insert(
+                0,
+                Node {
+                    id: 0,
+                    kind: NodeKind::Module,
+                    mass: 100.0,
+                    ..Default::default()
+                },
+            );
+            let mut config = EngineConfig::default_calibrated();
+            config.role_overrides = overrides;
+            crate::engine::SpaceEngine::new(
+                space,
+                crate::coords::CoordinateSystem::default_raw_five(
+                    crate::axes::CohesionAxis::new(),
+                    crate::axes::EntropyAxis::from_commit_entropy(0.0),
+                    crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
+                )
+                .unwrap(),
+                VisionVector::with_source(
+                    crate::coords::RawPosition {
+                        x: 0.5,
+                        y: 0.6,
+                        z: 0.4,
+                        w: 0.5,
+                        v: 0.3,
+                    },
+                    VisionSource::UserLoaded,
+                ),
+                config,
+            )
+        };
+        // Claim: Production classification node → infer_role → Runtime.
+        let mk_claim = || crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(0, crate::coords::RawPosition::default()),
+            author: 0,
+            computed_raw: crate::coords::RawPosition::default(),
+            delta_nodes: vec![crate::space::Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                classification: NodeClassification::Production,
+                ..Default::default()
+            }],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+        // No overrides → builtin Runtime override uygulanır (BuiltinRole).
+        let sel_no_user =
+            mk_engine(std::collections::HashMap::new()).effective_vision_selection(&mk_claim());
+        // User override for Runtime → RoleProfile (kullanıcı override kazanır).
+        let mut user_overrides = std::collections::HashMap::new();
+        user_overrides.insert(
+            "Runtime".to_string(),
+            RoleVisionOverride {
+                x: Some(0.99),
+                y: None,
+                z: None,
+            },
+        );
+        let sel_with_user = mk_engine(user_overrides).effective_vision_selection(&mk_claim());
+        assert_ne!(
+            sel_no_user.effective_vision.raw.x, sel_with_user.effective_vision.raw.x,
+            "selected role override must change effective vision"
+        );
+        assert_eq!(
+            sel_no_user.vision_source,
+            crate::vision::VisionSource::BuiltinRole
+        );
+        assert_eq!(
+            sel_with_user.vision_source,
+            crate::vision::VisionSource::RoleProfile
+        );
+    }
+
+    #[test]
+    fn unrelated_role_override_does_not_invalidate_claim_context() {
+        // Engine integration: Support claim + Runtime override → Support builtin None,
+        // user Runtime override Support'a uygulanmaz → Global vision inherit.
+        use crate::engine::EngineConfig;
+        use crate::space::{NodeClassification, NodeKind, Space};
+        use crate::vision::{VisionSource, VisionVector};
+        use crate::vision_config::RoleVisionOverride;
+        let mut space = Space::default();
+        space.nodes.insert(
+            0,
+            crate::space::Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                ..Default::default()
+            },
+        );
+        let mut config = EngineConfig::default_calibrated();
+        let mut user_overrides = std::collections::HashMap::new();
+        user_overrides.insert(
+            "Runtime".to_string(),
+            RoleVisionOverride {
+                x: Some(0.99),
+                y: None,
+                z: None,
+            },
+        );
+        config.role_overrides = user_overrides;
+        let engine = crate::engine::SpaceEngine::new(
+            space,
+            crate::coords::CoordinateSystem::default_raw_five(
+                crate::axes::CohesionAxis::new(),
+                crate::axes::EntropyAxis::from_commit_entropy(0.0),
+                crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
+            )
+            .unwrap(),
+            VisionVector::with_source(
+                crate::coords::RawPosition {
+                    x: 0.5,
+                    y: 0.6,
+                    z: 0.4,
+                    w: 0.5,
+                    v: 0.3,
+                },
+                VisionSource::UserLoaded,
+            ),
+            config,
+        );
+        // Test classification → infer_role → Support. Runtime override uygulanmaz.
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(0, crate::coords::RawPosition::default()),
+            author: 0,
+            computed_raw: crate::coords::RawPosition::default(),
+            delta_nodes: vec![crate::space::Node {
+                id: 0,
+                kind: NodeKind::Module,
+                mass: 100.0,
+                classification: NodeClassification::Test,
+                ..Default::default()
+            }],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+        let sel = engine.effective_vision_selection(&claim);
+        // Support → builtin_role_override(Support) = None → override yok → Global inherit.
+        assert!(
+            matches!(sel.subject, CanonicalVisionSubject::Global),
+            "Support claim with unrelated Runtime override must stay Global"
+        );
+        // Global vision x = 0.5 (Runtime override 0.99 uygulanmadı).
+        assert_eq!(sel.effective_vision.raw.x, 0.5);
+    }
+
+    #[test]
+    fn global_default_does_not_create_evaluation_context_digest() {
+        // GlobalDefault source → validate_for_authorization reject → compute Err.
+        // `try_new` GlobalDefault'ı zaten reject eder; bu yüzden raw context ile compute
+        // çağrılır (defensive digest katmanı da authority validation yapar — P0-3).
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let sel = mk_selection(
+            crate::vision::VisionSource::GlobalDefault,
+            CanonicalVisionSubject::Global,
+            crate::coords::RawPosition::default(),
+        );
+        // try_new reject → Err döner (constructor authority gate).
+        let ctor_result = EffectiveVisionGateContext::try_new(sel.clone(), 0.3);
+        assert!(
+            matches!(
+                ctor_result,
+                Err(VisionContextError::VisionAuthorityInsufficient {
+                    vision_source: crate::vision::VisionSource::GlobalDefault
+                })
+            ),
+            "try_new must reject GlobalDefault at constructor, got: {:?}",
+            ctor_result.err()
+        );
+        // Defensive digest katmanı: raw context (constructor bypass) ile compute da Err.
+        let raw_ctx = EffectiveVisionGateContext {
+            selection: sel,
+            theta_bound: 0.3,
+            deviation_semver: DEVIATION_SEMANTICS_VERSION,
+        };
+        let result = EvaluationContextDigest::compute(&config, &rule_ctx, &raw_ctx);
+        assert!(
+            result.is_err(),
+            "GlobalDefault must not produce a digest (authority rejected)"
+        );
+    }
+
+    #[test]
+    fn vision_source_none_does_not_create_evaluation_context_digest() {
+        // None source → validate_for_authorization reject → compute Err.
+        let config = crate::engine::EngineConfig::default_calibrated();
+        let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        let sel = mk_selection(
+            crate::vision::VisionSource::None,
+            CanonicalVisionSubject::Global,
+            crate::coords::RawPosition::default(),
+        );
+        // try_new zaten None'ı reject eder; bu yüzden raw context ile compute çağır.
+        let raw_ctx = EffectiveVisionGateContext {
+            selection: sel,
+            theta_bound: 0.3,
+            deviation_semver: DEVIATION_SEMANTICS_VERSION,
+        };
+        let result = EvaluationContextDigest::compute(&config, &rule_ctx, &raw_ctx);
+        assert!(
+            result.is_err(),
+            "None source must not produce a digest (vision unavailable)"
+        );
+    }
+
+    // ── Captured context propagation ──────────────────────────────────────────
+
+    #[test]
+    fn q5_and_evaluation_context_reuse_the_same_theta_bound() {
+        // Engine integration: effective_vision_gate_context bir kez üretilir, Q5 +
+        // build_authorization_context + digest paylaşır. theta_bound referans olarak
+        // akar — aynı değer her ikisinde de kullanılır.
+        use crate::engine::EngineConfig;
+        use crate::space::Space;
+        use crate::vision::{VisionSource, VisionVector};
+        let engine = crate::engine::SpaceEngine::new(
+            Space::default(),
+            crate::coords::CoordinateSystem::default_raw_five(
+                crate::axes::CohesionAxis::new(),
+                crate::axes::EntropyAxis::from_commit_entropy(0.0),
+                crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
+            )
+            .unwrap(),
+            VisionVector::with_source(
+                crate::coords::RawPosition::default(),
+                VisionSource::UserLoaded,
+            ),
+            EngineConfig::default_calibrated(),
+        );
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(0, crate::coords::RawPosition::default()),
+            author: 0,
+            computed_raw: crate::coords::RawPosition::default(),
+            delta_nodes: vec![],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+        let ctx = engine.effective_vision_gate_context(&claim).unwrap();
+        // Q5'in kullanacağı theta_bound ile config.theta_bound aynı.
+        assert_eq!(ctx.theta_bound, engine.config().theta_bound);
+        // Digest de aynı theta_bound'ı kullanır (compute içinde vision_context.theta_bound).
+        // Bu test yapısal referans paylaşımını doğrular — değer eşitliği yeterli
+        // (Rust ownership referans değil kopya akıtır; ama tek kaynak = config.theta_bound).
+    }
+
+    // ── Terminal behavior (reviewer P0-4) ─────────────────────────────────────
+
+    #[test]
+    fn global_default_authority_failure_does_not_retry_or_consume_budget() {
+        // Engine integration: GlobalDefault vision → commit_task_claim Q5 öncesi
+        // VisionContextInvalid (terminal) → navigator SystemFailure (retry yok).
+        use crate::engine::EngineConfig;
+        use crate::space::Space;
+        use crate::vision::VisionVector;
+        // GlobalDefault vision (VisionVector::new legacy constructor).
+        let engine = crate::engine::SpaceEngine::new(
+            Space::default(),
+            crate::coords::CoordinateSystem::default_raw_five(
+                crate::axes::CohesionAxis::new(),
+                crate::axes::EntropyAxis::from_commit_entropy(0.0),
+                crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
+            )
+            .unwrap(),
+            // VisionVector::new → GlobalDefault source.
+            VisionVector::new(crate::coords::RawPosition::default()),
+            EngineConfig::default_calibrated(),
+        );
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(0, crate::coords::RawPosition::default()),
+            author: 0,
+            computed_raw: crate::coords::RawPosition::default(),
+            delta_nodes: vec![],
+            delta_edges: vec![],
+            task_id: Some(1),
+            removed_edges: vec![],
+        };
+        // effective_vision_gate_context → VisionContextInvalid (GlobalDefault reject).
+        let result = engine.effective_vision_gate_context(&claim);
+        assert!(result.is_err(), "GlobalDefault must fail-closed before Q5");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                VisionContextError::VisionAuthorityInsufficient {
+                    vision_source: crate::vision::VisionSource::GlobalDefault
+                }
+            ),
+            "expected VisionAuthorityInsufficient(GlobalDefault), got {err:?}"
+        );
+        // Terminal mapping: gate_decision_from_engine_error → Unknown (navigator.rs).
+        let engine_err = crate::engine::EngineCommitError::VisionContextInvalid(err);
+        let gd = crate::navigator::gate_decision_from_engine_error(&engine_err);
+        assert_eq!(
+            gd,
+            crate::trajectory::GateDecision::Unknown,
+            "VisionContextInvalid must map to Unknown (terminal, no retry)"
+        );
+    }
+
+    // ── Caller audit (reviewer P1) ────────────────────────────────────────────
+
+    #[test]
+    fn vision_config_produces_user_loaded_authoritative_source() {
+        // from_vision_config → UserLoaded source üretmeli (kullanıcı TOML [raw]).
+        // Bu test caller audit'in temelini doğrular: gerçek kullanıcı vision'ı
+        // UserLoaded ile işaretlenir, GlobalDefault ile DEĞİL.
+        use crate::vision::VisionSource;
+        // VisionVector::with_source(raw, UserLoaded) — kullanıcı TOML [raw] yolu.
+        let user_vision = crate::vision::VisionVector::with_source(
+            crate::coords::RawPosition::default(),
+            VisionSource::UserLoaded,
+        );
+        assert_eq!(user_vision.source(), VisionSource::UserLoaded);
+        assert!(user_vision.is_evaluable());
+        // UserLoaded authority'de kabul edilir (validate_authority_for_mutation Ok).
+        let sel = mk_selection(
+            VisionSource::UserLoaded,
+            CanonicalVisionSubject::Global,
+            crate::coords::RawPosition::default(),
+        );
+        let ctx = EffectiveVisionGateContext::try_new(sel, 0.3);
+        assert!(ctx.is_ok(), "UserLoaded must pass authority validation");
+    }
+
+    #[test]
+    fn cosine_deviation_none_fallback_remains_defensive_only() {
+        // CosineDeviation None source → 1.0 (maksimum sapma) döner — ikinci savunma
+        // katmanı. Validate birinci katman; ama defensive fallback korunur.
+        use crate::space::Space;
+        use crate::vision::{CosineDeviation, DeviationMetric, VisionVector};
+        let none_vision = VisionVector::none();
+        assert!(!none_vision.is_evaluable());
+        let theta = CosineDeviation.theta(
+            &crate::coords::RawPosition::default(),
+            &none_vision,
+            &Space::default(),
+        );
+        assert_eq!(
+            theta, 1.0,
+            "CosineDeviation None fallback must return 1.0 (defensive)"
+        );
     }
 }

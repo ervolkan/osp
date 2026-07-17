@@ -247,6 +247,12 @@ pub enum EngineCommitError {
     /// Sıfır digest'e düşüş YOK. Navigator SystemFailure'a map'ler.
     #[error("authorization context construction failed (fail-closed): {0}")]
     AuthorizationContextFailed(String),
+    /// **INV-T9 Step 4b (reviewer P0-4):** Effective vision context validation failure —
+    /// terminal. None/GlobalDefault/mismatch/non-finite/out-of-range → Q5'e ulaşılamaz,
+    /// digest üretilemez. Maneuver budget tüketmez, yeni LLM attempt başlatmaz,
+    /// witness'a ulaşmaz. Navigator `GateDecision::Unknown`'a map'ler.
+    #[error("vision context invalid (terminal — fail-closed): {0}")]
+    VisionContextInvalid(#[from] crate::authorization::VisionContextError),
 }
 
 /// **INV-T9** — `commit_task_claim` expected domain outcome (HATA DEĞİL).
@@ -426,7 +432,12 @@ impl SpaceEngine {
     ) -> Result<CommitOutcome, EngineCommitError> {
         // Phase 0: CLAIM-BASED GATES (Q4-Q6 — deterministik, witness öncesi)
         self.check_claim_syntax(claim)?;
-        self.check_claim_vision(claim)?;
+        // **Step 4b:** Captured vision context — Q5 + (digest üretmez ama) aynı
+        // validation pattern. Legacy commit() digest üretmez; standalone yol.
+        let vision_context = self
+            .effective_vision_gate_context(claim)
+            .map_err(EngineCommitError::VisionContextInvalid)?;
+        self.check_claim_vision_with_context(claim, &vision_context)?;
         // **Step 4a:** Q6 ordinal-aware rule context (standalone commit — authorization
         // digest üretmez ama rule evaluation yine de context snapshot'ı kullanır).
         let rule_context = self
@@ -542,7 +553,13 @@ impl SpaceEngine {
         };
 
         // Phase 0c: Q5 Vision (θ bound — negatif-uzay safety).
-        self.check_claim_vision(input.claim)?;
+        // **Step 4b:** Captured `EffectiveVisionGateContext` — bir kez üretilir, Q5 +
+        // build_authorization_context + digest paylaşır (4a rule_context pattern).
+        // None/GlobalDefault/mismatch/non-finite → terminal VisionContextInvalid (P0-4).
+        let vision_context = self
+            .effective_vision_gate_context(input.claim)
+            .map_err(EngineCommitError::VisionContextInvalid)?;
+        self.check_claim_vision_with_context(input.claim, &vision_context)?;
 
         // Phase 0d: Q5.b PredicateGate (soft gate — task completion + policy).
         let gate_out = PredicateGate.evaluate(PredicateGateInput {
@@ -587,6 +604,7 @@ impl SpaceEngine {
         // bütün deterministik gate'ler (Q4/Q5/Q5.b/Q6) geçtikten sonra, witness
         // (`time.advance`) çağrısından hemen önce. Satisfied/Held/Rejected aynı context'i
         // kullanır. witness_requirement gerçek `input.omega`'dan (engine config DEĞİL).
+        // **Step 4b:** Captured `vision_context` paylaşılır — Q5 ile aynı effective vision.
         let authorization = self
             .build_authorization_context(
                 &outcome,
@@ -596,6 +614,7 @@ impl SpaceEngine {
                 loss_after,
                 &gate_out.improvement_policy,
                 &rule_context,
+                &vision_context,
                 input.omega,
             )
             .map_err(EngineCommitError::AuthorizationContextFailed)?;
@@ -643,6 +662,9 @@ impl SpaceEngine {
     ///
     /// **plan-review #1:** `witness_requirement` ve `basis.witness_policy` gerçek
     /// `input.omega`'dan türetilir (engine config DEĞİL).
+    ///
+    /// **Step 4b:** Captured `vision_context` paylaşılır — Q5 ile aynı effective vision
+    /// digest'a bağlanır. Yeniden vision infer YOK (drift risk kapalı).
     #[allow(clippy::too_many_arguments)]
     fn build_authorization_context(
         &self,
@@ -653,6 +675,7 @@ impl SpaceEngine {
         loss_after: f64,
         improvement_policy: &crate::authorization::EffectiveImprovementPolicy,
         rule_context: &crate::authorization::RuleEvaluationContext,
+        vision_context: &crate::authorization::EffectiveVisionGateContext,
         omega: &crate::witness::WitnessSet,
     ) -> Result<crate::authorization::AuthorizationContext, String> {
         use crate::authorization::{
@@ -793,14 +816,14 @@ impl SpaceEngine {
         let measurement_input_digest =
             MeasurementInputDigest::compute(&measurement_input).map_err(|e| e.to_string())?;
 
-        // **reviewer (Step 4a closure):** Evaluation context digest — captured
-        // `rule_context` kullanır (commit_task_claim'in ürettiği snapshot). Yeniden
-        // `current_evaluation_context_digest()` çağrısı YOK — Q6 ve digest aynı captured
-        // context'ten türetilir (drift risk kapalı).
+        // **reviewer (Step 4a + 4b closure):** Evaluation context digest — captured
+        // `rule_context` + `vision_context` kullanır (commit_task_claim'in ürettiği
+        // snapshot'lar). Yeniden `current_evaluation_context_digest()` çağrısı YOK —
+        // Q5/Q6 ve digest aynı captured context'lerden türetilir (drift risk kapalı).
         let evaluation_context_digest = crate::authorization::EvaluationContextDigest::compute(
             &self.config,
             rule_context,
-            &self.vision.raw,
+            vision_context,
         )
         .map_err(|e| e.to_string())?;
         let base_space_view_revision = self.current_space_view_revision()?;
@@ -919,15 +942,23 @@ impl SpaceEngine {
     /// vector seçilir (override varsa). Örn: bir TypeSurface node'u için coupling
     /// düşük beklenir — global vision'a göre fail etmemeli. Rol, claim'in ilk
     /// delta_node'unun classification'ından çıkarılır (çoğu claim tek node ekler).
-    fn check_claim_vision(&self, claim: &Claim) -> Result<(), EngineCommitError> {
-        // Role-aware vision: claim'in node'undan rol çıkar, override uygula.
-        let vision = self.vision_for_claim(claim);
+    ///
+    /// **INV-T9 Step 4b (reviewer P0-1):** Artık captured `EffectiveVisionGateContext`
+    /// kullanır — `effective_vision_gate_context(claim)` bir kez üretilir, Q5 + digest
+    /// paylaşır. `vision_for_claim` wrapper'ı legacy/test yüzeylerinde kalır.
+    fn check_claim_vision_with_context(
+        &self,
+        claim: &Claim,
+        vision_context: &crate::authorization::EffectiveVisionGateContext,
+    ) -> Result<(), EngineCommitError> {
+        // Effective vision captured context'ten — yeniden infer YOK.
+        let vision = vision_context.selection.effective_vision;
         let theta = CosineDeviation.theta(&claim.computed_raw, &vision, &self.space);
-        if theta > self.config.theta_bound {
+        if theta > vision_context.theta_bound {
             tracing::warn!(
                 claim_id = claim.id,
                 theta,
-                bound = self.config.theta_bound,
+                bound = vision_context.theta_bound,
                 "Q5 vision violation — claim rejected (negatif-uzay)"
             );
             return Err(EngineCommitError::VisionViolation {
@@ -936,24 +967,39 @@ impl SpaceEngine {
                     theta,
                     raw: claim.computed_raw,
                 },
-                bound: self.config.theta_bound,
+                bound: vision_context.theta_bound,
             });
         }
         Ok(())
     }
 
-    /// Claim'in temsil ettiği node'un rolüne göre vision vector seç.
-    /// Override (kullanıcı TOML) yoksa builtin sensible-default kullanılır.
+    /// **INV-T9 Step 4b (reviewer P0-1):** Tek karar ağacı — role inference + vision
+    /// selection AYNI fonksiyonda. Subject + effective vector + source birlikte üretilir.
     ///
-    /// **Provenance (#2):** Dönen `VisionVector`'un `source` alanı, vision'ın
-    /// nereden geldiğini belirtir — UI "Vision: not loaded" çelişkisini çözer:
-    ///   - kullanıcı TOML `[role_overrides.<Role>]` → `RoleProfile`
-    ///   - `builtin_role_override` (hardcoded) → `BuiltinRole`
-    ///   - engine global vision (`self.vision`) → `self.vision.source()` inherit
-    fn vision_for_claim(&self, claim: &Claim) -> VisionVector {
+    /// Cascade (korundu — 3-tier):
+    /// 1. İlk `delta_node` varsa → `infer_role("", classification, None)` ile rol çıkar
+    ///    (engine path bilmez; yalnız classification). Sonra:
+    ///    a. Kullanıcı TOML override (`role_overrides[Role]`) → `RoleProfile`
+    ///    b. `builtin_role_override` (hardcoded) → `BuiltinRole`
+    ///    → Subject `Role(role)`, vision override uygulanmış.
+    /// 2. Override yoksa (delta_node yok, veya override bulunamadı) → engine global
+    ///    vision'ı (`self.vision`) inherit et. Subject `Global`, source inherit edilir.
+    ///
+    /// **Alan adı:** `subject` (`inferred_role` DEĞİL — global bir inferred role değildir).
+    /// Semantics version'lar (`ROLE_INFERENCE_SEMANTICS_VERSION`,
+    /// `VISION_SELECTION_SEMANTICS_VERSION`) digest'e bağlı — staleness tespiti.
+    pub(crate) fn effective_vision_selection(
+        &self,
+        claim: &Claim,
+    ) -> crate::authorization::EffectiveVisionSelection {
+        use crate::authorization::{
+            CanonicalVisionSubject, EffectiveVisionSelection, ROLE_INFERENCE_SEMANTICS_VERSION,
+            VISION_SELECTION_SEMANTICS_VERSION,
+        };
         use crate::space::infer_role;
         use crate::vision::VisionSource;
         use crate::vision_config::VisionConfig;
+
         // İlk delta_node'un classification'ından rol çıkar (path/metric olmadan
         // classification-only — engine path bilmez, sadece node classification).
         if let Some(node) = claim.delta_nodes.first() {
@@ -980,11 +1026,51 @@ impl SpaceEngine {
                 } else {
                     VisionSource::BuiltinRole
                 };
-                return VisionVector::with_source(raw_v, source);
+                let canonical_role = crate::canonical_tags::CanonicalNodeRole::try_from(&role)
+                    .unwrap_or_else(|_| {
+                        // infer_role yalnız Support/Runtime üretir (dead code Coverage'da).
+                        // Hata olamaz; defensive fallback Runtime.
+                        crate::canonical_tags::CanonicalNodeRole::try_from(
+                            &crate::space::NodeRole::Runtime,
+                        )
+                        .expect("Runtime is a valid CanonicalNodeRole")
+                    });
+                return EffectiveVisionSelection {
+                    effective_vision: VisionVector::with_source(raw_v, source),
+                    vision_source: source,
+                    subject: CanonicalVisionSubject::Role(canonical_role),
+                    role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+                    vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+                };
             }
         }
         // Override yok → engine global vision'ı (source dahil) inherit et.
-        self.vision
+        // Subject Global (rol atanmadı); source vision'ın kendi provenance'ından gelir.
+        EffectiveVisionSelection {
+            effective_vision: self.vision,
+            vision_source: self.vision.source(),
+            subject: CanonicalVisionSubject::Global,
+            role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+            vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+        }
+    }
+
+    /// **INV-T9 Step 4b (reviewer P0-1 + P0-3):** Claim-specific effective vision gate
+    /// context üret + validate_for_authorization. Q5 öncesinde çağrılır; None/
+    /// GlobalDefault burada fail-closed reddedilir (VisionContextInvalid → terminal).
+    ///
+    /// Captured-context pattern: bir kez üretilir, Q5 + build_authorization_context +
+    /// digest paylaşır (4a rule_context ile aynı).
+    pub(crate) fn effective_vision_gate_context(
+        &self,
+        claim: &Claim,
+    ) -> Result<
+        crate::authorization::EffectiveVisionGateContext,
+        crate::authorization::VisionContextError,
+    > {
+        use crate::authorization::EffectiveVisionGateContext;
+        let selection = self.effective_vision_selection(claim);
+        EffectiveVisionGateContext::try_new(selection, self.config.theta_bound)
     }
 
     /// **INV-T9 Step 4a:** Q6 Rule Gate — ΔS herhangi bir Rule'u ihlal ediyor mu?
@@ -1158,8 +1244,12 @@ impl SpaceEngine {
             }
         }
 
-        // Q5 Vision
-        match self.check_claim_vision(claim) {
+        // Q5 Vision (Step 4b: captured vision context + typed failure)
+        match self
+            .effective_vision_gate_context(claim)
+            .map_err(EngineCommitError::VisionContextInvalid)
+            .and_then(|ctx| self.check_claim_vision_with_context(claim, &ctx))
+        {
             Ok(()) => results.push(GateResult::passed("Q5 Vision", "θ within bound")),
             Err(e) => {
                 let h = crate::agent::HallucinationType::from_engine_error(&e);
@@ -1266,19 +1356,10 @@ impl SpaceEngine {
         RuleEvaluationContext::try_new(ordered).map_err(|e| e.to_string())
     }
 
-    /// **INV-T9** — Mevcut evaluation context digest (vision config + rule-set).
-    ///
-    /// **Step 4a:** Artık `RuleEvaluationContext` (ordinal-aware) kullanır — registration
-    /// sırası korunur, Q6 ile aynı snapshot. Commit 4b/4c'de claim-specific vision context
-    /// ile değiştirilecek.
-    pub fn current_evaluation_context_digest(
-        &self,
-    ) -> Result<crate::authorization::EvaluationContextDigest, String> {
-        use crate::authorization::EvaluationContextDigest;
-        let rule_context = self.current_rule_evaluation_context()?;
-        EvaluationContextDigest::compute(&self.config, &rule_context, &self.vision.raw)
-            .map_err(|e| e.to_string())
-    }
+    // **INV-T9 Step 4b:** `current_evaluation_context_digest` accessor KALDIRILDI.
+    // Evaluation context artık claim-specific `EffectiveVisionGateContext` + captured
+    // `RuleEvaluationContext` ile üretilir — recompute yüzeyi AÇILMAZ. Digest yalnızca
+    // `build_authorization_context` içinde captured context'lerden hesaplanır.
 
     pub fn config(&self) -> &EngineConfig {
         &self.config
