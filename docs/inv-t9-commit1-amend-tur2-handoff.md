@@ -302,7 +302,12 @@ Engine `build_authorization_context` zaten claim'i parametre alıyor — `vision
 
 **Kaldır:** `merge_ratio_observable` (HİÇBİR hesaplamada kullanılmıyor — digest filler), `min_approvers`/`quorum_threshold` (omega'da — authorization'a ait ama evaluation context'e değil), `milestone_interval` (persistence cadence), `abstractness` (digest'ten çıkarılır — Q5/Q6 authorization evaluation'ı etkilemiyor; `MeasurementInputDigest`'e taşınmaz çünkü axis tanımı değil, raw-axis measurement üretmez; post-apply derived-position etkisi gelecekte `ApplySemanticsDigest` bağlayabilir), tüm `role_overrides` (claim-specific effective vision ile değiştirildi, 4b).
 
-### Adım 5 — Defensive structural integrity (P1-5) ⏳
+### Adım 5 — Defensive structural integrity (P1-5) ✅ DONE
+
+> **Step 5 implemented** (see PR #69 head). Private fields + custom Deserialize
+> (`deny_unknown_fields`), `CanonicalEdgeIdentity` (from,to,kind — is_type_only HARİÇ),
+> identity-based duplicate/cross-list conflict detection, non-normalizing `validate()`,
+> as-is digest encoder. The proposals below are the historical design record.
 
 **Dosya:** authorization.rs
 

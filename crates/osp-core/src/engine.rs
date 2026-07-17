@@ -679,11 +679,11 @@ impl SpaceEngine {
         omega: &crate::witness::WitnessSet,
     ) -> Result<crate::authorization::AuthorizationContext, String> {
         use crate::authorization::{
-            canonicalize_node, AuthorizationBasis, CanonicalEdge, CanonicalEdgeKind, CanonicalF64,
-            CanonicalPredicateContent, CanonicalRawPosition, CanonicalStructuralDelta,
-            CanonicalWitnessPolicy, ClaimAuthor, ClaimIdentity, MeasurementInputContext,
-            MeasurementInputDigest, PredicateEvaluationBasis, ProvenancedMeasuredResult,
-            WitnessRequirement,
+            canonicalize_node, AuthorizationBasis, CanonicalEdge, CanonicalEdgeIdentity,
+            CanonicalEdgeKind, CanonicalF64, CanonicalPredicateContent, CanonicalRawPosition,
+            CanonicalStructuralDelta, CanonicalWitnessPolicy, ClaimAuthor, ClaimIdentity,
+            MeasurementInputContext, MeasurementInputDigest, PredicateEvaluationBasis,
+            ProvenancedMeasuredResult, WitnessRequirement,
         };
         use crate::canonical_tags::{PredicateAxisTag, PredicateModeTag};
         let claim = input.claim;
@@ -712,18 +712,17 @@ impl SpaceEngine {
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let removed_edges: Vec<CanonicalEdge> = claim
+        let removed_edges: Vec<CanonicalEdgeIdentity> = claim
             .removed_edges
             .iter()
             .map(|e| {
-                Ok(CanonicalEdge {
-                    from: e.from,
-                    to: e.to,
-                    kind: CanonicalEdgeKind::try_from(&e.kind).map_err(
+                Ok(CanonicalEdgeIdentity::new(
+                    e.from,
+                    e.to,
+                    CanonicalEdgeKind::try_from(&e.kind).map_err(
                         |err: crate::authorization::CanonicalizationError| err.to_string(),
                     )?,
-                    is_type_only: false,
-                })
+                ))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let structural_delta = CanonicalStructuralDelta::try_new(
