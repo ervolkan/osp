@@ -197,6 +197,27 @@ impl std::fmt::Display for VisionViolation {
 /// artık `EngineCommitResult` döndürür. Operational fault'lar (Syntax/Vision/Rule/
 /// Permission/Persistence/Internal/InvalidWitnessEvidence) burada kalır.
 ///
+/// **INV-T9 Step 4a:** Rule registration hataları (`register_rule`/`with_default_rules`).
+///
+/// Sadece duplicate değil; descriptor identity tutarsızlığı da yakalanır (runtime id
+/// ile descriptor id farklı → Q6 ile digest farklı kuralı temsil eder).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RuleRegistrationError {
+    #[error("empty runtime rule_id")]
+    EmptyRuleId,
+    #[error("invalid rule semantics version (must be > 0): {0}")]
+    InvalidSemanticsVersion(u32),
+    #[error(
+        "rule descriptor identity mismatch: runtime_id={runtime_id}, descriptor_id={descriptor_id}"
+    )]
+    IdentityMismatch {
+        runtime_id: String,
+        descriptor_id: String,
+    },
+    #[error("duplicate active rule_id: {0}")]
+    DuplicateActiveRuleId(String),
+}
+
 /// Variant tasarımı: violation struct'lar tek kaynak (single-source-of-truth). theta/detail/
 /// rule_id gibi field'lar variant'ta TEKRAR EDİLMEZ — `Display` impl ile erişilir (drift risk yok).
 #[derive(Debug, thiserror::Error)]
@@ -302,27 +323,64 @@ impl SpaceEngine {
         }
     }
 
-    /// Q6 Rule Gate için kural ekle (God Mode / trusted operator).
+    /// **INV-T9 Step 4a:** Q6 Rule Gate için kural ekle — validated registration.
     ///
-    /// Kurallar `check_claim_rules()` içinde sırayla evaluate edilir.
-    /// İlk ihlalde claim reddedilir (short-circuit).
-    pub fn register_rule(&mut self, rule: Box<dyn crate::rule::Rule>) {
+    /// Sadece duplicate `rule_id` değil; descriptor identity de doğrulanır:
+    /// runtime ID boş değil, `descriptor.rule_id == rule.id()`, `semantics_version > 0`,
+    /// aynı active `rule_id` daha önce kayıtlı değil. Custom rule descriptor override
+    /// tutarsızlığı (runtime id "security.no-sql" ama descriptor "structural.no-cycle")
+    /// yakalanır.
+    ///
+    /// Kurallar `check_claim_rules_with_context()` içinde sırayla evaluate edilir.
+    /// İlk ihlalde claim reddedilir (short-circuit) — registration sırası semantik.
+    pub fn register_rule(
+        &mut self,
+        rule: Box<dyn crate::rule::Rule>,
+    ) -> Result<(), RuleRegistrationError> {
+        let runtime_id = rule.id();
+        if runtime_id.is_empty() {
+            return Err(RuleRegistrationError::EmptyRuleId);
+        }
+        let descriptor = rule.descriptor();
+        if descriptor.rule_id != *runtime_id {
+            return Err(RuleRegistrationError::IdentityMismatch {
+                runtime_id: runtime_id.clone(),
+                descriptor_id: descriptor.rule_id,
+            });
+        }
+        if descriptor.semantics_version == 0 {
+            return Err(RuleRegistrationError::InvalidSemanticsVersion(
+                descriptor.semantics_version,
+            ));
+        }
+        if self
+            .rules
+            .iter()
+            .any(|existing| existing.id() == runtime_id)
+        {
+            return Err(RuleRegistrationError::DuplicateActiveRuleId(
+                runtime_id.clone(),
+            ));
+        }
         self.rules.push(rule);
+        Ok(())
     }
 
     /// Q6 için varsayılan yapısal kural seti ile engine kur (no_self_import,
     /// no_duplicate_node, edge_target_exists).
+    ///
+    /// **Step 4a:** `register_rule` artık Result döner — `?` ile yayılır.
     pub fn with_default_rules(
         space: Space,
         coord_system: crate::coords::CoordinateSystem,
         vision: VisionVector,
         config: EngineConfig,
-    ) -> Self {
+    ) -> Result<Self, RuleRegistrationError> {
         let mut engine = Self::new(space, coord_system, vision, config);
         for rule in crate::rule::default_rules() {
-            engine.register_rule(rule);
+            engine.register_rule(rule)?;
         }
-        engine
+        Ok(engine)
     }
 
     /// `VisionConfig`'ten kurulum (TOML → engine).
@@ -369,7 +427,12 @@ impl SpaceEngine {
         // Phase 0: CLAIM-BASED GATES (Q4-Q6 — deterministik, witness öncesi)
         self.check_claim_syntax(claim)?;
         self.check_claim_vision(claim)?;
-        self.check_claim_rules(claim)?;
+        // **Step 4a:** Q6 ordinal-aware rule context (standalone commit — authorization
+        // digest üretmez ama rule evaluation yine de context snapshot'ı kullanır).
+        let rule_context = self
+            .current_rule_evaluation_context()
+            .map_err(EngineCommitError::AuthorizationContextFailed)?;
+        self.check_claim_rules_with_context(claim, &rule_context)?;
 
         // Phase 1: WITNESS-BASED GATES (Q1-Q3) + TIME ADVANCE (apply_delta mutasyon)
         let result = self.time.advance(&mut self.space, claim, omega);
@@ -492,10 +555,17 @@ impl SpaceEngine {
         let loss_after = gate_out.loss_after;
         let apply_target = outcome.mutation_decision.apply_target();
 
+        // **INV-T9 Step 4a:** Rule evaluation context — Q6 ve digest tarafından PAYLAŞILAN
+        // ordinal-aware snapshot. İki ayrı yerde rule listesi üretip drift bırakmaz.
+        let rule_context = self
+            .current_rule_evaluation_context()
+            .map_err(EngineCommitError::AuthorizationContextFailed)?;
+
         // Phase 0e: Q6 Rule (claim-based, deterministik).
         // Not: MutationDecision Reject ise bile Q6 çalışır (diagnostic — hangi gate reject etti).
+        // **Step 4a:** Q6 aynı rule_context snapshot'ını kullanır (ordinal alignment).
         if !matches!(outcome.mutation_decision, MutationDecision::Reject) {
-            self.check_claim_rules(input.claim)?;
+            self.check_claim_rules_with_context(input.claim, &rule_context)?;
         }
 
         // Phase 0f: MutationDecision → ApplyTarget kontrolü (INV-T8).
@@ -907,12 +977,38 @@ impl SpaceEngine {
         self.vision
     }
 
-    /// Q6 Rule Gate — ΔS herhangi bir Rule'u ihlal ediyor mu?
+    /// **INV-T9 Step 4a:** Q6 Rule Gate — ΔS herhangi bir Rule'u ihlal ediyor mu?
     ///
-    /// Stub: `self.rules` boş (Faz 2) → her zaman Ok. Faz 5'te God Mode tarafından
-    /// register edilen Hard/Soft Rule'lar `evaluate()` çağrılır (agent-prompt-semantics.md §4).
-    fn check_claim_rules(&self, claim: &Claim) -> Result<(), EngineCommitError> {
-        for rule in &self.rules {
+    /// `RuleEvaluationContext` ile runtime `self.rules` zip + ordinal/rule_id doğrulaması.
+    /// Q6 gerçek implementation'ları çalıştırırken, digest'in bağladığı sıra ile runtime
+    /// sırasının ayrışmasına izin vermez. Descriptor kuralı evaluate edemez — runtime
+    /// rule implementation'ları `self.rules` üzerinden çağrılır, context sadece alignment
+    /// doğrular.
+    fn check_claim_rules_with_context(
+        &self,
+        claim: &Claim,
+        context: &crate::authorization::RuleEvaluationContext,
+    ) -> Result<(), EngineCommitError> {
+        use crate::authorization::checked_rule_ordinal;
+        let ordered = context.ordered_rules();
+        if self.rules.len() != ordered.len() {
+            return Err(EngineCommitError::AuthorizationContextFailed(
+                "rule evaluation context length mismatch".into(),
+            ));
+        }
+        for (index, (rule, ordered_desc)) in self.rules.iter().zip(ordered).enumerate() {
+            let expected_ordinal = checked_rule_ordinal(index).map_err(|_| {
+                EngineCommitError::AuthorizationContextFailed("rule ordinal overflow".into())
+            })?;
+            if ordered_desc.ordinal != expected_ordinal
+                || ordered_desc.descriptor.rule_id != *rule.id()
+            {
+                return Err(EngineCommitError::AuthorizationContextFailed(format!(
+                    "rule context mismatch at index {index}: runtime id={}, context id={}",
+                    rule.id(),
+                    ordered_desc.descriptor.rule_id
+                )));
+            }
             if let Some(violation) =
                 rule.evaluate(&claim.delta_nodes, &claim.delta_edges, &self.space)
             {
@@ -1062,8 +1158,12 @@ impl SpaceEngine {
             }
         }
 
-        // Q6 Rule
-        match self.check_claim_rules(claim) {
+        // Q6 Rule (Step 4a: context-aware)
+        match self
+            .current_rule_evaluation_context()
+            .map_err(EngineCommitError::AuthorizationContextFailed)
+            .and_then(|ctx| self.check_claim_rules_with_context(claim, &ctx))
+        {
             Ok(()) => results.push(GateResult::passed("Q6 Rule", "No rule violations")),
             Err(e) => {
                 let h = crate::agent::HallucinationType::from_engine_error(&e);
@@ -1134,18 +1234,39 @@ impl SpaceEngine {
         })
     }
 
+    /// **INV-T9 Step 4a** — Mevcut rule evaluation context (ordinal-aware snapshot).
+    ///
+    /// `self.rules` registration sırasıyla `.enumerate()` → ordinal üretir. Bu snapshot
+    /// hem Q6 (`check_claim_rules_with_context`) hem `EvaluationContextDigest::compute`
+    /// tarafından paylaşılır — iki ayrı yerde rule listesi üretip drift bırakmaz.
+    pub(crate) fn current_rule_evaluation_context(
+        &self,
+    ) -> Result<crate::authorization::RuleEvaluationContext, String> {
+        use crate::authorization::{
+            checked_rule_ordinal, OrderedRuleDescriptor, RuleEvaluationContext,
+        };
+        let mut ordered: Vec<OrderedRuleDescriptor> = Vec::with_capacity(self.rules.len());
+        for (index, rule) in self.rules.iter().enumerate() {
+            let ordinal = checked_rule_ordinal(index).map_err(|e| e.to_string())?;
+            ordered.push(OrderedRuleDescriptor {
+                ordinal,
+                descriptor: rule.descriptor(),
+            });
+        }
+        RuleEvaluationContext::try_new(ordered).map_err(|e| e.to_string())
+    }
+
     /// **INV-T9** — Mevcut evaluation context digest (vision config + rule-set).
     ///
-    /// **reviewer P0-3 (C6):** Artık gerçek `EvaluationContextDigest::compute` kullanır —
-    /// EngineConfig + RuleDescriptor + vision vector. Önceki placeholder yalnız
-    /// `theta_bound + rule count` kullanıyordu.
+    /// **Step 4a:** Artık `RuleEvaluationContext` (ordinal-aware) kullanır — registration
+    /// sırası korunur, Q6 ile aynı snapshot. Commit 4b/4c'de claim-specific vision context
+    /// ile değiştirilecek.
     pub fn current_evaluation_context_digest(
         &self,
     ) -> Result<crate::authorization::EvaluationContextDigest, String> {
         use crate::authorization::EvaluationContextDigest;
-        let descriptors: Vec<crate::authorization::RuleDescriptor> =
-            self.rules.iter().map(|r| r.descriptor()).collect();
-        EvaluationContextDigest::compute(&self.config, &descriptors, &self.vision.raw)
+        let rule_context = self.current_rule_evaluation_context()?;
+        EvaluationContextDigest::compute(&self.config, &rule_context, &self.vision.raw)
             .map_err(|e| e.to_string())
     }
 
@@ -1779,6 +1900,7 @@ v = 0.5
             vision,
             EngineConfig::default_calibrated(),
         )
+        .expect("test rule registration: 3 distinct default rules")
     }
 
     #[test]
@@ -1801,7 +1923,8 @@ v = 0.5
         );
         // Q4 catches this first, but if we bypass Q4, Q6 catches it too
         // Verify Q6 directly
-        let result = engine.check_claim_rules(&claim);
+        let ctx = engine.current_rule_evaluation_context().unwrap();
+        let result = engine.check_claim_rules_with_context(&claim, &ctx);
         assert!(
             matches!(result, Err(EngineCommitError::RuleViolation { .. })),
             "self-import should be caught by Q6 default rule"
@@ -1829,7 +1952,8 @@ v = 0.5
             }],
             vec![],
         );
-        let result = engine.check_claim_rules(&claim);
+        let ctx = engine.current_rule_evaluation_context().unwrap();
+        let result = engine.check_claim_rules_with_context(&claim, &ctx);
         assert!(
             matches!(result, Err(EngineCommitError::RuleViolation { .. })),
             "duplicate node should be caught by Q6 default rule"
@@ -1862,7 +1986,8 @@ v = 0.5
                 ..Default::default()
             }],
         );
-        let result = engine.check_claim_rules(&claim);
+        let ctx = engine.current_rule_evaluation_context().unwrap();
+        let result = engine.check_claim_rules_with_context(&claim, &ctx);
         assert!(result.is_ok(), "valid claim should pass Q6: {:?}", result);
     }
 

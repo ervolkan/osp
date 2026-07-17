@@ -106,7 +106,8 @@ impl Workspace {
             cs,
             vision,
             EngineConfig::default_calibrated(),
-        );
+        )
+        .map_err(|e| WorkspaceError::Analyze(format!("engine rule registration failed: {e}")))?;
 
         Ok(Self {
             path: canonical,

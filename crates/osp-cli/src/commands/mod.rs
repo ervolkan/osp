@@ -42,8 +42,8 @@ pub mod exit_codes {
 }
 
 pub mod graph;
-pub mod review;
 pub(crate) mod resolve_code_entity_preview_render;
+pub mod review;
 pub(crate) mod supersede_preview_render;
 
 /// Output format (text/json).
@@ -196,7 +196,7 @@ pub fn run_trajectory_init(args: TrajectoryInitArgs) -> anyhow::Result<()> {
         cs,
         vision,
         EngineConfig::default_calibrated(),
-    );
+    )?;
     let _ = engine; // engine kuruldu (space private — count analyze'den biliniyor)
     println!("✓ Trajectory initialized");
     println!("  SpaceEngine ready (analyze + coord system + vision)");
@@ -232,7 +232,7 @@ pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()>
         cs,
         vision,
         EngineConfig::default_calibrated(),
-    );
+    )?;
     // 3. LLM seçimi: mock (FileMockLlm) veya real (RuntimeLlmClient, GPT-4o-mini).
     match args.llm.as_str() {
         "real" => {
@@ -356,7 +356,10 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
             println!("✗ Maneuver limit exceeded after {attempts} attempts");
             exit_codes::EXCEEDED_MANEUVER_LIMIT
         }
-        NavigatorResult::AwaitingWitnesses { pending, persistence } => {
+        NavigatorResult::AwaitingWitnesses {
+            pending,
+            persistence,
+        } => {
             // **INV-T9** — expected authorization bekleme. Domain outcome, hata DEĞİL.
             println!(
                 "⏸ Awaiting witnesses (INV-T9) — task {}, claim {}",
@@ -369,7 +372,10 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
             println!("  Commit state: awaiting_witnesses");
             println!("  Mainline mutation: not_applied");
             println!("  Next action: await external evidence");
-            println!("  Pending artifact: {}", persistence.artifact_path.display());
+            println!(
+                "  Pending artifact: {}",
+                persistence.artifact_path.display()
+            );
             exit_codes::AWAITING_WITNESSES
         }
         NavigatorResult::RequiresRevision(rev) => {

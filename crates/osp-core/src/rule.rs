@@ -30,19 +30,17 @@ pub trait Rule: Send + Sync {
     /// Kural tanımlayıcısı.
     fn id(&self) -> &RuleId;
 
-    /// **plan-review #4:** Kural descriptor'ı — `EvaluationContextDigest` için.
+    /// **INV-T9 Step 4a (reviewer P0-3):** Kural descriptor'ı — `EvaluationContextDigest` için.
     ///
-    /// `rule_id` + `semantics_version` + `canonical_parameters`. Default impl
-    /// `semantics_version: 1, canonical_parameters: vec![]` döner — mevcut 3 rule
-    /// parametresiz. Rule implementasyonu değişirse `semantics_version` artırılmalı;
-    /// bu `EvaluationContextDigest`'i değiştirir → stale measurement tespiti çalışır.
-    fn descriptor(&self) -> crate::authorization::RuleDescriptor {
-        crate::authorization::RuleDescriptor {
-            rule_id: self.id().clone(),
-            semantics_version: 1,
-            canonical_parameters: vec![],
-        }
-    }
+    /// **Default impl YOK** — her rule explicit descriptor beyan etmeli. Axis katmanındaki
+    /// zorunlu `Axis::descriptor()` pattern'ı ile aynı: parametreli/farklı semantiğe
+    /// sahip custom rule descriptor'ı override etmeyi unutursa Q6 davranışı değişebilir
+    /// ama digest aynı kalırdı. Şimdi explicit declaration zorunlu.
+    ///
+    /// `rule_id` + `semantics_version` + `canonical_parameters`. Rule implementasyonu
+    /// değişirse `semantics_version` artırılmalı; bu `EvaluationContextDigest`'i
+    /// değiştirir → stale measurement tespiti çalışır.
+    fn descriptor(&self) -> crate::authorization::RuleDescriptor;
 
     /// Kuralın ΔS üzerinde ihlal durumunu değerlendir.
     ///
@@ -92,6 +90,15 @@ impl Rule for NoSelfImportRule {
     fn id(&self) -> &RuleId {
         &self.id
     }
+    /// **Step 4a:** Explicit descriptor — parametresiz graph-self-loop rule.
+    /// Algoritma değişirse (örn sadece Imports değil diğer kind'lar) semantics_version artır.
+    fn descriptor(&self) -> crate::authorization::RuleDescriptor {
+        crate::authorization::RuleDescriptor {
+            rule_id: self.id.clone(),
+            semantics_version: 1,
+            canonical_parameters: vec![],
+        }
+    }
     fn evaluate(&self, _nodes: &[Node], edges: &[Edge], _space: &Space) -> Option<RuleViolation> {
         for e in edges {
             if e.kind == EdgeKind::Imports && e.from == e.to {
@@ -132,6 +139,14 @@ impl Rule for DuplicateNodeRule {
     fn id(&self) -> &RuleId {
         &self.id
     }
+    /// **Step 4a:** Explicit descriptor — parametresiz node-id uniqueness rule.
+    fn descriptor(&self) -> crate::authorization::RuleDescriptor {
+        crate::authorization::RuleDescriptor {
+            rule_id: self.id.clone(),
+            semantics_version: 1,
+            canonical_parameters: vec![],
+        }
+    }
     fn evaluate(&self, nodes: &[Node], _edges: &[Edge], space: &Space) -> Option<RuleViolation> {
         for n in nodes {
             if space.nodes.contains_key(&n.id) {
@@ -171,6 +186,14 @@ impl Default for EdgeTargetExistsRule {
 impl Rule for EdgeTargetExistsRule {
     fn id(&self) -> &RuleId {
         &self.id
+    }
+    /// **Step 4a:** Explicit descriptor — parametresiz edge-target existence rule.
+    fn descriptor(&self) -> crate::authorization::RuleDescriptor {
+        crate::authorization::RuleDescriptor {
+            rule_id: self.id.clone(),
+            semantics_version: 1,
+            canonical_parameters: vec![],
+        }
     }
     fn evaluate(&self, nodes: &[Node], edges: &[Edge], space: &Space) -> Option<RuleViolation> {
         let delta_ids: std::collections::HashSet<u64> = nodes.iter().map(|n| n.id).collect();

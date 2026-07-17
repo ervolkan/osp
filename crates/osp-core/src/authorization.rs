@@ -823,22 +823,147 @@ pub struct RuleDescriptor {
     pub canonical_parameters: Vec<u8>,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 Step 4a — RuleEvaluationContext (ordinal-aware rule sequence snapshot)
+//
+// `RuleEvaluationContext` Q6 (runtime rule evaluation) ve `EvaluationContextDigest`
+// (canonical encoding) tarafından PAYLAŞILAN ordered snapshot'tır. İki ayrı yerde
+// rule listesi üretip drift bırakmaz. Ordinal contextual'dır — Rule state'i DEĞİL,
+// belirli bir engine evaluation context'indeki konumudur (registration sırası).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **reviewer (Step 4a):** Rule evaluation context semantics version.
+/// Rule sıralama/ordinal/identity semantiği değişirse bu version artırılmalı.
+pub const RULE_EVALUATION_SEMANTICS_VERSION: u32 = 1;
+
+/// **reviewer P0-3 (Step 4a):** Rule descriptor + registration ordinal'ı.
+/// `ordinal` context'in parçasıdır (registration sırası), Rule'un kendisinin DEĞİL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OrderedRuleDescriptor {
+    pub(crate) ordinal: u32,
+    pub(crate) descriptor: RuleDescriptor,
+}
+
+/// **reviewer P0-1 (Step 4a):** Validated rule evaluation context snapshot.
+/// Q6 ve digest aynı ordered snapshot'ı kullanır — runtime rule listesi ile canonical
+/// encoding arasındaki ayrışmaya izin vermez.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuleEvaluationContext {
+    semantics_version: u32,
+    ordered_rules: Vec<OrderedRuleDescriptor>,
+}
+
+/// `usize → u32` ordinal dönüşümü — checked (fail-closed). Test edilebilir helper.
+pub(crate) fn checked_rule_ordinal(index: usize) -> Result<u32, EvaluationContextError> {
+    u32::try_from(index).map_err(|_| EvaluationContextError::RuleOrdinalOverflow)
+}
+
+impl RuleEvaluationContext {
+    /// Validated constructor — ordinal'lar 0..n kesintisiz, ID boş değil, active ID
+    /// benzersiz, semantics version > 0.
+    pub(crate) fn try_new(
+        ordered_rules: Vec<OrderedRuleDescriptor>,
+    ) -> Result<Self, EvaluationContextError> {
+        let ctx = Self {
+            semantics_version: RULE_EVALUATION_SEMANTICS_VERSION,
+            ordered_rules,
+        };
+        ctx.validate()?;
+        Ok(ctx)
+    }
+
+    /// Defensive validation — `EvaluationContextDigest::compute` başında çağrılır.
+    pub(crate) fn validate(&self) -> Result<(), EvaluationContextError> {
+        if self.semantics_version != RULE_EVALUATION_SEMANTICS_VERSION {
+            return Err(EvaluationContextError::UnsupportedRuleContextSemantics(
+                self.semantics_version,
+            ));
+        }
+        let mut seen_ids: Vec<&str> = Vec::new();
+        for (index, ordered) in self.ordered_rules.iter().enumerate() {
+            // Ordinal'lar 0..n kesintisiz.
+            let expected_ordinal = checked_rule_ordinal(index)?;
+            if ordered.ordinal != expected_ordinal {
+                return Err(EvaluationContextError::OrdinalGap {
+                    expected: expected_ordinal,
+                    found: ordered.ordinal,
+                });
+            }
+            // Rule ID boş değil.
+            if ordered.descriptor.rule_id.is_empty() {
+                return Err(EvaluationContextError::EmptyRuleId);
+            }
+            // Semantics version > 0.
+            if ordered.descriptor.semantics_version == 0 {
+                return Err(EvaluationContextError::InvalidRuleSemanticsVersion(
+                    ordered.descriptor.semantics_version,
+                ));
+            }
+            // Active rule ID benzersiz.
+            if seen_ids.contains(&ordered.descriptor.rule_id.as_str()) {
+                return Err(EvaluationContextError::DuplicateActiveRuleId(
+                    ordered.descriptor.rule_id.clone(),
+                ));
+            }
+            seen_ids.push(&ordered.descriptor.rule_id);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn semantics_version(&self) -> u32 {
+        self.semantics_version
+    }
+    pub(crate) fn ordered_rules(&self) -> &[OrderedRuleDescriptor] {
+        &self.ordered_rules
+    }
+}
+
+/// **reviewer (Step 4a):** Rule evaluation context / descriptor hataları.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum EvaluationContextError {
+    #[error("rule ordinal overflow (usize → u32 conversion failed)")]
+    RuleOrdinalOverflow,
+    #[error("unsupported rule context semantics version: {0}")]
+    UnsupportedRuleContextSemantics(u32),
+    #[error("ordinal gap: expected {expected}, found {found}")]
+    OrdinalGap { expected: u32, found: u32 },
+    #[error("empty rule_id in ordered rule descriptor")]
+    EmptyRuleId,
+    #[error("invalid rule semantics version (must be > 0): {0}")]
+    InvalidRuleSemanticsVersion(u32),
+    #[error("duplicate active rule_id: {0}")]
+    DuplicateActiveRuleId(String),
+}
+
 impl EvaluationContextDigest {
     const DOMAIN_SEPARATOR: &'static [u8] = b"osp.evaluation-context.v1\0";
 
-    /// **reviewer P0-3:** Gerçek evaluation context digest.
+    /// **reviewer P0-3 / Step 4a:** Gerçek evaluation context digest.
     ///
-    /// EngineConfig'in ölçüm-atan tüm alanları + rule descriptor'ları (id + semantics
-    /// version + parameters) + vision target vector encode edilir. Önceki placeholder
-    /// yalnız `theta_bound + rule count` kullanıyordu.
+    /// **Step 4a (ordinal-aware):** Artık `RuleEvaluationContext` alır — sort ETMEZ,
+    /// registration sırasını (ordinal) korur. `check_claim_rules` first-match
+    /// short-circuit ile aynı sırayı kullanır. `rule_context.validate()` başında
+    /// defensively çağrılır.
+    ///
+    /// `pub(crate)` — runtime context tipleri wire schema DEĞİL (`RuleEvaluationContext`
+    /// pub(crate)); sadece engine + testler çağırır. Reviewer: "intermediate runtime
+    /// context types are not persisted wire schemas."
+    ///
+    /// EngineConfig + vision_vector Commit 4b/4c'de claim-specific context ile
+    /// değiştirilecek (geçiş imzası — her commit bağımsız derlenir).
     ///
     /// **Rule versioning:** Rule implementasyonu değişip `semantics_version` artırılırsa
     /// context digest değişir → stale measurement tespiti çalışır.
-    pub fn compute(
+    pub(crate) fn compute(
         config: &crate::engine::EngineConfig,
-        rules: &[RuleDescriptor],
+        rule_context: &RuleEvaluationContext,
         vision_vector: &crate::coords::RawPosition,
     ) -> Result<Self, AuthorizationBasisDigestError> {
+        // **reviewer (Step 4a):** Defensive validation — context canonical invariant.
+        rule_context
+            .validate()
+            .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
+
         let mut hasher = blake3::Hasher::new();
         hasher.update(Self::DOMAIN_SEPARATOR);
 
@@ -879,14 +1004,29 @@ impl EvaluationContextDigest {
             }
         }
 
-        // Rules — id + semantics_version + canonical_parameters.
-        let mut sorted_rules = rules.to_vec();
-        sorted_rules.sort_unstable_by(|a, b| a.rule_id.cmp(&b.rule_id));
-        encode_u64(&mut hasher, sorted_rules.len() as u64, "ec_rule_count");
-        for rule in &sorted_rules {
-            encode_bytes(&mut hasher, rule.rule_id.as_bytes())?;
-            encode_u32(&mut hasher, rule.semantics_version, "ec_rule_semver");
-            encode_bytes(&mut hasher, &rule.canonical_parameters)?;
+        // **Step 4a:** Rule evaluation context — semantics_version + ordinal-aware
+        // ordered rules. Sort EDİLMEZ (registration sırası semantik — Q6 ile aynı).
+        encode_u32(
+            &mut hasher,
+            rule_context.semantics_version(),
+            "rule_context_semantics_version",
+        );
+        let ordered = rule_context.ordered_rules();
+        let count = u64::try_from(ordered.len()).map_err(|_| {
+            AuthorizationBasisDigestError::LengthOverflow {
+                field: "ec_rule_count",
+            }
+        })?;
+        encode_u64(&mut hasher, count, "ec_rule_count");
+        for ordered_desc in ordered {
+            encode_u32(&mut hasher, ordered_desc.ordinal, "ec_rule_ordinal");
+            encode_bytes(&mut hasher, ordered_desc.descriptor.rule_id.as_bytes())?;
+            encode_u32(
+                &mut hasher,
+                ordered_desc.descriptor.semantics_version,
+                "ec_rule_semver",
+            );
+            encode_bytes(&mut hasher, &ordered_desc.descriptor.canonical_parameters)?;
         }
 
         // Vision target vector (5-axis).
@@ -3064,7 +3204,8 @@ mod tests {
 
     #[test]
     fn evaluation_context_digest_is_stable_for_identical_context() {
-        // **reviewer P0-3 (A8):** EvaluationContextDigest gerçek içerik.
+        // **reviewer P0-3 (A8) / Step 4a:** EvaluationContextDigest gerçek içerik +
+        // ordinal-aware RuleEvaluationContext.
         use crate::coords::RawPosition;
         let config = crate::engine::EngineConfig {
             min_approvers: 2,
@@ -3075,11 +3216,15 @@ mod tests {
             merge_ratio_observable: 0.1,
             role_overrides: std::collections::HashMap::new(),
         };
-        let rules = vec![RuleDescriptor {
-            rule_id: "structural.no_self_import".to_string(),
-            semantics_version: 1,
-            canonical_parameters: vec![],
-        }];
+        let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
+            ordinal: 0,
+            descriptor: RuleDescriptor {
+                rule_id: "structural.no_self_import".to_string(),
+                semantics_version: 1,
+                canonical_parameters: vec![],
+            },
+        }])
+        .unwrap();
         let vision = RawPosition {
             x: 0.5,
             y: 0.6,
@@ -3087,8 +3232,8 @@ mod tests {
             w: 0.5,
             v: 0.3,
         };
-        let d1 = EvaluationContextDigest::compute(&config, &rules, &vision).unwrap();
-        let d2 = EvaluationContextDigest::compute(&config, &rules, &vision).unwrap();
+        let d1 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision).unwrap();
+        let d2 = EvaluationContextDigest::compute(&config, &rule_ctx, &vision).unwrap();
         assert_eq!(d1, d2);
     }
 
@@ -3105,7 +3250,8 @@ mod tests {
                 merge_ratio_observable: 0.1,
                 role_overrides: std::collections::HashMap::new(),
             };
-            EvaluationContextDigest::compute(&config, &[], &RawPosition::default()).unwrap()
+            let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
         };
         assert_ne!(mk(0.3), mk(0.5));
     }
@@ -3122,18 +3268,22 @@ mod tests {
             merge_ratio_observable: 0.1,
             role_overrides: std::collections::HashMap::new(),
         };
-        let d_no_rules =
-            EvaluationContextDigest::compute(&config, &[], &RawPosition::default()).unwrap();
-        let d_one_rule = EvaluationContextDigest::compute(
-            &config,
-            &[RuleDescriptor {
-                rule_id: "test.rule".to_string(),
-                semantics_version: 1,
-                canonical_parameters: vec![],
-            }],
-            &RawPosition::default(),
-        )
-        .unwrap();
+        let d_no_rules = {
+            let rule_ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
+        };
+        let d_one_rule = {
+            let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: RuleDescriptor {
+                    rule_id: "test.rule".to_string(),
+                    semantics_version: 1,
+                    canonical_parameters: vec![],
+                },
+            }])
+            .unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
+        };
         assert_ne!(d_no_rules, d_one_rule);
     }
 
@@ -3151,16 +3301,16 @@ mod tests {
             role_overrides: std::collections::HashMap::new(),
         };
         let mk = |semver: u32| {
-            EvaluationContextDigest::compute(
-                &config,
-                &[RuleDescriptor {
+            let rule_ctx = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: RuleDescriptor {
                     rule_id: "test.rule".to_string(),
                     semantics_version: semver,
                     canonical_parameters: vec![],
-                }],
-                &RawPosition::default(),
-            )
-            .unwrap()
+                },
+            }])
+            .unwrap();
+            EvaluationContextDigest::compute(&config, &rule_ctx, &RawPosition::default()).unwrap()
         };
         assert_ne!(mk(1), mk(2));
     }
@@ -3391,5 +3541,256 @@ mod tests {
             d1, d2,
             "registration order must not affect digest (name-mapped, sorted descriptors)"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 Step 4a — Rule sequence binding (ordinal-aware context) testleri
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    fn mk_rule_descriptor(id: &str, semver: u32) -> RuleDescriptor {
+        RuleDescriptor {
+            rule_id: id.to_string(),
+            semantics_version: semver,
+            canonical_parameters: vec![],
+        }
+    }
+
+    #[test]
+    fn evaluation_context_changes_when_rule_order_changes() {
+        // **Step 4a:** Registration sırası semantik — farklı sıra → farklı digest
+        // (sort-by-rule_id KALDIRILDI, ordinal korundu).
+        use crate::coords::RawPosition;
+        let config = crate::engine::EngineConfig {
+            min_approvers: 2,
+            quorum_threshold: 1.5,
+            theta_bound: 0.3,
+            milestone_interval: 1000,
+            abstractness: 0.5,
+            merge_ratio_observable: 0.1,
+            role_overrides: std::collections::HashMap::new(),
+        };
+        // Sıra A: alpha, beta
+        let ctx_a = RuleEvaluationContext::try_new(vec![
+            OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: mk_rule_descriptor("alpha", 1),
+            },
+            OrderedRuleDescriptor {
+                ordinal: 1,
+                descriptor: mk_rule_descriptor("beta", 1),
+            },
+        ])
+        .unwrap();
+        // Sıra B: beta, alpha (ters)
+        let ctx_b = RuleEvaluationContext::try_new(vec![
+            OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: mk_rule_descriptor("beta", 1),
+            },
+            OrderedRuleDescriptor {
+                ordinal: 1,
+                descriptor: mk_rule_descriptor("alpha", 1),
+            },
+        ])
+        .unwrap();
+        let vision = RawPosition::default();
+        let d_a = EvaluationContextDigest::compute(&config, &ctx_a, &vision).unwrap();
+        let d_b = EvaluationContextDigest::compute(&config, &ctx_b, &vision).unwrap();
+        assert_ne!(d_a, d_b, "registration order must change digest");
+    }
+
+    #[test]
+    fn same_rules_same_order_produce_same_digest() {
+        use crate::coords::RawPosition;
+        let config = crate::engine::EngineConfig {
+            min_approvers: 2,
+            quorum_threshold: 1.5,
+            theta_bound: 0.3,
+            milestone_interval: 1000,
+            abstractness: 0.5,
+            merge_ratio_observable: 0.1,
+            role_overrides: std::collections::HashMap::new(),
+        };
+        let mk_ctx = || {
+            RuleEvaluationContext::try_new(vec![
+                OrderedRuleDescriptor {
+                    ordinal: 0,
+                    descriptor: mk_rule_descriptor("alpha", 1),
+                },
+                OrderedRuleDescriptor {
+                    ordinal: 1,
+                    descriptor: mk_rule_descriptor("beta", 2),
+                },
+            ])
+            .unwrap()
+        };
+        let vision = RawPosition::default();
+        let d1 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision).unwrap();
+        let d2 = EvaluationContextDigest::compute(&config, &mk_ctx(), &vision).unwrap();
+        assert_eq!(d1, d2, "same rules + same order → same digest");
+    }
+
+    #[test]
+    fn rule_context_rejects_duplicate_active_rule_id() {
+        // try_new duplicate rule_id reddetmeli (canonical validation).
+        let err = RuleEvaluationContext::try_new(vec![
+            OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: mk_rule_descriptor("alpha", 1),
+            },
+            OrderedRuleDescriptor {
+                ordinal: 1,
+                descriptor: mk_rule_descriptor("alpha", 1), // duplicate
+            },
+        ])
+        .unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationContextError::DuplicateActiveRuleId("alpha".into())
+        );
+    }
+
+    #[test]
+    fn rule_context_rejects_empty_rule_id() {
+        let err = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
+            ordinal: 0,
+            descriptor: mk_rule_descriptor("", 1),
+        }])
+        .unwrap_err();
+        assert_eq!(err, EvaluationContextError::EmptyRuleId);
+    }
+
+    #[test]
+    fn rule_context_rejects_zero_semantics_version() {
+        let err = RuleEvaluationContext::try_new(vec![OrderedRuleDescriptor {
+            ordinal: 0,
+            descriptor: mk_rule_descriptor("alpha", 0),
+        }])
+        .unwrap_err();
+        assert_eq!(err, EvaluationContextError::InvalidRuleSemanticsVersion(0));
+    }
+
+    #[test]
+    fn rule_context_rejects_ordinal_gap() {
+        // ordinal 0, 2 (1 atlanmış) → gap hatası.
+        let err = RuleEvaluationContext::try_new(vec![
+            OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: mk_rule_descriptor("alpha", 1),
+            },
+            OrderedRuleDescriptor {
+                ordinal: 2, // gap
+                descriptor: mk_rule_descriptor("beta", 1),
+            },
+        ])
+        .unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationContextError::OrdinalGap {
+                expected: 1,
+                found: 2
+            }
+        );
+    }
+
+    #[test]
+    fn rule_context_rejects_unsupported_semantics_version() {
+        // try_new her zaman RULE_EVALUATION_SEMANTICS_VERSION kullanır; ama validate
+        // elle kurulmuş context'te farklı version reddeder.
+        let mut ctx = RuleEvaluationContext::try_new(vec![]).unwrap();
+        ctx.semantics_version = 999; // sahte mutation
+        let err = ctx.validate().unwrap_err();
+        assert_eq!(
+            err,
+            EvaluationContextError::UnsupportedRuleContextSemantics(999)
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn rule_ordinal_overflow_fails_closed() {
+        // usize::MAX → u32 dönüşümü overflow → fail-closed.
+        let err = checked_rule_ordinal(usize::MAX).unwrap_err();
+        assert_eq!(err, EvaluationContextError::RuleOrdinalOverflow);
+    }
+
+    #[test]
+    fn register_rule_rejects_duplicate_active_rule_id() {
+        // engine.register_rule duplicate rule_id reddeder.
+        use crate::engine::SpaceEngine;
+        use crate::rule::NoSelfImportRule;
+        let cs = crate::coords::CoordinateSystem::default_raw_three(
+            crate::axes::EntropyAxis::from_commit_entropy(6.0),
+            crate::axes::WitnessDepthAxis::from_witness(0.3, 5),
+        )
+        .unwrap();
+        let mut engine = SpaceEngine::with_default_rules(
+            crate::space::Space::new(),
+            cs,
+            crate::vision::VisionVector::new(crate::coords::RawPosition::default()),
+            crate::engine::EngineConfig::default_calibrated(),
+        )
+        .unwrap();
+        // NoSelfImportRule zaten default_rules'ta kayıtlı → tekrar register duplicate.
+        let err = engine
+            .register_rule(Box::new(NoSelfImportRule::new()))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::engine::RuleRegistrationError::DuplicateActiveRuleId(_)
+        ));
+    }
+
+    #[test]
+    fn register_rule_rejects_descriptor_identity_mismatch() {
+        // runtime id "a" ama descriptor "b" → IdentityMismatch.
+        use crate::engine::{RuleRegistrationError, SpaceEngine};
+        use crate::rule::{Rule, RuleId, RuleViolation};
+        use crate::space::{Edge, Node, Space};
+        struct MismatchedRule {
+            id: RuleId,
+        }
+        impl Rule for MismatchedRule {
+            fn id(&self) -> &RuleId {
+                &self.id
+            }
+            fn descriptor(&self) -> RuleDescriptor {
+                RuleDescriptor {
+                    rule_id: "mismatched.descriptor".into(),
+                    semantics_version: 1,
+                    canonical_parameters: vec![],
+                }
+            }
+            fn evaluate(&self, _: &[Node], _: &[Edge], _: &Space) -> Option<RuleViolation> {
+                None
+            }
+        }
+        let cs = crate::coords::CoordinateSystem::default_raw_three(
+            crate::axes::EntropyAxis::from_commit_entropy(6.0),
+            crate::axes::WitnessDepthAxis::from_witness(0.3, 5),
+        )
+        .unwrap();
+        let mut engine = SpaceEngine::with_default_rules(
+            crate::space::Space::new(),
+            cs,
+            crate::vision::VisionVector::new(crate::coords::RawPosition::default()),
+            crate::engine::EngineConfig::default_calibrated(),
+        )
+        .unwrap();
+        let err = engine
+            .register_rule(Box::new(MismatchedRule {
+                id: "mismatched.runtime".into(),
+            }))
+            .unwrap_err();
+        match err {
+            RuleRegistrationError::IdentityMismatch {
+                runtime_id,
+                descriptor_id,
+            } => {
+                assert_eq!(runtime_id, "mismatched.runtime");
+                assert_eq!(descriptor_id, "mismatched.descriptor");
+            }
+            other => panic!("expected IdentityMismatch, got {other:?}"),
+        }
     }
 }
