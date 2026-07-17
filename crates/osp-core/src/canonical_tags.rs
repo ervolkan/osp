@@ -18,6 +18,7 @@
 use crate::coords::MetricSource;
 use crate::space::{NodeClassification, NodeRole};
 use crate::trajectory::{ComparisonOp, PredicateAxis};
+use crate::vision::VisionSource;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Macro — her domain enum için validated newtype üretir.
@@ -195,6 +196,18 @@ canonical_tag_newtype! {
     Scip => 1,
     Placeholder => 2,
     Heuristic => 3,
+}
+
+canonical_tag_newtype! {
+    /// **INV-T9 Step 4b:** Vision source canonical tag — 5 varyant.
+    /// `EffectiveVisionGateContext` için claim-specific vision provenance.
+    pub struct CanonicalVisionSourceTag;
+    domain: VisionSource;
+    None => 0,
+    GlobalDefault => 1,
+    BuiltinRole => 2,
+    RoleProfile => 3,
+    UserLoaded => 4,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
