@@ -429,6 +429,15 @@ impl MeasurementInputContext {
                 measurement_semantics_version,
             ));
         }
+        // **reviewer P1 (core-only invariant):** context yalnız core raw axis descriptor'ları
+        // taşır (dokümante invariant). Custom axis descriptor reddedilir.
+        for d in &descriptors {
+            if !crate::coords::is_core_raw_axis_id(d.axis_id()) {
+                return Err(CanonicalizationError::UnsupportedMeasurementAxis(
+                    d.axis_id().to_owned(),
+                ));
+            }
+        }
         // Canonical sıralama (axis_id'ye göre) + duplicate reddi.
         descriptors.sort_unstable_by(|a, b| a.axis_id().cmp(b.axis_id()));
         for pair in descriptors.windows(2) {
@@ -445,7 +454,7 @@ impl MeasurementInputContext {
         })
     }
 
-    /// Defensive validation — version + duplicate. `MeasurementInputDigest::compute`
+    /// Defensive validation — version + duplicate + core-only. `MeasurementInputDigest::compute`
     /// başında çağrılır (invariant drift tespiti).
     pub fn validate(&self) -> Result<(), CanonicalizationError> {
         if self.schema_version != MEASUREMENT_INPUT_SCHEMA_VERSION {
@@ -457,6 +466,14 @@ impl MeasurementInputContext {
             return Err(CanonicalizationError::UnsupportedMeasurementSemantics(
                 self.measurement_semantics_version,
             ));
+        }
+        // **reviewer P1 (core-only invariant):** her descriptor core raw axis olmalı.
+        for d in &self.axis_descriptors {
+            if !crate::coords::is_core_raw_axis_id(d.axis_id()) {
+                return Err(CanonicalizationError::UnsupportedMeasurementAxis(
+                    d.axis_id().to_owned(),
+                ));
+            }
         }
         for pair in self.axis_descriptors.windows(2) {
             if pair[0].axis_id() >= pair[1].axis_id() {
@@ -1497,6 +1514,10 @@ pub enum CanonicalizationError {
     /// **INV-T9 Adım 3 (P1-a):** axis context / canonical length overflow.
     #[error("axis context failed: {0}")]
     AxisContextFailed(String),
+    /// **INV-T9 Adım 3 (reviewer P1):** context yalnız core raw axis descriptor'ları
+    /// taşır (dokümante invariant). Dışarıdan custom axis descriptor reddedilir.
+    #[error("unsupported measurement axis (not core raw): {0}")]
+    UnsupportedMeasurementAxis(String),
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -3251,6 +3272,37 @@ mod tests {
         assert_eq!(
             err,
             CanonicalizationError::DuplicateIdentifier("coupling".into())
+        );
+    }
+
+    #[test]
+    fn measurement_context_rejects_non_core_axis_descriptor() {
+        // **reviewer P1 (core-only invariant):** context yalnız core raw axis descriptor'ları
+        // taşır (dokümante invariant). Custom axis "security" reddedilir.
+        use crate::coords::{AxisDescriptor, AxisParameterEncoder};
+        let mut p = AxisParameterEncoder::new();
+        p.push_u8(0);
+        let security = AxisDescriptor::try_new("security", 1, p).unwrap();
+        let err = MeasurementInputContext::try_new(vec![security]).unwrap_err();
+        assert_eq!(
+            err,
+            CanonicalizationError::UnsupportedMeasurementAxis("security".into())
+        );
+    }
+
+    #[test]
+    fn measurement_context_deserialization_rejects_non_core_axis() {
+        // **reviewer P1:** diskten custom axis descriptor yüklenemez — try_from_parts
+        // core-only kontrolü custom axis'i reddeder.
+        let ctx = sample_measurement_context();
+        let mut json = serde_json::to_value(&ctx).unwrap();
+        // İlk descriptor'ı custom axis ile değiştir.
+        json["axis_descriptors"][0]["axis_id"] = serde_json::json!("security");
+        let json_str = serde_json::to_string(&json).unwrap();
+        let err = serde_json::from_str::<MeasurementInputContext>(&json_str).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported measurement axis"),
+            "deserialize must reject non-core axis: {err}"
         );
     }
 

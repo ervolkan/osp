@@ -416,7 +416,10 @@ const CORE_RAW_AXIS_IDS: [&str; 5] = [
 ];
 
 /// `id` core raw axis'lerinden biri mi? (raw_position_of + canonical_raw_axis_descriptors).
-fn is_core_raw_axis_id(id: &str) -> bool {
+///
+/// **pub(crate):** `authorization::MeasurementInputContext::try_from_parts` core-only
+/// invariant'ı için de kullanır — dışarıdan custom axis descriptor context'e giremesin.
+pub(crate) fn is_core_raw_axis_id(id: &str) -> bool {
     CORE_RAW_AXIS_IDS.contains(&id)
 }
 
