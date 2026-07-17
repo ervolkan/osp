@@ -40,6 +40,13 @@ pub trait Rule: Send + Sync {
     /// `rule_id` + `semantics_version` + `canonical_parameters`. Rule implementasyonu
     /// değişirse `semantics_version` artırılmalı; bu `EvaluationContextDigest`'i
     /// değiştirir → stale measurement tespiti çalışır.
+    ///
+    /// **reviewer P2 (determinism contract):** `descriptor()` saf ve deterministik
+    /// olmalıdır — aynı değişmeyen rule state'i için her çağrıda aynı sonucu vermelidir.
+    /// `evaluate()`'ı etkileyebilecek tüm parametre ve semantics version'ı bağlamalıdır.
+    /// `evaluate()` bir değerlendirme sırasında descriptor-affecting state'i MUTATE
+    /// ETMEMELİDİR — aksi halde captured context propagation (Q6 ↔ digest aynı snapshot)
+    /// güvenilir olmaz.
     fn descriptor(&self) -> crate::authorization::RuleDescriptor;
 
     /// Kuralın ΔS üzerinde ihlal durumunu değerlendir.

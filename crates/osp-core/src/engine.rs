@@ -595,6 +595,7 @@ impl SpaceEngine {
                 input.loss_before,
                 loss_after,
                 &gate_out.improvement_policy,
+                &rule_context,
                 input.omega,
             )
             .map_err(EngineCommitError::AuthorizationContextFailed)?;
@@ -651,6 +652,7 @@ impl SpaceEngine {
         loss_before: f64,
         loss_after: f64,
         improvement_policy: &crate::authorization::EffectiveImprovementPolicy,
+        rule_context: &crate::authorization::RuleEvaluationContext,
         omega: &crate::witness::WitnessSet,
     ) -> Result<crate::authorization::AuthorizationContext, String> {
         use crate::authorization::{
@@ -791,8 +793,16 @@ impl SpaceEngine {
         let measurement_input_digest =
             MeasurementInputDigest::compute(&measurement_input).map_err(|e| e.to_string())?;
 
-        // Evaluation context digest + space view revision — engine accessor'ları (C6).
-        let evaluation_context_digest = self.current_evaluation_context_digest()?;
+        // **reviewer (Step 4a closure):** Evaluation context digest — captured
+        // `rule_context` kullanır (commit_task_claim'in ürettiği snapshot). Yeniden
+        // `current_evaluation_context_digest()` çağrısı YOK — Q6 ve digest aynı captured
+        // context'ten türetilir (drift risk kapalı).
+        let evaluation_context_digest = crate::authorization::EvaluationContextDigest::compute(
+            &self.config,
+            rule_context,
+            &self.vision.raw,
+        )
+        .map_err(|e| e.to_string())?;
         let base_space_view_revision = self.current_space_view_revision()?;
 
         let basis = AuthorizationBasis {

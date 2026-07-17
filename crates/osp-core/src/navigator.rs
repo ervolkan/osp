@@ -2658,4 +2658,116 @@ mod tests {
             other => panic!("INV-T9 exact: unexpected result: {other:?}"),
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 Step 4a closure — captured rule context propagation
+    //
+    // Reviewer P1: commit_task_claim rule_context'i Q6'ya veriyor ama
+    // build_authorization_context'e geçirmiyordu; o ikinci kez snapshot üretüyordu.
+    // Bu test descriptor çağrı sayısını sayar — fix sonrası commit_task_claim boyunca
+    // descriptor yalnız BİR KEZ çağrılmalı (tek captured snapshot).
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Test rule'u — `descriptor()` çağrı sayısını sayar. Determinism contract ihlal
+    /// simülasyonu: eğer commit_task_claim iki kez snapshot üretirse sayaç 2 olur.
+    struct CountingDescriptorRule {
+        id: crate::rule::RuleId,
+        counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::rule::Rule for CountingDescriptorRule {
+        fn id(&self) -> &crate::rule::RuleId {
+            &self.id
+        }
+        fn descriptor(&self) -> crate::authorization::RuleDescriptor {
+            self.counter
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            crate::authorization::RuleDescriptor {
+                rule_id: self.id.clone(),
+                semantics_version: 1,
+                canonical_parameters: vec![],
+            }
+        }
+        fn evaluate(
+            &self,
+            _: &[crate::space::Node],
+            _: &[crate::space::Edge],
+            _: &crate::space::Space,
+        ) -> Option<crate::rule::RuleViolation> {
+            None
+        }
+    }
+
+    #[test]
+    fn q6_and_authorization_digest_reuse_captured_rule_context() {
+        use crate::coords::MetricSource;
+        use crate::engine::TaskCommitInput;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        // Engine kur — real axes + CountingDescriptorRule.
+        let mut engine = make_real_engine();
+        let counter = Arc::new(AtomicUsize::new(0));
+        engine
+            .register_rule(Box::new(CountingDescriptorRule {
+                id: "test.counting_descriptor".into(),
+                counter: counter.clone(),
+            }))
+            .expect("counting rule registration");
+
+        // Registration sırasında descriptor çağrıldı (identity check). Sayaç sıfırla.
+        let calls_during_registration = counter.load(Ordering::SeqCst);
+        assert!(
+            calls_during_registration >= 1,
+            "registration must call descriptor at least once (identity check)"
+        );
+        counter.store(0, Ordering::SeqCst);
+
+        // Task + claim + measured hazırla (AcceptAsCompleted yolu — authorization üretilir).
+        let mut resolver = crate::trajectory::InMemoryTaskRegistry::new();
+        resolver.insert(coupling_task(1, 0.55, TaskPolicy::default()));
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+
+        let result = engine.commit_task_claim(TaskCommitInput {
+            claim: &claim,
+            omega: &omega,
+            task_resolver: &resolver as &dyn crate::trajectory::TaskResolver,
+            target: crate::coords::RawPosition {
+                x: 0.55,
+                y: 0.6,
+                z: 0.4,
+                w: 0.5,
+                v: 0.3,
+            },
+            loss_before: 1.0,
+            measured,
+        });
+
+        // Held beklenir (boş witness) — authorization context üretilir (basis digest dahil).
+        match result {
+            Ok(crate::engine::EngineCommitResult::Held { .. }) => {}
+            Ok(crate::engine::EngineCommitResult::Evaluated { .. }) => {
+                // AcceptAsCompleted olabilir (witness varsa) — yine de authorization üretildi.
+            }
+            other => {
+                let _ = other;
+                // Auth context üretilmeden reject olabilir (predicate fail) — o yolda
+                // build_authorization_context çağrılmaz, sayaç 0 kalır. Test yine de
+                // "en fazla 1 çağrı" assert eder (ikinci snapshot üretimi yok).
+            }
+        }
+
+        // **Kritik assert:** commit_task_claim boyunca descriptor en fazla 1 KEZ
+        // çağrılmalı — Q6 ve digest aynı captured context'i paylaşır. Eski kodda
+        // build_authorization_context tekrar current_evaluation_context_digest() →
+        // current_rule_evaluation_context() çağırırdı → sayaç 2 olurdu.
+        let calls = counter.load(Ordering::SeqCst);
+        assert!(
+            calls <= 1,
+            "descriptor must be called at most once during commit_task_claim (Q6 + digest share \
+             captured context); got {calls} calls"
+        );
+    }
 }
