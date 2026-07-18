@@ -1395,14 +1395,15 @@ impl EvaluationContextDigest {
     /// `EffectiveVisionGateContext` pub(crate)); sadece engine + testler çağırır. Reviewer:
     /// "intermediate runtime context types are not persisted wire schemas."
     ///
-    /// **DOMAIN_SEPARATOR v1:** No published or compatibility-supported v1
-    /// evaluation-context encoding exists — PR pre-merge. Reload semantics:
-    /// `AuthorizationBasisDigest` is recomputed from the embedded `AuthorizationBasis`
-    /// during `PendingAuthorizationEnvelope::verify()`; the embedded
-    /// `EvaluationContextDigest` is NOT independently recomputed from runtime rule
-    /// and vision contexts on reload (opak bytes olarak saklanır). Step 6 golden
-    /// vector v1 sözleşmesini kilitler; sonraki breaking değişiklik (canonical field/order/
-    /// tag/encoding) explicit v2 kararı gerektirir.
+    /// **DOMAIN_SEPARATOR v1:** Step 6 golden vector
+    /// (`evaluation_context_digest_v1_golden_vector` test) **locks** the first
+    /// compatibility-supported v1 byte contract for the currently defined Q5/Q6
+    /// evaluation models. Reload semantics: `AuthorizationBasisDigest` is recomputed
+    /// from the embedded `AuthorizationBasis` during `PendingAuthorizationEnvelope::verify()`;
+    /// the embedded `EvaluationContextDigest` is NOT independently recomputed from runtime
+    /// rule and vision contexts on reload (opak bytes olarak saklanır). Breaking changes
+    /// (canonical field/order/tag/encoding) after this lock require explicit v2 kararı.
+    /// Golden vector locks byte encoding; runtime semantic correctness (#70) ayrı.
     ///
     /// **Rule + vision versioning:** Rule impl veya vision selection semantics değişip
     /// `semantics_version` artırılırsa context digest değişir → stale measurement tespiti.
@@ -1599,12 +1600,15 @@ impl AuthorizationBasisDigest {
     /// defensive çağrılır (non-normalizing). Encoder sort ETMEZ — try_new canonical sırayı
     /// garanti. `removed_edges` artık identity-only encoding (`is_type_only` YOK).
     ///
-    /// **DOMAIN_SEPARATOR v1:** Step 5 finalizes the unpublished v1 structural-delta
-    /// encoding. Pre-Step-5 development artifacts are not compatibility-supported and
-    /// may fail **either** deserialization (unknown fields / validation) **or** envelope
-    /// digest verification after the encoding change. Step 6 golden vectors (both
-    /// AuthorizationBasisDigest + EvaluationContextDigest) establish the first supported
-    /// v1 byte contract; breaking changes after that require explicit v2.
+    /// **DOMAIN_SEPARATOR v1:** Step 6 golden vectors **establish and lock** the first
+    /// compatibility-supported v1 byte contract for the currently defined canonical models
+    /// (`authorization_basis_digest_v1_golden_vector` + `evaluation_context_digest_v1_golden_vector`
+    /// tests). Pre-Step-5/6 development artifacts are not compatibility-supported and may
+    /// fail **either** deserialization (unknown fields / validation) **or** envelope digest
+    /// verification. Breaking changes after this lock require explicit v2 domain separator.
+    /// Golden vectors lock the **byte encoding** of currently-defined models; they do not
+    /// prove runtime data is correctly produced (#70 per-axis provenance / engine-issued
+    /// measurement remains required).
     pub fn compute(basis: &AuthorizationBasis) -> Result<Self, AuthorizationBasisDigestError> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(Self::DOMAIN_SEPARATOR);
@@ -1871,9 +1875,10 @@ fn encode_bytes(
 }
 
 /// **Step 6 P0:** Canonical f64 → 8 byte (tek primitive). Non-finite reject (NaN + ±Infinity),
-/// -0.0 → 0.0 normalize, little-endian to_bits. `encode_f64` (hasher) + `push_f64` (buffer)
-/// + `encode_optional_f64` hep bu kaynağı kullanır — çift canonicalization yok.
-/// Preimage testleri doğrudan bu fonksiyonu çağırır.
+/// -0.0 → 0.0 normalize, little-endian to_bits.
+///
+/// `encode_f64` (hasher) + `push_f64` (buffer) + `encode_optional_f64` hep bu kaynağı
+/// kullanır — çift canonicalization yok. Preimage testleri doğrudan bu fonksiyonu çağırır.
 fn canonical_f64_bytes(val: f64) -> Result<[u8; 8], AuthorizationBasisDigestError> {
     if !val.is_finite() {
         return Err(AuthorizationBasisDigestError::NonFiniteRejected);

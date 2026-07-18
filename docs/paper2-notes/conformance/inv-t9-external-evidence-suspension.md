@@ -128,6 +128,59 @@ Float canonicalization: NaN rejected, -0.0 normalized, little-endian, sorted
 collections, `f64::to_bits()`. `created_at` NOT in digest. `Clock` trait
 (`SystemClock`/`FixedClock`) — core never calls `SystemTime::now()` directly.
 
+### Canonical decision-basis layers (Step 4a/4b/4c/5 + Step 6 golden vectors)
+
+The basis digest encoding evolved across INV-T9 Steps 4a–5; Step 6 golden vectors
+lock the resulting v1 byte contract.
+
+- **Step 4a — Rule sequence binding:** `RuleEvaluationContext` (ordinal-aware
+  `pub(crate)` snapshot) is shared by Q6 (`check_claim_rules_with_context`) and the
+  digest. Registration order is semantically significant (first-match short-circuit);
+  the digest encodes ordinals, not sorted `rule_id`. `RULE_EVALUATION_SEMANTICS_VERSION`.
+- **Step 4b — Claim-specific effective vision:** `EffectiveVisionGateContext` binds the
+  **effective** vision for a claim (subject + effective vector + source from one decision
+  tree), not the global vision or all role overrides. Authority validation:
+  `None → VisionUnavailable`, `GlobalDefault → VisionAuthorityInsufficient`,
+  subject/source mismatch rejected. Captured-context pattern: one production, shared by
+  Q5 + `build_authorization_context` + digest.
+- **Step 4c — EvaluationContextDigest cleanup:** `EngineConfig` parameter removed from
+  `compute`. Digest binds only Q5 vision-gate + Q6 ordered-rule inputs + semantics
+  versions. Removed: `min_approvers`/`quorum_threshold` (in `CanonicalWitnessPolicy`),
+  `milestone_interval` (persistence cadence), `abstractness` (post-apply derived
+  position; not axis measurement), `merge_ratio_observable` (digest filler).
+- **Step 5 — Defensive structural-delta integrity:** `CanonicalEdgeIdentity`
+  (from,to,kind — `is_type_only` excluded from removal identity). Private fields +
+  custom Deserialize (`deny_unknown_fields`). Identity-based duplicate/cross-list
+  conflict detection (`is_type_only`-independent). Non-normalizing `validate()` +
+  as-is digest encoder (single canonicalization in `try_new`). Typed error taxonomy
+  (`DuplicateNodeId` vs `UnsortedNodes`; `DuplicateEdge` vs `UnsortedNewEdges`/
+  `UnsortedRemovedEdges`).
+
+### v1 byte contract (Step 6 golden vectors)
+
+Step 6 golden vectors (`authorization_basis_digest_v1_golden_vector`,
+`evaluation_context_digest_v1_golden_vector`) **establish and lock** the first
+compatibility-supported v1 byte contract for the currently defined canonical models.
+The expected values (non-normative mirror — executable normative values are the test
+constants):
+
+| Digest | v1 golden hex |
+|--------|---------------|
+| `AuthorizationBasisDigest` | `7f67f2acf97bc9747b9f708437eb6a3454628f3cb4c23541e48e00554a4945f5` |
+| `EvaluationContextDigest` | `b2e7e883e0af8bdbff02e691d39f1574caaeb6be9d1a29e8467a3b99d79f1a5f` |
+
+**Byte contract vs runtime semantic correctness:** Golden vectors lock the canonical
+byte encoding of the currently-defined v1 models. They do **not** prove runtime data is
+correctly produced. #70 (EngineMeasurement pipeline — per-axis provenance,
+engine-issued measurement) remains required for runtime semantic correctness. If #70
+changes the runtime *production path* without changing field/encoding, the v1 byte
+contract is preserved; if it changes fields or encoding, golden mismatch surfaces a
+pre-release v1 revision / v2 decision.
+
+Breaking changes (canonical field/order/tag/encoding) after this lock require an
+explicit v2 domain-separator decision (`osp.authorization-basis.v2\0` /
+`osp.evaluation-context.v2\0`).
+
 ### Pending authorization (Model B + Sabitleme 1)
 
 `PendingAuthorization` carries predicate completion, mutation decision, intended apply
