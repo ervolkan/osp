@@ -1483,16 +1483,9 @@ impl EvaluationContextDigest {
             crate::canonical_tags::CanonicalVisionSourceTag::try_from(&sel.vision_source())
                 .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
         encode_u8(&mut hasher, source_tag.as_u8(), "ec_vision_source_tag");
-        // Subject kind: Global → 0, Role → 1. Global: dummy role tag YOK.
-        match sel.subject {
-            CanonicalVisionSubject::Global => {
-                encode_u8(&mut hasher, 0u8, "ec_subject_kind_global");
-            }
-            CanonicalVisionSubject::Role(role_tag) => {
-                encode_u8(&mut hasher, 1u8, "ec_subject_kind_role");
-                encode_u8(&mut hasher, role_tag.as_u8(), "ec_subject_role_tag");
-            }
-        }
+        // Subject: Global → [0], Role(role) → [1, role_tag]. **Step 6 P0:** shared helper
+        // `encode_vision_subject_to_vec` (inline YOK — preimage testleri aynı kaynağı kullanır).
+        hasher.update(&encode_vision_subject_to_vec(sel.subject));
         // Semantics versions — staleness tespiti için bağlı.
         encode_u32(
             &mut hasher,
@@ -1877,22 +1870,50 @@ fn encode_bytes(
     Ok(())
 }
 
-/// f64 canonical encoding — non-finite reject (NaN + ±Infinity), -0.0 → 0.0, little-endian to_bits.
-///
-/// **reviewer P0-2a:** yalnız NaN değil, ±Infinity de reddedilir. Plan NaN+infinity
-/// rejection öngörüyordu; `is_nan()` kontrolü infinity'yi geçiriyordu.
-fn encode_f64(
-    hasher: &mut blake3::Hasher,
-    val: f64,
-    _field: &str,
-) -> Result<(), AuthorizationBasisDigestError> {
+/// **Step 6 P0:** Canonical f64 → 8 byte (tek primitive). Non-finite reject (NaN + ±Infinity),
+/// -0.0 → 0.0 normalize, little-endian to_bits. `encode_f64` (hasher) + `push_f64` (buffer)
+/// + `encode_optional_f64` hep bu kaynağı kullanır — çift canonicalization yok.
+/// Preimage testleri doğrudan bu fonksiyonu çağırır.
+fn canonical_f64_bytes(val: f64) -> Result<[u8; 8], AuthorizationBasisDigestError> {
     if !val.is_finite() {
         return Err(AuthorizationBasisDigestError::NonFiniteRejected);
     }
     // -0.0 → 0.0 normalize (to_bits farklı: -0.0 = 0x8000000000000000, 0.0 = 0x0).
     let normalized = if val == 0.0 { 0.0f64 } else { val };
-    hasher.update(&normalized.to_bits().to_le_bytes());
+    Ok(normalized.to_bits().to_le_bytes())
+}
+
+/// f64 canonical encoding — non-finite reject (NaN + ±Infinity), -0.0 → 0.0, little-endian to_bits.
+///
+/// **reviewer P0-2a:** yalnız NaN değil, ±Infinity de reddedilir. Plan NaN+infinity
+/// rejection öngörüyordu; `is_nan()` kontrolü infinity'yi geçiriyordu.
+///
+/// **Step 6 P0:** `canonical_f64_bytes` üzerinden (tek kaynak).
+fn encode_f64(
+    hasher: &mut blake3::Hasher,
+    val: f64,
+    _field: &str,
+) -> Result<(), AuthorizationBasisDigestError> {
+    hasher.update(&canonical_f64_bytes(val)?);
     Ok(())
+}
+
+/// **Step 6 P0:** Option\<f64\> → Vec\<u8\> (shared byte helper). Presence tag:
+/// `None → [0]`, `Some(v) → [1] || canonical_f64_bytes(v)`. Tag olmadan aynı byte dizisini
+/// üreten context çiftleri imkânsız (reviewer P0-1 encoding collision fix).
+/// Preimage testleri doğrudan bu fonksiyonu çağırır.
+fn encode_optional_f64_to_vec(
+    value: Option<f64>,
+) -> Result<Vec<u8>, AuthorizationBasisDigestError> {
+    let mut bytes = Vec::with_capacity(9);
+    match value {
+        None => push_u8(&mut bytes, 0),
+        Some(v) => {
+            push_u8(&mut bytes, 1);
+            bytes.extend_from_slice(&canonical_f64_bytes(v)?);
+        }
+    }
+    Ok(bytes)
 }
 
 /// Option\<f64\> canonical encoding — **reviewer P0-1 (encoding collision fix).**
@@ -1903,22 +1924,15 @@ fn encode_f64(
 ///
 /// Presence tag: `None → [0]`, `Some(v) → [1] || canonical_f64(v)`. Tag olmadan aynı
 /// byte dizisini üreten context çiftleri artık imkânsız.
+///
+/// **Step 6 P0:** `encode_optional_f64_to_vec` üzerinden (tek kaynak).
 fn encode_optional_f64(
     hasher: &mut blake3::Hasher,
     value: Option<f64>,
-    field: &str,
+    _field: &str,
 ) -> Result<(), AuthorizationBasisDigestError> {
-    match value {
-        None => {
-            encode_u8(hasher, 0, field);
-            Ok(())
-        }
-        Some(v) => {
-            encode_u8(hasher, 1, field);
-            encode_f64(hasher, v, field)?;
-            Ok(())
-        }
-    }
+    hasher.update(&encode_optional_f64_to_vec(value)?);
+    Ok(())
 }
 
 /// **reviewer P0-1:** Per-axis measurement encoder — value + source tag.
@@ -1945,19 +1959,48 @@ fn encode_canonical_node(
     Ok(())
 }
 
+/// **Step 6 P0:** CanonicalEdge → Vec\<u8\> (shared byte helper, 18 byte).
+/// from(8) + to(8) + kind(1) + is_type_only(1). Preimage testleri doğrudan çağırır.
+fn encode_canonical_edge_to_vec(edge: &CanonicalEdge) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(18);
+    push_u64(&mut bytes, edge.from);
+    push_u64(&mut bytes, edge.to);
+    push_tag(&mut bytes, edge.kind);
+    push_u8(&mut bytes, edge.is_type_only as u8);
+    bytes
+}
+
+/// **Step 6 P0:** CanonicalVisionSubject → Vec\<u8\> (shared byte helper).
+/// Global → [0] (1 byte); Role(role) → [1, role_tag] (2 byte). Preimage testleri
+/// doğrudan çağırır; `EvaluationContextDigest::compute` bu helper'ı kullanır (inline YOK).
+fn encode_vision_subject_to_vec(subject: CanonicalVisionSubject) -> Vec<u8> {
+    match subject {
+        CanonicalVisionSubject::Global => {
+            let mut bytes = Vec::with_capacity(1);
+            push_u8(&mut bytes, 0);
+            bytes
+        }
+        CanonicalVisionSubject::Role(role_tag) => {
+            let mut bytes = Vec::with_capacity(2);
+            push_u8(&mut bytes, 1);
+            push_u8(&mut bytes, role_tag.as_u8());
+            bytes
+        }
+    }
+}
+
 /// **Step 5 P0:** new_edges encoder — AS-IS encode (sort YOK). try_new canonical sırayı
 /// (identity by from,to,kind) garanti eder; encoder tekrar sort etmez → canonical invariant
 /// maskelenemez. `is_type_only` dahil (eklenen edge'in semantik özelliği).
+///
+/// **Step 6 P0:** `encode_canonical_edge_to_vec` üzerinden (tek kaynak).
 fn encode_canonical_edge_vec(
     hasher: &mut blake3::Hasher,
     edges: &[CanonicalEdge],
 ) -> Result<(), AuthorizationBasisDigestError> {
     encode_u64(hasher, edges.len() as u64, "new_edge_count");
     for edge in edges {
-        encode_u64(hasher, edge.from, "edge_from");
-        encode_u64(hasher, edge.to, "edge_to");
-        encode_tag(hasher, edge.kind, "edge_kind");
-        encode_u8(hasher, edge.is_type_only as u8, "edge_is_type_only");
+        hasher.update(&encode_canonical_edge_to_vec(edge));
     }
     Ok(())
 }
@@ -2052,12 +2095,9 @@ fn push_u64(buf: &mut Vec<u8>, val: u64) {
     buf.extend_from_slice(&val.to_le_bytes());
 }
 
+/// **Step 6 P0:** buffer'a canonical f64 yazar — `canonical_f64_bytes` üzerinden (tek kaynak).
 fn push_f64(buf: &mut Vec<u8>, val: f64) -> Result<(), AuthorizationBasisDigestError> {
-    if !val.is_finite() {
-        return Err(AuthorizationBasisDigestError::NonFiniteRejected);
-    }
-    let normalized = if val == 0.0 { 0.0f64 } else { val };
-    buf.extend_from_slice(&normalized.to_bits().to_le_bytes());
+    buf.extend_from_slice(&canonical_f64_bytes(val)?);
     Ok(())
 }
 
@@ -5522,5 +5562,269 @@ v = 0.5
             ),
             "verify must report StructuralDeltaInvalid for unsorted structural delta (before digest check)"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 Step 6 — Golden vectors (v1 byte contract)
+    //
+    // Sınırlı hibrit: hardcoded end-to-end golden digest (regression kilidi) + hedefli
+    // preimage testleri (ilk implementasyon hatası kilidi). Tam bağımsız ikinci encoder YOK.
+    //
+    // Fixture'lar AYRI: authorization fixture yalnız AuthorizationBasis encoding kollarını
+    // kapsar (nested digest'ler explicit sentinel — encoding değişikliği kök nedeni net).
+    // Evaluation fixture ayrı (rule context + vision context).
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Test helper: 32-byte digest → lowercase hex (EvaluationContextDigest to_hex YOK).
+    /// Public API'ye to_hex eklenmez — yalnız test modülünde.
+    fn digest_hex(bytes: &[u8; 32]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// **Step 6 golden authorization fixture** — her AuthorizationBasis encoding kolunu kapsar.
+    /// Nested digest'ler (measurement/evaluation/space) **explicit sentinel** — compute ile
+    /// ÜRETİLMEZ. Bu, AuthorizationBasis golden failure → AuthorizationBasis encoding
+    /// değişti, EvaluationContext golden failure → Q5/Q6 encoding değişti ayrımını korur.
+    ///
+    /// **Not:** AuthorizationBasis rule context / vision taşımaz; bunlar **opaque
+    /// evaluation digest bytes** olarak bağlı (sentinel [0x22; 32]).
+    #[allow(clippy::too_many_lines)]
+    fn golden_authorization_basis_fixture() -> AuthorizationBasis {
+        let module_kind = CanonicalNodeKind::try_from(&crate::space::NodeKind::Module).unwrap();
+        let concept_kind = CanonicalNodeKind::try_from(&crate::space::NodeKind::Concept).unwrap();
+        let production =
+            CanonicalNodeClassification::try_from(&crate::space::NodeClassification::Production)
+                .unwrap();
+        let runtime = CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap();
+        let typesurface =
+            CanonicalNodeRole::try_from(&crate::space::NodeRole::TypeSurface).unwrap();
+        let imports = CanonicalEdgeKind::try_from(&crate::space::EdgeKind::Imports).unwrap();
+        let calls = CanonicalEdgeKind::try_from(&crate::space::EdgeKind::Calls).unwrap();
+        let scip = crate::canonical_tags::CanonicalMetricSourceTag::try_from(
+            &crate::coords::MetricSource::Scip,
+        )
+        .unwrap();
+        let treesitter = crate::canonical_tags::CanonicalMetricSourceTag::try_from(
+            &crate::coords::MetricSource::TreeSitter,
+        )
+        .unwrap();
+
+        // 2 node: biri Some(cohesion), diğeri None — Option<f64> encoding kolları.
+        // try_new id sırasına göre canonicalize eder.
+        let new_nodes = vec![
+            CanonicalNode {
+                id: 7,
+                kind: module_kind,
+                mass: 250.0,
+                cohesion: Some(0.72),
+                classification: production,
+                role: runtime,
+            },
+            CanonicalNode {
+                id: 23,
+                kind: concept_kind,
+                mass: 40.0,
+                cohesion: None,
+                classification: production,
+                role: typesurface,
+            },
+        ];
+        // new_edges: is_type_only: true — eklenen edge semantiği.
+        let new_edges = vec![CanonicalEdge {
+            from: 7,
+            to: 23,
+            kind: imports,
+            is_type_only: true,
+        }];
+        // removed_edges: identity-only (CanonicalEdgeIdentity).
+        let removed_edges = vec![CanonicalEdgeIdentity::new(7, 99, calls)];
+
+        // 2 predicate, TERS canonical sırada verilir — encode_effective_predicate_set
+        // sıralar. Predicate A (Subgraph + Exact), Predicate B (Node + Any).
+        // Canonical byte ordering coverage (sort byte representation'ları üzerinden).
+        let coupling =
+            PredicateAxisTag::try_from(&crate::trajectory::PredicateAxis::Coupling).unwrap();
+        let entropy =
+            PredicateAxisTag::try_from(&crate::trajectory::PredicateAxis::Entropy).unwrap();
+        let le = ComparisonOpTag::try_from(&crate::trajectory::ComparisonOp::Le).unwrap();
+        let gt = ComparisonOpTag::try_from(&crate::trajectory::ComparisonOp::Gt).unwrap();
+        let subgraph_scope = CanonicalPredicateScope::Subgraph(
+            CanonicalSubgraphScope::try_new(vec![7, 23]).unwrap(),
+        );
+        let node_scope = CanonicalPredicateScope::Node(7);
+        // Ters sırada: byte representation büyük olan önce (B daha büyük olsun diye
+        // değerleri seçtik — gt/entropy/node_scope/any kombinasyonu).
+        let predicates = vec![
+            // Predicate B (Node + Any) — canonical byte ordering'de farklı konum.
+            EffectiveMetricPredicate {
+                axis: entropy,
+                operator: gt,
+                threshold: 0.3,
+                scope: node_scope,
+                required_source: EffectiveSourceRequirement::Any,
+                effective_weight: 1.5,
+                effective_tolerance: 0.05,
+            },
+            // Predicate A (Subgraph + Exact).
+            EffectiveMetricPredicate {
+                axis: coupling,
+                operator: le,
+                threshold: 0.55,
+                scope: subgraph_scope,
+                required_source: EffectiveSourceRequirement::Exact(scip),
+                effective_weight: 2.0,
+                effective_tolerance: 0.1,
+            },
+        ];
+
+        AuthorizationBasis {
+            schema_version: 1,
+            task_id: TaskId::from(555u64),
+            claim_identity: ClaimIdentity {
+                claim_id: ClaimId::from(909u64),
+                task_id: TaskId::from(555u64),
+            },
+            claim_author: AgentId::from(321u64),
+            structural_delta: CanonicalStructuralDelta::try_new(
+                new_nodes,
+                new_edges,
+                removed_edges,
+            )
+            .unwrap(),
+            predicate_content: CanonicalPredicateContent {
+                mode: PredicateModeTag::try_from(&crate::trajectory::PredicateMode::All).unwrap(),
+                predicates,
+            },
+            predicate_evaluation: PredicateEvaluationBasis {
+                target_vector: CanonicalRawPosition {
+                    x: 0.42,
+                    y: 0.71,
+                    z: 0.38,
+                    w: 0.61,
+                    v: 0.27,
+                },
+                loss_before: 1.37,
+                loss_after: 0.83,
+                failure_policy: PredicateFailurePolicyTag::try_from(
+                    &crate::trajectory::PredicateFailurePolicy::AcceptImprovement,
+                )
+                .unwrap(),
+                allow_progress_checkpoint: true,
+                min_improvement_delta: 0.07,
+                improvement_policy: EffectiveImprovementPolicy::current_semantics(),
+            },
+            // 5 measurements: farklı değer + farklı source (Some scip, Some treesitter).
+            measured_result: ProvenancedMeasuredResult {
+                coupling: CanonicalAxisMeasurement {
+                    value: 0.68,
+                    source: scip,
+                },
+                cohesion: CanonicalAxisMeasurement {
+                    value: 0.74,
+                    source: treesitter,
+                },
+                instability: CanonicalAxisMeasurement {
+                    value: 0.31,
+                    source: scip,
+                },
+                entropy: CanonicalAxisMeasurement {
+                    value: 0.45,
+                    source: treesitter,
+                },
+                witness_depth: CanonicalAxisMeasurement {
+                    value: 0.12,
+                    source: scip,
+                },
+            },
+            // non-zero tags.
+            deterministic_gate_result: GateDecision::PassedAll,
+            predicate_completion: PredicateCompletion::Completed,
+            mutation_decision: MutationDecision::AcceptAsProgress,
+            intended_apply_target: ApplyTarget::Lane(CommitLane::TrajectoryCheckpoint),
+            // witness_policy: non-default.
+            witness_policy: CanonicalWitnessPolicy {
+                schema_version: 1,
+                min_approvers: 4,
+                quorum_threshold: 3.25,
+                independence_policy: WitnessIndependencePolicyTag::STRICT,
+            },
+            // Nested digest'ler: EXPLICIT SENTINEL (compute ile üretilmez).
+            // AuthorizationBasis encoding değişikliği → golden failure buradan gelir,
+            // nested digest encoding değişikliğinden DEĞİL.
+            measurement_input_digest: MeasurementInputDigest::from_bytes([0x11; 32]),
+            evaluation_context_digest: EvaluationContextDigest::from_bytes([0x22; 32]),
+            base_space_view_revision: SpaceViewRevision {
+                view_id: SpaceViewId::Persisted(PersistedSpaceViewId::from_bytes([
+                    0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x01,
+                    0x23, 0x45, 0x67,
+                ])),
+                sequence: 42,
+                content_digest: SpaceDigest::from_bytes([0x33; 32]),
+            },
+        }
+    }
+
+    /// **Step 6 golden rule context fixture** — 2 ordered rule, farklı id/semver/parameters.
+    fn golden_rule_context_fixture() -> RuleEvaluationContext {
+        RuleEvaluationContext::try_new(vec![
+            OrderedRuleDescriptor {
+                ordinal: 0,
+                descriptor: RuleDescriptor {
+                    rule_id: "structural.no_self_import".to_string(),
+                    semantics_version: 1,
+                    canonical_parameters: vec![0xAB, 0xCD],
+                },
+            },
+            OrderedRuleDescriptor {
+                ordinal: 1,
+                descriptor: RuleDescriptor {
+                    rule_id: "structural.no_orphan_witness".to_string(),
+                    semantics_version: 2,
+                    canonical_parameters: vec![],
+                },
+            },
+        ])
+        .unwrap()
+    }
+
+    /// **Step 6 golden vision context fixture** — Role subject + RoleProfile source +
+    /// non-zero 5-axis + non-zero theta_bound.
+    fn golden_vision_context_fixture() -> EffectiveVisionGateContext {
+        let runtime_tag =
+            crate::canonical_tags::CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime)
+                .unwrap();
+        let selection = EffectiveVisionSelection {
+            effective_vision: crate::vision::VisionVector::with_source(
+                crate::coords::RawPosition {
+                    x: 0.31,
+                    y: 0.62,
+                    z: 0.47,
+                    w: 0.58,
+                    v: 0.19,
+                },
+                crate::vision::VisionSource::RoleProfile,
+            ),
+            subject: CanonicalVisionSubject::Role(runtime_tag),
+            role_inference_semver: ROLE_INFERENCE_SEMANTICS_VERSION,
+            vision_selection_semver: VISION_SELECTION_SEMANTICS_VERSION,
+        };
+        EffectiveVisionGateContext::try_new(selection, 0.37).unwrap()
+    }
+
+    /// **Step 6 PRE-refactor utility** — mevcut encoder ile aday golden hex üretir.
+    /// Refactor sonrası tekrar çalıştır → PRE == POST doğrula (byte-preserving refactor).
+    /// Golden hardcode sonrası KALDIRILIR (reviewer P2).
+    #[test]
+    #[ignore = "developer-only: pre-refactor candidate golden — remove after golden hardcode"]
+    fn print_pre_refactor_golden_candidates() {
+        let authorization =
+            AuthorizationBasisDigest::compute(&golden_authorization_basis_fixture()).unwrap();
+        let evaluation = EvaluationContextDigest::compute(
+            &golden_rule_context_fixture(),
+            &golden_vision_context_fixture(),
+        )
+        .unwrap();
+        println!("PRE authorization={}", authorization.to_hex());
+        println!("PRE evaluation={}", digest_hex(evaluation.as_bytes()));
     }
 }
