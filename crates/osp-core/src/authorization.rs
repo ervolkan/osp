@@ -900,8 +900,11 @@ impl SpaceDigest {
             encode_canonical_node(&mut hasher, &canonical)?;
         }
 
-        // Edge'leri canonical sırala → encode.
-        let canonical_edges: Vec<CanonicalEdge> = space
+        // Edge'leri canonical sırala → encode. **Step 6 P0:** `encode_canonical_edge_vec`
+        // as-is encode eder (Step 5 — structural delta için tek canonicalization try_new'de).
+        // SpaceDigest için sort burada yapılır; `Space.edges` insertion-order'dır, canonical
+        // content identity için sıralama zorunlu. Encoder yeniden sort ETMEZ.
+        let mut canonical_edges: Vec<CanonicalEdge> = space
             .edges
             .iter()
             .map(|e| {
@@ -917,6 +920,7 @@ impl SpaceDigest {
                 })
             })
             .collect::<Result<Vec<_>, AuthorizationBasisDigestError>>()?;
+        canonical_edges.sort_unstable();
         encode_canonical_edge_vec(&mut hasher, &canonical_edges)?;
 
         let hash = hasher.finalize();
@@ -3730,6 +3734,53 @@ mod tests {
     }
 
     #[test]
+    fn space_digest_is_independent_of_edge_insertion_order() {
+        // **Step 6 P0 (scoped):** SpaceDigest canonical content identity — edge insertion
+        // order'a bağımlı OLMAMALI. `encode_canonical_edge_vec` as-is encode eder (Step 5);
+        // sıralama `SpaceDigest::compute` call site'ında yapılır. Aynı node + edge kümesi,
+        // farklı insertion order → aynı digest.
+        use crate::space::{Edge, EdgeKind, Node, NodeKind, Space};
+        let mk_node = |id: u64| Node {
+            id,
+            kind: NodeKind::Module,
+            mass: 10.0,
+            ..Default::default()
+        };
+        let edge_a = Edge {
+            from: 1,
+            to: 2,
+            kind: EdgeKind::Imports,
+            is_type_only: false,
+        };
+        let edge_b = Edge {
+            from: 1,
+            to: 3,
+            kind: EdgeKind::Calls,
+            is_type_only: true,
+        };
+        let mut a = Space::default();
+        a.nodes.insert(1, mk_node(1));
+        a.nodes.insert(2, mk_node(2));
+        a.nodes.insert(3, mk_node(3));
+        a.edges.push(edge_a.clone());
+        a.edges.push(edge_b.clone());
+
+        let mut b = Space::default();
+        b.nodes.insert(1, mk_node(1));
+        b.nodes.insert(2, mk_node(2));
+        b.nodes.insert(3, mk_node(3));
+        // Ters insertion order.
+        b.edges.push(edge_b);
+        b.edges.push(edge_a);
+
+        assert_eq!(
+            SpaceDigest::compute(&a).unwrap(),
+            SpaceDigest::compute(&b).unwrap(),
+            "SpaceDigest must be canonical — independent of edge insertion order"
+        );
+    }
+
+    #[test]
     fn space_digest_excludes_position_field() {
         // **reviewer P0-4 inclusion table:** position engine-derived, dahil DEĞİL.
         // Sadece position farklı, diğer tüm alanlar aynı → aynı digest.
@@ -5821,9 +5872,10 @@ v = 0.5
     // ═══════════════════════════════════════════════════════════════════════════════
 
     /// Golden hex sabitleri — POST-refactor doğrulanmış değerler (PRE == POST).
-    /// DO NOT update as routine test maintenance. A mismatch means the canonical v1
-    /// byte contract changed and requires an explicit compatibility/version decision
-    /// (domain separator bump v1 → v2).
+    /// DO NOT update as routine test maintenance. A mismatch requires an explicit
+    /// compatibility/version decision: a canonical field/order/tag/encoding change
+    /// requires v2; a fixture semantics-version change must be reviewed according to
+    /// its compatibility impact (may or may not warrant v2).
     const AUTHORIZATION_V1_GOLDEN_HEX: &str =
         "7f67f2acf97bc9747b9f708437eb6a3454628f3cb4c23541e48e00554a4945f5";
     const EVALUATION_CONTEXT_V1_GOLDEN_HEX: &str =
