@@ -3,7 +3,7 @@
 //! Bu modül witness authorization bekleme durumunun (INV-T9) veri modelini taşır:
 //! - [`AuthorizationBasis`]: witness'ın yetkilendirdiği claim'in tam kanonik temsili.
 //! - [`AuthorizationBasisDigest`]: BLAKE3 tabanlı, domain-separated, canonical encoding digest.
-//! - [`EvaluationContextDigest`]: vision config + rule-set + semantics versions digest.
+//! - [`EvaluationContextDigest`]: claim-specific effective vision-gate context + ordered rule-evaluation context + semantics versions digest.
 //! - [`SpaceViewRevision`]: store-scoped, lane-qualified revision identity.
 //! - [`Clock`] trait: deterministic time abstraction (core SystemTime::now() çağırmaz).
 //!
@@ -45,12 +45,13 @@ pub type ClaimAuthor = AgentId;
 ///
 /// Node kind/edge kind stable numeric tag olarak (format!("{:?}") DEĞİL).
 ///
-/// **INV-T9 Step 5 (defensive integrity):** Private fields — tek giriş `try_new`
-/// (validating smart constructor). Custom Deserialize `deny_unknown_fields` ile
-/// `try_new` üzerinden geçer → diskten malformed artifact (duplicate/cross-list/
-/// non-finite/unknown-field) deserialize sırasında reject. `validate()` non-normalizing
-/// (sort ETMEZ, mevcut canonical sırayı doğrular) — `AuthorizationBasisDigest::compute`
-/// ve `PendingAuthorizationEnvelope::verify` başında defensive çağrılır.
+/// **INV-T9 Step 5 (defensive integrity):** Private fields — validated construction
+/// through `try_new` (smart constructor) veya trivially-valid `empty()` constructor.
+/// Custom Deserialize `deny_unknown_fields` ile `try_new` üzerinden geçer → diskten
+/// malformed artifact (duplicate/cross-list/non-finite/unknown-field) deserialize
+/// sırasında reject. `validate()` non-normalizing (sort ETMEZ, mevcut canonical sırayı
+/// doğrular) — `AuthorizationBasisDigest::compute` ve `PendingAuthorizationEnvelope::verify`
+/// başında defensive çağrılır.
 ///
 /// `removed_edges` artık `CanonicalEdgeIdentity` (from,to,kind — `is_type_only` HARİÇ).
 /// `new_edges` `CanonicalEdge` olarak kalır (eklenen edge'in `is_type_only` semantiği korunur).
@@ -230,10 +231,18 @@ impl CanonicalStructuralDelta {
     /// try_new sort yaptığı için normal akışta her zaman geçer; bu metod deserialize
     /// edilmiş / araya giren bozuk state'i yakalar (defensive katman).
     pub fn validate(&self) -> Result<(), CanonicalizationError> {
-        // new_nodes: id sıralı + unique (strict ascending).
+        use std::cmp::Ordering;
+        // new_nodes: id strict ascending. Equal → DuplicateNodeId, Greater → UnsortedNodes.
+        // (typed taxonomy — diagnostic doğruluk, integrity reddi aynı).
         for w in self.new_nodes.windows(2) {
-            if w[0].id >= w[1].id {
-                return Err(CanonicalizationError::UnsortedNodes);
+            match w[0].id.cmp(&w[1].id) {
+                Ordering::Equal => {
+                    return Err(CanonicalizationError::DuplicateNodeId(w[0].id));
+                }
+                Ordering::Greater => {
+                    return Err(CanonicalizationError::UnsortedNodes);
+                }
+                Ordering::Less => {}
             }
         }
         // Non-finite node fields.
@@ -247,17 +256,29 @@ impl CanonicalStructuralDelta {
                 }
             }
         }
-        // new_edges: identity sıralı + unique (is_type_only bağımsız).
+        // new_edges: identity strict ascending. Equal → DuplicateEdge, Greater → UnsortedNewEdges.
         // (1,2,Imports,true) ve (1,2,Imports,false) aynı identity → duplicate.
         for w in self.new_edges.windows(2) {
-            if w[0].identity() >= w[1].identity() {
-                return Err(CanonicalizationError::DuplicateEdge);
+            match w[0].identity().cmp(&w[1].identity()) {
+                Ordering::Equal => {
+                    return Err(CanonicalizationError::DuplicateEdge);
+                }
+                Ordering::Greater => {
+                    return Err(CanonicalizationError::UnsortedNewEdges);
+                }
+                Ordering::Less => {}
             }
         }
-        // removed_edges: identity sıralı + unique.
+        // removed_edges: identity strict ascending. Equal → DuplicateEdge, Greater → UnsortedRemovedEdges.
         for w in self.removed_edges.windows(2) {
-            if w[0] >= w[1] {
-                return Err(CanonicalizationError::DuplicateEdge);
+            match w[0].cmp(&w[1]) {
+                Ordering::Equal => {
+                    return Err(CanonicalizationError::DuplicateEdge);
+                }
+                Ordering::Greater => {
+                    return Err(CanonicalizationError::UnsortedRemovedEdges);
+                }
+                Ordering::Less => {}
             }
         }
         // Cross-list conflict: identity üzerinden (is_type_only bağımsız).
@@ -932,7 +953,8 @@ pub(crate) fn canonicalize_node(
 // EvaluationContextDigest — gate policy context
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Gate policy context digest — vision config + rule-set + semantics versions.
+/// Gate policy context digest — claim-specific effective vision-gate context + ordered
+/// rule-evaluation context + semantics versions.
 ///
 /// Vision veya rule-set değişirse eski `PassedAll` sonucu artık geçerli olmayabilir.
 /// Bu digest authorization basis'e bağlı olarak stale measurement tespitini sağlar.
@@ -2139,6 +2161,13 @@ pub enum CanonicalizationError {
     /// `validate()` non-normalizing — sıralama bozuksa deserialize/validate yakalar.
     #[error("new_nodes not in canonical order (strict ascending by id)")]
     UnsortedNodes,
+    /// **Step 5 P1-c (scoped):** new_edges identity sıralı değil (strict ascending).
+    /// Equal → `DuplicateEdge`, Greater → bu variant (typed taxonomy ayrımı).
+    #[error("new_edges not in canonical identity order (strict ascending by from,to,kind)")]
+    UnsortedNewEdges,
+    /// **Step 5 P1-c (scoped):** removed_edges identity sıralı değil (strict ascending).
+    #[error("removed_edges not in canonical identity order (strict ascending by from,to,kind)")]
+    UnsortedRemovedEdges,
     /// **reviewer P1-1:** deserialize sırasında geçersiz canonical tag (örn 255).
     /// Diskten yüklenen artifact valide edilmeden kullanılamaz.
     #[error("invalid canonical tag for {type_name}: {tag}")]
@@ -3518,10 +3547,9 @@ mod tests {
 
     #[test]
     fn canonical_structural_delta_rejects_duplicate_node_id() {
-        // **reviewer P1 + Step 5:** duplicate node ID reddedilmeli. try_new sort eder;
-        // iki id=5 → validate'de `w[0].id >= w[1].id` → `UnsortedNodes` (duplicate =
-        // canonical sıralama ihlali). Ayrı DuplicateNodeId variantı yerine tek semantik:
-        // canonical node sırası strict ascending olmalı.
+        // **reviewer P1 + Step 5 + scoped P1-c:** duplicate node ID reddedilmeli.
+        // try_new sort eder; iki id=5 → validate'de `Ordering::Equal` → `DuplicateNodeId(5)`.
+        // Typed taxonomy: Equal = duplicate, Greater = UnsortedNodes (scoped review düzeltme).
         let node = || CanonicalNode {
             id: 5,
             kind: CanonicalNodeKind::try_from(&crate::space::NodeKind::Module).unwrap(),
@@ -3534,7 +3562,10 @@ mod tests {
             role: CanonicalNodeRole::try_from(&crate::space::NodeRole::Runtime).unwrap(),
         };
         let err = CanonicalStructuralDelta::try_new(vec![node(), node()], vec![], vec![]);
-        assert!(matches!(err, Err(CanonicalizationError::UnsortedNodes)));
+        assert!(matches!(
+            err,
+            Err(CanonicalizationError::DuplicateNodeId(5))
+        ));
     }
 
     #[test]
@@ -5413,51 +5444,83 @@ v = 0.5
     }
 
     #[test]
-    fn basis_digest_compute_validates_structural_delta() {
-        // **Step 5 P0:** AuthorizationBasisDigest::compute başında validate çağrılır.
-        // Bozuk structural delta (duplicate edge identity) → EncodingFailed.
-        // try_new zaten reject eder; bu test defensive compute katmanını doğrular
-        // (deserialize bypass edilse bile compute yakalar).
-        // Geçerli basis → compute başarılı; manuel bozuk basis imkânsız (private fields +
-        // try_new). Bu yüzden test validate()'ın compute'a entegrasyonunu dolaylı doğrular:
-        // geçerli basis compute edilir (validate geçer).
-        let valid_basis = sample_basis();
-        let result = AuthorizationBasisDigest::compute(&valid_basis);
+    fn basis_digest_compute_rejects_invalid_structural_delta() {
+        // **Step 5 P0 + scoped P1-a:** AuthorizationBasisDigest::compute başında validate
+        // çağrılır. Gerçek invalid delta (duplicate edge identity) enjekte edilir —
+        // compute validate'de EncodingFailed döner. Defensive çağrı kaldırılırsa test kırılır.
+        //
+        // Test modülü parent module'ün private alanlarına erişebilir → struct literal ile
+        // try_new'i bypass eden bozuk delta üretilebilir (defensive katmanı test etmek için).
+        let imports = CanonicalEdgeKind::try_from(&crate::space::EdgeKind::Imports).unwrap();
+        // Aynı identity, farklı is_type_only → duplicate (validate Ordering::Equal).
+        let invalid = CanonicalStructuralDelta {
+            new_nodes: vec![],
+            new_edges: vec![
+                CanonicalEdge {
+                    from: 1,
+                    to: 2,
+                    kind: imports,
+                    is_type_only: true,
+                },
+                CanonicalEdge {
+                    from: 1,
+                    to: 2,
+                    kind: imports,
+                    is_type_only: false,
+                },
+            ],
+            removed_edges: vec![],
+        };
+        let mut basis = sample_basis();
+        basis.structural_delta = invalid;
+        let error = AuthorizationBasisDigest::compute(&basis).unwrap_err();
         assert!(
-            result.is_ok(),
-            "valid basis must compute digest (validate passes): {:?}",
-            result.err()
+            matches!(error, AuthorizationBasisDigestError::EncodingFailed(_)),
+            "compute must reject invalid structural delta via validate(): got {error:?}"
         );
     }
 
     #[test]
     fn pending_envelope_verify_reports_structural_delta_invalid() {
-        // **Step 5 P0:** Envelope verify structural delta validation yapar.
-        // PendingAuthorizationEnvelope struct literal — private fields + try_new olduğu
-        // için manuel bozuk delta enjekte edilemez. Bu test validate()'ın verify'a
-        // entegrasyonunu doğrular: geçerli envelope verify başarılı; StructuralDeltaInvalid
-        // variantı mevcut (compiler-enforced via deny_unknown_fields + try_new).
+        // **Step 5 P0 + scoped P1-b:** Envelope verify structural delta validation yapar.
+        // Gerçek invalid delta (unsorted new_edges) taşıyan envelope üzerinde verify()
+        // çağrılır → StructuralDeltaInvalid. verify()'daki structural validation kaldırılırsa
+        // test kırılır (BasisDigestMismatch yerine StructuralDeltaInvalid beklenir).
         //
-        // Bozuk delta enjeksiyonu deserialize yoluyla: duplicate node JSON → deserialize
-        // fail (custom Deserialize try_new). verify()'a ulaşamaz. Bu nedenle test
-        // StructuralDeltaInvalid variantının varlığını + geçerli envelope'un verify
-        // başarısını doğrular (defensive katman aktif).
-        let malformed = r#"{
-            "new_nodes": [
-                {"id":5,"kind":0,"mass":1.0,"classification":0,"role":4},
-                {"id":5,"kind":0,"mass":1.0,"classification":0,"role":4}
+        // Validation'ın BasisDigestMismatch kontrolünden ÖNCE çalıştığını da sabitler.
+        let imports = CanonicalEdgeKind::try_from(&crate::space::EdgeKind::Imports).unwrap();
+        // Ters sıra (9,10 önce, 1,2 sonra) → Ordering::Greater → UnsortedNewEdges.
+        let invalid = CanonicalStructuralDelta {
+            new_nodes: vec![],
+            new_edges: vec![
+                CanonicalEdge {
+                    from: 9,
+                    to: 10,
+                    kind: imports,
+                    is_type_only: false,
+                },
+                CanonicalEdge {
+                    from: 1,
+                    to: 2,
+                    kind: imports,
+                    is_type_only: false,
+                },
             ],
-            "new_edges": [],
-            "removed_edges": []
-        }"#;
-        let result: Result<CanonicalStructuralDelta, _> = serde_json::from_str(malformed);
-        assert!(
-            result.is_err(),
-            "malformed structural delta must fail deserialize before verify"
-        );
-        // StructuralDeltaInvalid variant mevcut — verify'da defensive çağrı garantili.
-        let _variant_exists = |e: PendingAuthorizationLoadError| {
-            matches!(e, PendingAuthorizationLoadError::StructuralDeltaInvalid(_))
+            removed_edges: vec![],
         };
+        let mut basis = sample_basis();
+        basis.structural_delta = invalid;
+        let envelope = PendingAuthorizationEnvelope {
+            schema: PENDING_AUTHORIZATION_SCHEMA.to_string(),
+            record: sample_pending_record(),
+            authorization_basis: basis,
+        };
+        assert!(
+            matches!(
+                envelope.verify(),
+                Err(PendingAuthorizationLoadError::StructuralDeltaInvalid(_))
+            ),
+            "verify must report StructuralDeltaInvalid for unsorted structural delta (before digest check)"
+        );
     }
 }
