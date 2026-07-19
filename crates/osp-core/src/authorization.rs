@@ -8205,6 +8205,45 @@ v = 0.5
     }
 
     #[test]
+    fn rejected_disposition_deserialize_rejects_unknown_field() {
+        // **P2 simetrik test:** Rejected varyantı için de unknown field reject.
+        // Custom deserializer iki ayrı wire struct kullandığı için her iki varyant
+        // bağımsız test edilmeli.
+        use crate::witness::{NonEmptyWitnessRejections, WitnessRejection};
+        let basis_digest = AuthorizationBasisDigest::from_hex(
+            "8888888888888888888888888888888888888888888888888888888888888888",
+        )
+        .unwrap();
+        let evidence = SuspendedAttemptEvidence::try_new(
+            TaskId::from(1u64),
+            ClaimId::from(42u64),
+            basis_digest,
+            AttemptNumber::try_from(1u64).unwrap(),
+            SuspendedAttemptDisposition::Rejected {
+                reasons: NonEmptyWitnessRejections::from_single(WitnessRejection {
+                    witness: 5u64,
+                    rationale: None,
+                }),
+                snapshot: WitnessQuorumSnapshot {
+                    approvers: 0,
+                    required_approvers: 2,
+                    support: 0.0,
+                    required_support: 1.5,
+                },
+            },
+        )
+        .unwrap();
+        let mut json = serde_json::to_value(&evidence).unwrap();
+        json["disposition"]["unknown_rejected_field"] = serde_json::json!(42);
+        let json_str = serde_json::to_string(&json).unwrap();
+        let result: Result<SuspendedAttemptEvidence, _> = serde_json::from_str(&json_str);
+        assert!(
+            result.is_err(),
+            "unknown Rejected disposition field must be rejected (per-variant strict wire)"
+        );
+    }
+
+    #[test]
     fn envelope_constructor_rejects_basis_internal_task_id_mismatch() {
         // **P1 basis iç task_id invariant:** basis.task_id != claim_identity.task_id.
         // (record sample_pending_record'tan geliyor, bad_basis claim_identity.task_id farklı —
@@ -8484,6 +8523,86 @@ v = 0.5
     }
 
     #[test]
+    fn reversed_rejection_inputs_persist_idempotently_to_same_artifact() {
+        // **P1-1 closure (false conflict kapandı):** Aynı logical rejection kümesi
+        // farklı input sırasıyla → aynı evidence → aynı digest → aynı artifact path.
+        //
+        // PendingAuthorizationEnvelope Held-only surface-specific — Rejected evidence
+        // ile kurulamaz. Bu nedenle test evidence-level idempotency'yi doğrular:
+        // reversed inputs → equal evidence → equal digest → equal serialized form.
+        // Store path evidence digest'ten türediği için same digest = same path
+        // (store identity contract).
+        use crate::witness::{NonEmptyWitnessRejections, WitnessRejection};
+        let basis_digest = AuthorizationBasisDigest::from_hex(
+            "5555555555555555555555555555555555555555555555555555555555555555",
+        )
+        .unwrap();
+        let r1 = WitnessRejection {
+            witness: 10u64,
+            rationale: Some("a".into()),
+        };
+        let r2 = WitnessRejection {
+            witness: 20u64,
+            rationale: None,
+        };
+
+        // Evidence A: [r1, r2] sırasıyla.
+        let evidence_a = SuspendedAttemptEvidence::try_new(
+            TaskId::from(1u64),
+            ClaimId::from(42u64),
+            basis_digest.clone(),
+            AttemptNumber::try_from(1u64).unwrap(),
+            SuspendedAttemptDisposition::Rejected {
+                reasons: NonEmptyWitnessRejections::from_vec(vec![r1.clone(), r2.clone()]),
+                snapshot: WitnessQuorumSnapshot {
+                    approvers: 0,
+                    required_approvers: 2,
+                    support: 0.0,
+                    required_support: 1.5,
+                },
+            },
+        )
+        .unwrap();
+        // Evidence B: [r2, r1] sırasıyla (API normalize eder → same evidence).
+        let evidence_b = SuspendedAttemptEvidence::try_new(
+            TaskId::from(1u64),
+            ClaimId::from(42u64),
+            basis_digest,
+            AttemptNumber::try_from(1u64).unwrap(),
+            SuspendedAttemptDisposition::Rejected {
+                reasons: NonEmptyWitnessRejections::from_vec(vec![r2, r1]),
+                snapshot: WitnessQuorumSnapshot {
+                    approvers: 0,
+                    required_approvers: 2,
+                    support: 0.0,
+                    required_support: 1.5,
+                },
+            },
+        )
+        .unwrap();
+
+        // Equal evidence (canonical stored representation).
+        assert_eq!(
+            evidence_a, evidence_b,
+            "API normalizes → reversed inputs produce equal evidence"
+        );
+        // Equal digest (store identity — same path).
+        let digest_a = SuspendedAttemptEvidenceDigest::compute(&evidence_a).unwrap();
+        let digest_b = SuspendedAttemptEvidenceDigest::compute(&evidence_b).unwrap();
+        assert_eq!(
+            digest_a, digest_b,
+            "equal evidence → equal digest → same store path (no false conflict)"
+        );
+        // Serialized form identical (persist idempotency).
+        let json_a = serde_json::to_string(&evidence_a).unwrap();
+        let json_b = serde_json::to_string(&evidence_b).unwrap();
+        assert_eq!(
+            json_a, json_b,
+            "equal evidence → identical serialized bytes (idempotent persist)"
+        );
+    }
+
+    #[test]
     fn persist_verifies_before_creating_artifact() {
         // **N4:** persist() verify() çağırır, tüm side-effect'lerden önce.
         // Valid envelope → persist başarılı.
@@ -8494,26 +8613,83 @@ v = 0.5
         assert!(result.is_ok(), "valid envelope must persist");
     }
 
+    /// Helper: gerçek inconsistent envelope üret (in-memory struct literal).
+    /// Envelope private fields ama test modülü parent modülün private'larına erişir.
+    /// record.task_id basis.task_id ile çelişiyor → verify reject.
+    fn sample_inconsistent_envelope() -> PendingAuthorizationEnvelope {
+        let basis = sample_basis();
+        let mut record = sample_pending_record();
+        // record.task_id'yı basis ile çelişecek şekilde değiştir.
+        record.task_id = 999; // basis.task_id = 1
+                              // Evidence da güncelle ki record-internal validation geçsin (task_id ↔ evidence).
+        let evidence = SuspendedAttemptEvidence::try_new(
+            record.task_id,
+            record.claim_id,
+            record.authorization_basis_digest.clone(),
+            record.attempt_num,
+            SuspendedAttemptDisposition::Held {
+                hold_reason: record.witness_hold_reason.clone(),
+                snapshot: record.witness_snapshot.clone(),
+            },
+        )
+        .unwrap();
+        record.suspended_attempt_evidence = evidence;
+        record.evidence_digest =
+            SuspendedAttemptEvidenceDigest::compute(&record.suspended_attempt_evidence).unwrap();
+        // Struct literal — private fields ama test modülünden erişilebilir.
+        // verify() record↔basis task_id mismatch yakalar (InvalidEnvelope via persist).
+        PendingAuthorizationEnvelope {
+            schema: PENDING_AUTHORIZATION_SCHEMA.to_string(),
+            record,
+            authorization_basis: basis,
+        }
+    }
+
     #[test]
     fn filesystem_store_rejects_invalid_envelope() {
-        // **N4:** Invalid envelope (in-memory bypass) → persist reject.
-        // Envelope private fields → struct literal imkânsız, ama custom Deserialize
-        // ile invalid envelope kurmayı dene. Aslında bu test persist-boundary verify
-        // çağrıldığını kanıtlar — valid envelope persist başarılı, zaten doğrulandı.
-        // İmzasının parçası olarak InvalidEnvelope varyantı mevcut.
-        let _ = PendingAuthorizationStoreError::InvalidEnvelope("test".into());
-        // Varyant compile-time mevcut — persist-boundary verify contract'ı locked.
+        // **N4 negative test:** Gerçek inconsistent envelope → persist reject
+        // (InvalidEnvelope). In-memory struct literal bypass persist-boundary
+        // verify ile yakalanır.
+        let dir = temp_dir();
+        let mut store = FilesystemPendingAuthorizationStore::new(&dir);
+        let invalid = sample_inconsistent_envelope();
+        let result = store.persist(&invalid);
+        assert!(
+            matches!(
+                result,
+                Err(PendingAuthorizationStoreError::InvalidEnvelope(_))
+            ),
+            "inconsistent envelope must be rejected at persist-boundary verify: {result:?}"
+        );
+    }
+
+    #[test]
+    fn filesystem_store_invalid_envelope_creates_no_artifact() {
+        // **N4 fail-before-side-effects:** Invalid persist sonrası .osp/pending-authorizations
+        // dizini bile oluşmaz (verify tüm side-effect'lerden önce).
+        let dir = temp_dir();
+        let mut store = FilesystemPendingAuthorizationStore::new(&dir);
+        let invalid = sample_inconsistent_envelope();
+        let _ = store.persist(&invalid);
+        let pending_dir = dir.join(".osp").join("pending-authorizations");
+        assert!(
+            !pending_dir.exists(),
+            "invalid envelope must not create any artifact directory (verify before side effects)"
+        );
     }
 
     #[test]
     fn null_store_rejects_invalid_envelope() {
-        // Null store da persist-boundary verify yapıyor (trait contract).
-        let envelope = sample_valid_envelope();
+        // **N4 negative test:** Null store da persist-boundary verify yapıyor.
+        let invalid = sample_inconsistent_envelope();
         let mut store = crate::authorization::NullPendingAuthorizationStore;
-        let result = store.persist(&envelope);
+        let result = store.persist(&invalid);
         assert!(
-            result.is_ok(),
-            "valid envelope must persist via null store (verify passes)"
+            matches!(
+                result,
+                Err(PendingAuthorizationStoreError::InvalidEnvelope(_))
+            ),
+            "null store must reject inconsistent envelope at persist-boundary: {result:?}"
         );
     }
 

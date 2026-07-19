@@ -244,16 +244,23 @@ scoped review):
   only Rejected.
 
 **Held/Rejected verification scope:**
-- Held evidence propagation is verified end-to-end through the navigator (when the
-  fixture produces Held).
+- Held evidence production path: when the fixture produces `AwaitingWitnesses`, exact
+  assertions verify evidence propagation (attempt_num, disposition Held, record↔evidence
+  consistency, evidence_digest == recomputed, receipt identity == pending identity).
+- **Held exact test fixture gap (known limitation):** Current fixtures may produce
+  `ExceededManeuverLimit`/`NoMoreProposals` instead of Held (predicate fail retries).
+  Deterministic Held fixture (predicate satisfied → Held reliably) requires fixture
+  redesign — separate work. When the test does not reach the Held path, it logs a
+  NOTE and passes without verifying evidence production (not silently treated as
+  success; the gap is explicit). Q3 wiring is not the blocker here (Q1/Q2 already
+  produce Held); deterministic fixture is.
 - Rejected evidence construction is verified through the production mapper
-  (`revision_required_from_rejection`) used by the navigator's Rejected arm
-  (`rejected_mapper_constructs_canonical_revision_evidence` test).
+  (`make_revision_required_from_rejection` pub(crate) free function) used by the
+  navigator's Rejected arm (`rejected_mapper_constructs_canonical_revision_evidence`
+  test calls the helper directly — no inline construction in test or navigator arm).
 - Upstream production reachability of the Rejected arm is currently absent because
   witness Q3 honest-reject signaling is not wired; this is tracked separately in #73.
-- Deterministic Held fixture (predicate satisfied → Held) is a fixture-design gap;
-  current fixtures may produce ExceededManeuverLimit/NoMoreProposals instead. This
-  gap is documented and not silently treated as evidence production success.
+
 
 ### Navigator-owned persistence (P0-1)
 
