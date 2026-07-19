@@ -1585,6 +1585,7 @@ mod tests {
     fn make_engine() -> SpaceEngine {
         let space = Space::new();
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -1694,6 +1695,7 @@ mod tests {
         }
 
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -1741,6 +1743,7 @@ mod tests {
         let mut config = EngineConfig::default_calibrated();
         config.milestone_interval = 2; // every 2 commits
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -1788,6 +1791,7 @@ mod tests {
         space.insert_node(mod_node(2));
 
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -1820,6 +1824,7 @@ v = 0.5
 "#;
         let config = VisionConfig::from_str(toml).unwrap();
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -1990,6 +1995,7 @@ v = 0.5
 
     fn make_engine_with_rules() -> SpaceEngine {
         let cs = CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -2103,6 +2109,7 @@ v = 0.5
     /// Full 5-axis engine for position computation tests (coupling + cohesion + instability + entropy + witness)
     fn make_engine_full() -> SpaceEngine {
         let cs = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -2299,6 +2306,7 @@ v = 0.5
             },
         );
         let cs = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(0.0),
             WitnessDepthAxis::from_witness(0.0, 0),

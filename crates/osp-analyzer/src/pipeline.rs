@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use osp_core::axes::{CouplingAxis, InstabilityAxis};
-use osp_core::coords::Axis;
+use osp_core::coords::{Axis, MetricSource};
 use osp_core::space::{Edge, EdgeKind, Node as CoreNode, NodeId, NodeKind, Space};
 
 use crate::abstractness::{ModuleAbstractness, RepoAbstractness};
@@ -191,9 +191,22 @@ pub fn analyze_repo_with_config(
         let coupling = coupling_axis.compute(node, &space);
         let instability = instability_axis.compute(node, &space);
         let cohesion = compute_module_cohesion(fd.path.as_path(), &repo, &semantic_index);
-        // Wire cohesion into Node → CoordinateSystem::CohesionAxis reads it (per-node y-axis)
+        // **INV-T9 #70 (P0):** Wire cohesion into Node → CoordinateSystem::CohesionAxis reads
+        // it (per-node y-axis). Yalnız gerçek SCIP sonucu `Some` — Placeholder/Heuristic/
+        // TreeSitter/Mixed `None` (CohesionAxis fallback→Placeholder). Bu invariant olmadan
+        // CohesionAxis `observed_source: Scip` Placeholder value'ları yanlış Scip olarak
+        // yükseltirdi (PR #69 INV-T9 #70 P0 düzeltmesi).
+        //
+        // Exhaustive match (P1-4): yeni source eklendiğinde compiler epistemik kararı
+        // yeniden incelemeye zorlar.
         if let Some(n) = space.nodes.get_mut(&node_id) {
-            n.cohesion = Some(cohesion.value);
+            n.cohesion = match cohesion.source {
+                MetricSource::Scip => Some(cohesion.value),
+                MetricSource::TreeSitter
+                | MetricSource::Placeholder
+                | MetricSource::Heuristic
+                | MetricSource::Mixed => None,
+            };
         }
         module_metrics.insert(
             node_id,
@@ -721,6 +734,16 @@ mod tests {
             assert_eq!(m.coupling.source, MetricSource::TreeSitter);
             // Cohesion placeholder (SCIP pending)
             assert_eq!(m.cohesion.source, MetricSource::Placeholder);
+        }
+
+        // **INV-T9 #70 (P0):** SCIP olmadan node.cohesion None olmalı — CohesionAxis
+        // fallback→Placeholder ile placeholder'ı Scip olarak yükseltme açığı kapanır.
+        for (_id, n) in &result.space.nodes {
+            assert!(
+                n.cohesion.is_none(),
+                "INV-T9 #70 P0: without SCIP, node.cohesion must be None (got {:?})",
+                n.cohesion
+            );
         }
     }
 

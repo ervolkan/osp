@@ -16,7 +16,7 @@
 
 use crate::model::{DepGraph, EdgeKind, NodeKind, RepoAnalysis, WitnessProfile};
 use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
-use osp_core::coords::{CoordinateSystem, RawPosition};
+use osp_core::coords::{CoordinateSystem, MetricSource, RawPosition};
 use osp_core::space::{Edge, EdgeKind as CoreEdgeKind, Node, NodeId, Space};
 use osp_core::vision::{compute_derived, CosineDeviation, VisionVector};
 use osp_core::witness::{classify_status, WitnessStatus};
@@ -183,8 +183,11 @@ pub fn run_v2_pipeline(analysis: &RepoAnalysis) -> V2Report {
     // Coordinate system — 5 raw eksen
     // **INV-T9 Adım 3:** default_raw_five validated Result döner. Hardcoded benzersiz
     // axis'lerle registration her zaman başarılı; spike aracı → expect kabul edilebilir.
+    // **INV-T9 #70:** spike placeholder fixture — topology_source = Placeholder, observed
+    // cohesion = Placeholder. Production preset TreeSitter+Scip spike'a uygulanmaz.
     let cs = CoordinateSystem::default_raw_five(
-        CohesionAxis::from_normalized(0.5), // placeholder (Faz 3 SCIP)
+        MetricSource::Placeholder,
+        CohesionAxis::try_from_normalized(0.5).expect("spike fallback cohesion 0.5"),
         EntropyAxis::from_commit_entropy(analysis.witness.commit_entropy),
         WitnessDepthAxis::from_witness(
             analysis.witness.witnessed_ratio,

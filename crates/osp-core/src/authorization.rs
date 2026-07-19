@@ -543,8 +543,12 @@ impl TryFrom<&crate::witness::WitnessSet> for CanonicalWitnessPolicy {
 ///
 /// **v1 schema:** Henüz yayınlanmadı; bu commit ilk v1 representation'ı finalizes.
 /// Basis digest taşır (bound), full context taşımaz (readable) — self-description ileride.
+///
+/// **INV-T9 #70 (semantics v2):** AxisDescriptor semantics_version 1→2 (source ID
+/// encoding). Global measurement semantics version da 1→2 bump oldu — axis descriptor
+/// + global version aynı preimage'da.
 pub const MEASUREMENT_INPUT_SCHEMA_VERSION: u32 = 1;
-pub const MEASUREMENT_SEMANTICS_VERSION: u32 = 1;
+pub const MEASUREMENT_SEMANTICS_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct MeasurementInputContext {
@@ -730,6 +734,16 @@ impl MeasurementInputDigest {
 
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **INV-T9 #70:** Hex encoding for golden vector pinning (AuthorizationBasisDigest
+    /// pattern — `format!("{byte:02x}")` walk). Test/regression için.
+    pub fn to_hex(&self) -> String {
+        let mut hex = String::with_capacity(64);
+        for byte in &self.0 {
+            hex.push_str(&format!("{byte:02x}"));
+        }
+        hex
     }
 }
 
@@ -4959,34 +4973,26 @@ mod tests {
     // (reviewer P0-1..P0-3, P1 + plan-review düzeltmeleri)
     // ═══════════════════════════════════════════════════════════════════════════════
 
-    /// **INV-T9 Adım 3:** Yeni dar model — context axis descriptor listesinden üretilir.
-    /// `entropy`/`witness_depth` artık context'te DEĞİL; axis descriptor'lara gömülü
-    /// (effective normalized value). Bu helper test için 5 core axis descriptor'ı üretir.
+    /// **INV-T9 #70 (P1-8):** Helper artık manuel mirror DEĞİL — gerçek axis
+    /// constructor'larından üretilen gerçek `CoordinateSystem`'den türetilir. Test
+    /// helper'ın düşündüğü descriptor'ı değil production axis'in gerçekten ürettiği
+    /// descriptor'ı kilitler. Source descriptor encoding (semantics v2) dahil.
     fn sample_measurement_context() -> MeasurementInputContext {
-        use crate::coords::{AxisDescriptor, AxisParameterEncoder};
-        // 5 core axis descriptor — effective normalized values ile.
-        let mk = |id: &str, marker: u8, value: f64| -> AxisDescriptor {
-            let mut params = AxisParameterEncoder::new();
-            params.push_u8(marker);
-            params.push_f64(value).unwrap();
-            AxisDescriptor::try_new(id, 1, params).unwrap()
-        };
-        let descriptors = vec![
-            mk("coupling", 0, 0.0), // parametresiz marker, value placeholder
-            mk("cohesion", 1, 0.5),
-            mk("instability", 0, 0.0),
-            mk("entropy", 2, 0.5),
-            mk("witness_depth", 3, 0.3),
-        ];
-        MeasurementInputContext::try_new(descriptors).unwrap()
+        let coords = crate::coords::CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::TreeSitter,
+            crate::axes::CohesionAxis::try_with_observed_source(crate::coords::MetricSource::Scip)
+                .expect("Scip is a valid direct source"),
+            crate::axes::EntropyAxis::from_commit_entropy(6.5),
+            crate::axes::WitnessDepthAxis::from_witness(0.5, 3),
+        )
+        .expect("valid measurement fixture");
+        MeasurementInputContext::try_from(&coords).expect("valid measurement context")
     }
 
     #[test]
-    fn measurement_digest_distinguishes_none_some_zero_positions() {
-        // **INV-T9 Adım 3 (yeni model):** context artık axis descriptor listesi taşıyor;
-        // Option<f64> presence collision eski modelde kaldı. Yeni test: farklı axis
-        // descriptor canonical_parameters → farklı digest. Aynı descriptor listesi →
-        // aynı digest (stability).
+    fn measurement_digest_distinguishes_different_entropy_effective_value() {
+        // **INV-T9 #70:** Stability + differentiation. Aynı descriptor listesi → aynı digest;
+        // farklı entropy effective value → farklı digest.
         let ctx_a = sample_measurement_context();
         let ctx_b = sample_measurement_context();
         let d_a = MeasurementInputDigest::compute(&ctx_a).unwrap();
@@ -4996,26 +5002,63 @@ mod tests {
             "identical descriptor list → same digest (stability)"
         );
 
-        // Farklı entropy axis descriptor (farklı canonical_parameters) → farklı digest.
-        use crate::coords::{AxisDescriptor, AxisParameterEncoder};
-        let mk = |id: &str, marker: u8, value: f64| -> AxisDescriptor {
-            let mut params = AxisParameterEncoder::new();
-            params.push_u8(marker);
-            params.push_f64(value).unwrap();
-            AxisDescriptor::try_new(id, 1, params).unwrap()
-        };
-        let descriptors_changed = vec![
-            mk("coupling", 0, 0.0),
-            mk("cohesion", 1, 0.5),
-            mk("instability", 0, 0.0),
-            mk("entropy", 2, 0.9), // farklı effective value
-            mk("witness_depth", 3, 0.3),
-        ];
-        let ctx_c = MeasurementInputContext::try_new(descriptors_changed).unwrap();
+        // Farklı entropy effective value → farklı digest.
+        let coords_changed = crate::coords::CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::TreeSitter,
+            crate::axes::CohesionAxis::try_with_observed_source(crate::coords::MetricSource::Scip)
+                .unwrap(),
+            crate::axes::EntropyAxis::from_commit_entropy(9.0), // farklı effective value
+            crate::axes::WitnessDepthAxis::from_witness(0.5, 3),
+        )
+        .unwrap();
+        let ctx_c = MeasurementInputContext::try_from(&coords_changed).unwrap();
         let d_c = MeasurementInputDigest::compute(&ctx_c).unwrap();
         assert_ne!(
             d_a, d_c,
             "axis descriptor change (entropy effective value) must produce different digest"
+        );
+    }
+
+    /// **INV-T9 #70 Commit 1 v1 byte contract:** Real axis constructor'larından üretilen
+    /// measurement input digest pinned. Source descriptor encoding (TreeSitter topology
+    /// + Scip observed cohesion + Heuristic entropy/witness) dahil — descriptor semantics
+    /// v2 değişince digest değişir, golden catches drift. Schema hâlâ v1 (yalnız content
+    /// değişti).
+    const MEASUREMENT_SEMANTICS_V2_GOLDEN_HEX: &str =
+        "9ca484c73dae2ee6e27a945ee19e00df5a2ccfc028b8b05c615ab954f144336c";
+
+    #[test]
+    fn measurement_semantics_v2_matches_golden() {
+        let ctx = sample_measurement_context();
+        let digest = MeasurementInputDigest::compute(&ctx).unwrap();
+        assert_eq!(
+            digest.to_hex(),
+            MEASUREMENT_SEMANTICS_V2_GOLDEN_HEX,
+            "INV-T9 #70: measurement input digest preimage değişti — golden'ı güncelleyin"
+        );
+    }
+
+    #[test]
+    fn topology_source_changes_measurement_input_digest() {
+        // **INV-T9 #70 (P1-1 source-difference regression):** topology_source
+        // (Coupling+Instability graph topology source) digest'e gerçekten bağlı.
+        let mk = |topology| {
+            let coords = crate::coords::CoordinateSystem::default_raw_five(
+                topology,
+                crate::axes::CohesionAxis::new(),
+                crate::axes::EntropyAxis::from_commit_entropy(6.5),
+                crate::axes::WitnessDepthAxis::from_witness(0.5, 3),
+            )
+            .unwrap();
+            MeasurementInputContext::try_from(&coords).unwrap()
+        };
+        let d_ts =
+            MeasurementInputDigest::compute(&mk(crate::coords::MetricSource::TreeSitter)).unwrap();
+        let d_ph =
+            MeasurementInputDigest::compute(&mk(crate::coords::MetricSource::Placeholder)).unwrap();
+        assert_ne!(
+            d_ts, d_ph,
+            "topology_source difference must produce different digest"
         );
     }
 
@@ -5571,12 +5614,14 @@ mod tests {
         // gerçek axis descriptor içerikleri. İki farklı coord_system → farklı digest.
         use crate::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
         let cs1 = crate::coords::CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
         .unwrap();
         let cs2 = crate::coords::CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(9.0), // farklı effective entropy
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -5812,6 +5857,7 @@ mod tests {
         use crate::engine::SpaceEngine;
         use crate::rule::NoSelfImportRule;
         let cs = crate::coords::CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             crate::axes::EntropyAxis::from_commit_entropy(6.0),
             crate::axes::WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -5858,6 +5904,7 @@ mod tests {
             }
         }
         let cs = crate::coords::CoordinateSystem::default_raw_three(
+            crate::coords::MetricSource::Placeholder,
             crate::axes::EntropyAxis::from_commit_entropy(6.0),
             crate::axes::WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -6076,6 +6123,7 @@ mod tests {
         let engine = crate::engine::SpaceEngine::new(
             Space::default(),
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6230,6 +6278,7 @@ mod tests {
             crate::engine::SpaceEngine::new(
                 space,
                 crate::coords::CoordinateSystem::default_raw_five(
+                    crate::coords::MetricSource::Placeholder,
                     crate::axes::CohesionAxis::new(),
                     crate::axes::EntropyAxis::from_commit_entropy(0.0),
                     crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6328,6 +6377,7 @@ mod tests {
         let engine = crate::engine::SpaceEngine::new(
             space,
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6450,6 +6500,7 @@ mod tests {
         let engine = crate::engine::SpaceEngine::new(
             Space::default(),
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6492,6 +6543,7 @@ mod tests {
         let engine = crate::engine::SpaceEngine::new(
             Space::default(),
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6630,6 +6682,7 @@ v = 0.5
         let engine = crate::engine::SpaceEngine::new(
             space,
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6708,6 +6761,7 @@ v = 0.5
             crate::engine::SpaceEngine::new(
                 space,
                 crate::coords::CoordinateSystem::default_raw_five(
+                    crate::coords::MetricSource::Placeholder,
                     crate::axes::CohesionAxis::new(),
                     crate::axes::EntropyAxis::from_commit_entropy(0.0),
                     crate::axes::WitnessDepthAxis::from_witness(0.0, 0),
@@ -6817,6 +6871,7 @@ v = 0.5
         let engine = crate::engine::SpaceEngine::new(
             Space::default(),
             crate::coords::CoordinateSystem::default_raw_five(
+                crate::coords::MetricSource::Placeholder,
                 crate::axes::CohesionAxis::new(),
                 crate::axes::EntropyAxis::from_commit_entropy(0.0),
                 crate::axes::WitnessDepthAxis::from_witness(0.0, 0),

@@ -4,7 +4,7 @@
 //! All 4 scenarios exercise the full public API.
 
 use osp_core::axes::{EntropyAxis, WitnessDepthAxis};
-use osp_core::coords::{CoordinateSystem, RawPosition};
+use osp_core::coords::{CoordinateSystem, MetricSource, RawPosition};
 use osp_core::engine::{EngineCommitError, EngineConfig, SpaceEngine};
 use osp_core::persistence::SnapshotStore;
 use osp_core::space::{Edge, EdgeKind, Node, NodeKind, Space};
@@ -42,7 +42,10 @@ fn two_witnesses() -> WitnessSet {
 
 fn make_coord_system() -> CoordinateSystem {
     CoordinateSystem::default_raw_five(
-        osp_core::axes::CohesionAxis::from_normalized(0.7),
+        // INV-T9 #70: integration test fixture — Placeholder topology + Placeholder cohesion.
+        MetricSource::Placeholder,
+        osp_core::axes::CohesionAxis::try_from_normalized(0.7)
+            .expect("integration test fallback cohesion 0.7"),
         EntropyAxis::from_commit_entropy(6.5),
         WitnessDepthAxis::from_witness(0.35, 30),
     )

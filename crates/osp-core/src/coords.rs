@@ -75,6 +75,11 @@ pub struct MetricValue {
 }
 
 /// Metric'in kaynağı (provenance).
+///
+/// **INV-T9 #70:** `Mixed` varyantı yalnız heterojen aggregation çıktısıdır (Commit 2
+/// `aggregate_source`). Doğrudan axis kaynağı olarak kabul edilemez —
+/// `validate_direct_source` ve axis constructor'larında `MixedCannotBeDeclaredDirectly`
+/// ile reddedilir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MetricSource {
     /// Tier 1 syntactic (tree-sitter).
@@ -85,6 +90,25 @@ pub enum MetricSource {
     Placeholder,
     /// Yaklaşık hesap (ör. proxy formula).
     Heuristic,
+    /// Heterojen aggregation çıktısı (birden fazla source tek measurer'da birleşti).
+    /// Doğrudan axis kaynağı olarak kabul EDİLEMEZ.
+    Mixed,
+}
+
+impl MetricSource {
+    /// **INV-T9 #70 (P1-1 stable byte ID):** Descriptor parameter identity için stable
+    /// source ID byte'ları. coords katmanı `CanonicalMetricSourceTag` KULLANMAZ (ters
+    /// bağımlılık — canonical_tags coords'a bağlı olmalı). Authorization wire
+    /// representation ayrı katmandır (`CanonicalMetricSourceTag`).
+    pub(crate) fn descriptor_id(self) -> &'static [u8] {
+        match self {
+            Self::TreeSitter => b"tree-sitter",
+            Self::Scip => b"scip",
+            Self::Placeholder => b"placeholder",
+            Self::Heuristic => b"heuristic",
+            Self::Mixed => b"mixed",
+        }
+    }
 }
 
 impl std::fmt::Display for MetricSource {
@@ -94,6 +118,7 @@ impl std::fmt::Display for MetricSource {
             Self::Scip => write!(f, "scip"),
             Self::Placeholder => write!(f, "placeholder"),
             Self::Heuristic => write!(f, "heuristic"),
+            Self::Mixed => write!(f, "mixed"),
         }
     }
 }
@@ -179,6 +204,128 @@ pub type AxisId = String;
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CustomRawPosition {
     // Faz 5: pub values: HashMap<AxisId, MetricValue>,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AxisMeasurement + MeasuredRawPosition (INV-T9 #70 — provenance-native neutral layer)
+//
+// Neutral coords-layer per-axis ölçüm tipi. `value + source` pair; validation non-finite
+// + [0,1] range defensive. Authority/evidence yolları (Commit 2 `measured_position_of`)
+// her axis output'unu `validate_direct_axis_output()` ile defensive re-validate eder.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// INV-T9 #70 — Tek eksen ölçümü (coords-layer neutral). `value + source` pair.
+///
+/// **Validation contract:** `try_new` non-finite (NaN/±Inf) ve [0,1] range dışı değeri
+/// reddeder. Public fields ile struct literal bypass mümkün — wire-bypass `Deserialize`
+/// ile kapatıldı (P1-2: `try_new` validation guaranteed). Authority path defensive
+/// re-validate Commit 2 `measured_position_of` ile.
+///
+/// **Source provenance:** `Mixed` yalnız aggregation çıktısıdır; doğrudan axis kaynağı
+/// olarak kabul edilemez (`AxisSourceError::MixedCannotBeDeclaredDirectly`).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+pub struct AxisMeasurement {
+    /// Metric değeri — `[0,1]` normalize (finite invariant).
+    pub value: f64,
+    /// Değerin kaynağı (provenance).
+    pub source: MetricSource,
+}
+
+impl AxisMeasurement {
+    /// Validated constructor — non-finite + [0,1] range defensive (P1-5).
+    pub fn try_new(value: f64, source: MetricSource) -> Result<Self, AxisMeasurementError> {
+        if !value.is_finite() {
+            return Err(AxisMeasurementError::NonFiniteValue);
+        }
+        if !(0.0..=1.0).contains(&value) {
+            return Err(AxisMeasurementError::OutOfRange(value));
+        }
+        Ok(Self { value, source })
+    }
+
+    /// Defensive re-validation (Commit 2 `measured_position_of` her axis output'ını
+    /// çağırır). Public field bypass'a karşı defensive.
+    pub fn validate(&self) -> Result<(), AxisMeasurementError> {
+        Self::try_new(self.value, self.source).map(|_| ())
+    }
+}
+
+/// **P1-2 (wire integrity):** Custom Deserialize — wire bypass kapanır. `try_new`
+/// validation guaranteed; `deny_unknown_fields` unknown field'ları reddeder.
+///
+/// Diskten `{"value": 2.0, "source": "Scip"}` reddedilir; `{"value": 0.5, "source": "Scip",
+/// "extra": true}` da reddedilir (strict authority surface).
+impl<'de> serde::Deserialize<'de> for AxisMeasurement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Wire {
+            value: f64,
+            source: MetricSource,
+        }
+        let wire = <Wire as serde::Deserialize>::deserialize(deserializer)?;
+        AxisMeasurement::try_new(wire.value, wire.source).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Axis measurement içeriği hataları (yalnız measurement — descriptor ayrı).
+///
+/// **P1-1:** `Eq` derive EDİLMEZ — `OutOfRange(f64)` f64 içerir, f64 `Eq` değil.
+/// `PartialEq` test `assert_eq!` için yeterli.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum AxisMeasurementError {
+    #[error("non-finite axis value (NaN/Inf rejected)")]
+    NonFiniteValue,
+    #[error("axis value out of range [0,1]: {0}")]
+    OutOfRange(f64),
+}
+
+/// INV-T9 #70 — Mixed doğrudan axis kaynağı olarak reddi. `Mixed` yalnız heterojen
+/// aggregation çıktısıdır (Commit 2 `aggregate_source`); axis constructor'larında
+/// `validate_direct_source` ile derleme zamanı değil runtime guard.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AxisSourceError {
+    #[error("Mixed source cannot be declared directly (only aggregation output)")]
+    MixedCannotBeDeclaredDirectly,
+}
+
+/// Mixed olmayan direct source doğrulaması — axis constructor'ları bunu çağırır.
+pub fn validate_direct_source(source: MetricSource) -> Result<MetricSource, AxisSourceError> {
+    if source == MetricSource::Mixed {
+        Err(AxisSourceError::MixedCannotBeDeclaredDirectly)
+    } else {
+        Ok(source)
+    }
+}
+
+/// INV-T9 #70 — 5 core axis provenance'lı ölçüm (coords-layer neutral).
+///
+/// `MeasuredRawPosition` `to_raw()` value-only projection sağlar; `axis()` PredicateAxis
+/// accessor trajectory.rs'te inherent impl olarak yaşar (neutral katman PredicateAxis
+/// bağımlılığı yok — P1-4).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MeasuredRawPosition {
+    pub coupling: AxisMeasurement,
+    pub cohesion: AxisMeasurement,
+    pub instability: AxisMeasurement,
+    pub entropy: AxisMeasurement,
+    pub witness_depth: AxisMeasurement,
+}
+
+impl MeasuredRawPosition {
+    /// Sadece değerleri RawPosition'a indirge (loss/distance hesabı için, source'suz).
+    pub fn to_raw(&self) -> RawPosition {
+        RawPosition {
+            x: self.coupling.value,
+            y: self.cohesion.value,
+            z: self.instability.value,
+            w: self.entropy.value,
+            v: self.witness_depth.value,
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -305,6 +452,9 @@ pub enum AxisRegistrationError {
     },
     #[error("descriptor production failed: {0}")]
     DescriptorFailed(#[from] AxisDescriptorError),
+    /// **INV-T9 #70:** Mixed source doğrudan axis kaynağı olarak red.
+    #[error("invalid axis source: {0}")]
+    InvalidAxisSource(#[from] AxisSourceError),
 }
 
 /// Defensive axis-context validation hataları (canonical_raw_axis_descriptors —
@@ -380,7 +530,7 @@ impl AxisParameterEncoder {
 /// Tek bir koordinat eksenini temsil eden trait.
 ///
 /// Domain'e özel eksenler (security, accessibility) bu trait'i implement ederek
-/// `CoordinateSystem`'e eklenebilir. `compute` dönüşü **[0,1]** aralığında normalize.
+/// `CoordinateSystem`'e eklenebilir. Ölçüm değeri **[0,1]** aralığında normalize.
 ///
 /// **INV-T9 Adım 3 — descriptor() contract:**
 /// - **Zorunlu**, default impl YOK. İki custom axis aynı `name()` + farklı `compute()`
@@ -390,6 +540,13 @@ impl AxisParameterEncoder {
 /// - **Effective normalized binding:** descriptor, `compute()` davranışını etkileyen
 ///   effective runtime state + formula semantics version bağlar; ham constructor
 ///   argümanları DEĞİL.
+///
+/// **INV-T9 #70 — measure() authoritative:**
+/// - `measure()` ölçüm authority'sidir: value + source döner, fallible + validated.
+///   Authority/evidence yolları yalnız bunu kullanmalı.
+/// - `try_compute()` fallible value projection (measure() üzerinden).
+/// - `compute()` legacy infallible value-only projection. `#[deprecated]` attribute
+///   Commit 4 cleanup'ta eklenecek (mevcut caller churn'ü Commit 1'de YOK).
 pub trait Axis: Send + Sync {
     /// Eksen adı — `raw_position_of` isme göre mapler (sıra değil).
     /// Standart adlar: `"coupling"`, `"cohesion"`, `"instability"`, `"entropy"`, `"witness_depth"`.
@@ -400,7 +557,19 @@ pub trait Axis: Send + Sync {
     /// explicit implement eder; default impl güvenli olmadığı için YOK.
     fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError>;
 
-    /// Düğümün bu eksenindeki değerini `[0,1]` aralığında hesapla.
+    /// **INV-T9 #70 authoritative:** Ölçüm + provenance üretir (fallible, validated).
+    /// Authority/evidence yolları yalnız bunu kullanmalı. `try_new` validation non-finite
+    /// + [0,1] range defensive; axis `try_new` kullanmalı.
+    fn measure(&self, node: &Node, space: &Space) -> Result<AxisMeasurement, AxisMeasurementError>;
+
+    /// Fallible value projection — `measure()` üzerinden value'yu döner.
+    fn try_compute(&self, node: &Node, space: &Space) -> Result<f64, AxisMeasurementError> {
+        Ok(self.measure(node, space)?.value)
+    }
+
+    /// **Legacy value-only projection.** Authority/evidence paths `measure()` kullanmalı.
+    /// (`#[deprecated]` attribute Commit 4 cleanup'ta eklenecek — mevcut caller churn'ü
+    /// Commit 1'de YOK.)
     fn compute(&self, node: &Node, space: &Space) -> f64;
 }
 
@@ -596,6 +765,13 @@ mod tests {
             params.push_u8(0);
             AxisDescriptor::try_new(self.name, 1, params)
         }
+        fn measure(
+            &self,
+            _node: &Node,
+            _space: &Space,
+        ) -> Result<AxisMeasurement, AxisMeasurementError> {
+            AxisMeasurement::try_new(self.value, MetricSource::Placeholder)
+        }
         fn compute(&self, _node: &Node, _space: &Space) -> f64 {
             self.value
         }
@@ -757,6 +933,16 @@ mod tests {
                 let mut params = AxisParameterEncoder::new();
                 params.push_u8(0);
                 AxisDescriptor::try_new(self.name(), 1, params)
+            }
+            fn measure(
+                &self,
+                _node: &Node,
+                space: &Space,
+            ) -> Result<AxisMeasurement, AxisMeasurementError> {
+                AxisMeasurement::try_new(
+                    (space.node_count() as f64 / 100.0).min(1.0),
+                    MetricSource::Placeholder,
+                )
             }
             fn compute(&self, _node: &Node, space: &Space) -> f64 {
                 (space.node_count() as f64 / 100.0).min(1.0)
@@ -935,6 +1121,13 @@ mod tests {
             fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
                 AxisDescriptor::try_new("entropy", 1, AxisParameterEncoder::new())
             }
+            fn measure(
+                &self,
+                _: &Node,
+                _: &Space,
+            ) -> Result<AxisMeasurement, AxisMeasurementError> {
+                AxisMeasurement::try_new(0.0, MetricSource::Placeholder)
+            }
             fn compute(&self, _: &Node, _: &Space) -> f64 {
                 0.0
             }
@@ -995,5 +1188,134 @@ mod tests {
             core, with_custom,
             "custom axis must be filtered out of core raw descriptors"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 — MetricSource::Mixed + descriptor_id + AxisMeasurement validation
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn metric_source_descriptor_id_stable_bytes() {
+        // P1-1 — stable byte ID (canonical tag DEĞİL). coords → canonical_tags bağımlılık YOK.
+        assert_eq!(MetricSource::TreeSitter.descriptor_id(), b"tree-sitter");
+        assert_eq!(MetricSource::Scip.descriptor_id(), b"scip");
+        assert_eq!(MetricSource::Placeholder.descriptor_id(), b"placeholder");
+        assert_eq!(MetricSource::Heuristic.descriptor_id(), b"heuristic");
+        assert_eq!(MetricSource::Mixed.descriptor_id(), b"mixed");
+    }
+
+    #[test]
+    fn metric_source_display_includes_mixed() {
+        assert_eq!(MetricSource::Mixed.to_string(), "mixed");
+        assert_eq!(MetricSource::TreeSitter.to_string(), "tree-sitter");
+    }
+
+    #[test]
+    fn axis_measurement_try_new_accepts_valid_range() {
+        assert!(AxisMeasurement::try_new(0.0, MetricSource::Scip).is_ok());
+        assert!(AxisMeasurement::try_new(1.0, MetricSource::Scip).is_ok());
+        assert!(AxisMeasurement::try_new(0.5, MetricSource::Scip).is_ok());
+    }
+
+    #[test]
+    fn axis_measurement_try_new_rejects_non_finite() {
+        assert_eq!(
+            AxisMeasurement::try_new(f64::NAN, MetricSource::Scip).unwrap_err(),
+            AxisMeasurementError::NonFiniteValue
+        );
+        assert_eq!(
+            AxisMeasurement::try_new(f64::INFINITY, MetricSource::Scip).unwrap_err(),
+            AxisMeasurementError::NonFiniteValue
+        );
+        assert_eq!(
+            AxisMeasurement::try_new(f64::NEG_INFINITY, MetricSource::Scip).unwrap_err(),
+            AxisMeasurementError::NonFiniteValue
+        );
+    }
+
+    #[test]
+    fn axis_measurement_try_new_rejects_out_of_range() {
+        let err = AxisMeasurement::try_new(-0.1, MetricSource::Scip).unwrap_err();
+        assert!(matches!(err, AxisMeasurementError::OutOfRange(v) if (v + 0.1).abs() < 1e-9));
+        let err = AxisMeasurement::try_new(1.1, MetricSource::Scip).unwrap_err();
+        assert!(matches!(err, AxisMeasurementError::OutOfRange(v) if (v - 1.1).abs() < 1e-9));
+    }
+
+    #[test]
+    fn axis_measurement_try_new_accepts_mixed_source() {
+        // Mixed constructor guard yalnız axis constructor'larında; AxisMeasurement
+        // aggregation çıktısı için Mixed kabul eder (Commit 2 `aggregate_source`).
+        let m = AxisMeasurement::try_new(0.5, MetricSource::Mixed).unwrap();
+        assert_eq!(m.source, MetricSource::Mixed);
+    }
+
+    #[test]
+    fn validate_direct_source_rejects_mixed() {
+        assert_eq!(
+            validate_direct_source(MetricSource::Mixed).unwrap_err(),
+            AxisSourceError::MixedCannotBeDeclaredDirectly
+        );
+        assert_eq!(
+            validate_direct_source(MetricSource::TreeSitter).unwrap(),
+            MetricSource::TreeSitter
+        );
+        assert_eq!(
+            validate_direct_source(MetricSource::Scip).unwrap(),
+            MetricSource::Scip
+        );
+    }
+
+    #[test]
+    fn axis_measurement_deserialize_rejects_nan() {
+        // P1-2 — wire bypass kapanır: deserialize validation guaranteed.
+        let json = r#"{"value":null,"source":"Scip"}"#; // JSON null → NaN parse fail
+        let res: Result<AxisMeasurement, _> = serde_json::from_str(json);
+        assert!(res.is_err(), "NaN value must be rejected on deserialize");
+    }
+
+    #[test]
+    fn axis_measurement_deserialize_rejects_out_of_range() {
+        let json = r#"{"value":2.0,"source":"Scip"}"#;
+        let err = serde_json::from_str::<AxisMeasurement>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "value=2.0 must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn axis_measurement_deserialize_rejects_unknown_field() {
+        // P1-2 — deny_unknown_fields: strict authority surface.
+        let json = r#"{"value":0.5,"source":"Scip","unrecognized_authority":true}"#;
+        let err = serde_json::from_str::<AxisMeasurement>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field"),
+            "unknown field must be rejected: {err}"
+        );
+    }
+
+    #[test]
+    fn axis_measurement_deserialize_round_trip() {
+        let original = AxisMeasurement::try_new(0.7, MetricSource::Scip).unwrap();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: AxisMeasurement = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn measured_raw_position_to_raw_projects_values_only() {
+        let mrp = MeasuredRawPosition {
+            coupling: AxisMeasurement::try_new(0.1, MetricSource::TreeSitter).unwrap(),
+            cohesion: AxisMeasurement::try_new(0.2, MetricSource::Scip).unwrap(),
+            instability: AxisMeasurement::try_new(0.3, MetricSource::TreeSitter).unwrap(),
+            entropy: AxisMeasurement::try_new(0.4, MetricSource::Heuristic).unwrap(),
+            witness_depth: AxisMeasurement::try_new(0.5, MetricSource::Heuristic).unwrap(),
+        };
+        let raw = mrp.to_raw();
+        assert!((raw.x - 0.1).abs() < 1e-9);
+        assert!((raw.y - 0.2).abs() < 1e-9);
+        assert!((raw.z - 0.3).abs() < 1e-9);
+        assert!((raw.w - 0.4).abs() < 1e-9);
+        assert!((raw.v - 0.5).abs() < 1e-9);
     }
 }

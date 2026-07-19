@@ -12,8 +12,9 @@
 //!   tüm düğümlere aynı değeri döner. Faz 0'daki repo-aggregate metriklerin izdüşümü.
 
 use crate::coords::{
-    Axis, AxisDescriptor, AxisDescriptorError, AxisParameterEncoder, AxisRegistrationError,
-    CoordinateSystem,
+    validate_direct_source, Axis, AxisDescriptor, AxisDescriptorError, AxisMeasurement,
+    AxisMeasurementError, AxisParameterEncoder, AxisRegistrationError, AxisSourceError,
+    CoordinateSystem, MetricSource,
 };
 use crate::space::{EdgeKind, Node, Space};
 
@@ -30,12 +31,44 @@ use crate::space::{EdgeKind, Node, Space};
 /// Not: Faz 0 spike'taki repo-level `κ = edges/nodes` ayrı bir aggregate'tir
 /// (repo pozisyonu hesabında kullanılır, Faz 1.8). Bu eksen her modülün KENDİ
 /// kuplajını ölçer.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CouplingAxis;
+///
+/// **INV-T9 #70:** Construction-time source — graph topology kökenini bağlar.
+/// `new()` güvenli default `Placeholder`; production preset `try_with_source(TreeSitter)`.
+#[derive(Debug, Clone, Copy)]
+pub struct CouplingAxis {
+    source: MetricSource,
+}
 
 impl CouplingAxis {
+    /// Güvenli default — provenance bilinmiyor (Placeholder).
     pub fn new() -> Self {
-        Self
+        Self {
+            source: MetricSource::Placeholder,
+        }
+    }
+
+    /// Fallible constructor — Mixed reddedilir (yalnız aggregation çıktısı).
+    /// Production: `try_with_source(MetricSource::TreeSitter)`.
+    pub fn try_with_source(source: MetricSource) -> Result<Self, AxisSourceError> {
+        Ok(Self {
+            source: validate_direct_source(source)?,
+        })
+    }
+
+    pub fn source(&self) -> MetricSource {
+        self.source
+    }
+
+    /// Value-only projection (legacy `compute()` için helper).
+    fn compute_value(&self, node: &Node, space: &Space) -> f64 {
+        let deg = space.out_degree_value(node.id, EdgeKind::Imports) as f64;
+        deg / (1.0 + deg)
+    }
+}
+
+impl Default for CouplingAxis {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -43,20 +76,20 @@ impl Axis for CouplingAxis {
     fn name(&self) -> &'static str {
         "coupling"
     }
-    /// **INV-T9 Adım 3:** Parametresiz axis, ama algoritma semantik kimliği explicit.
-    /// Formula marker 0 = value-level Imports out-degree `deg/(1+deg)`. Algoritma
-    /// değişirse (örn semantic-weighted) semantics_version artırılmalı.
+    /// **INV-T9 #70 (semantics v2, P1-1 source encoding):** Descriptor formula marker 0
+    /// (value-level Imports out-degree `deg/(1+deg)`) + stable source ID bytes bağlar.
+    /// Algoritma değişirse (örn semantic-weighted) semantics_version artırılmalı.
     fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
         let mut params = AxisParameterEncoder::new();
-        params.push_u8(0); // parametresiz marker
-        AxisDescriptor::try_new(self.name(), 1, params)
+        params.push_u8(0); // formula marker: parametresiz, value-level out-degree
+        params.push_bytes(self.source.descriptor_id())?; // P1-1 source encoding
+        AxisDescriptor::try_new(self.name(), 2, params)
+    }
+    fn measure(&self, node: &Node, space: &Space) -> Result<AxisMeasurement, AxisMeasurementError> {
+        AxisMeasurement::try_new(self.compute_value(node, space), self.source)
     }
     fn compute(&self, node: &Node, space: &Space) -> f64 {
-        // Value-only out-degree: type-only import'lar (`import type`) runtime dependency
-        // değildir, coupling'i artırmamalı. Mimari açıdan doğru: bir .d.ts dosyası
-        // `import type {Foo}` yaparsa bu runtime coupling üretmez.
-        let deg = space.out_degree_value(node.id, EdgeKind::Imports) as f64;
-        deg / (1.0 + deg)
+        self.compute_value(node, space)
     }
 }
 
@@ -93,15 +126,23 @@ impl Axis for EntropyAxis {
     fn name(&self) -> &'static str {
         "entropy"
     }
-    /// **INV-T9 Adım 3 (effective normalized):** Descriptor `compute()`'un okuduğu
-    /// tek effective state olan `self.value`'yu bağlar; ham constructor `h` DEĞİL.
-    /// Formula marker 2 = `h/13.0 clamp(0,1)` normalization. `from_commit_entropy(13)`
-    /// ve `(100)` clamp sonrası aynı value üretirse → aynı descriptor.
+    /// **INV-T9 #70 (semantics v2, P1-1 source encoding):** Descriptor `compute()`'un
+    /// okuduğu tek effective state `self.value`'yu + Heuristic source ID bytes bağlar.
+    /// Ham constructor `h` DEĞİL — `from_commit_entropy(13)` ve `(100)` clamp sonrası
+    /// aynı value üretirse → aynı descriptor.
     fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
         let mut params = AxisParameterEncoder::new();
         params.push_u8(2); // formula marker: h/13.0 clamp
         params.push_f64(self.value)?;
-        AxisDescriptor::try_new(self.name(), 1, params)
+        params.push_bytes(MetricSource::Heuristic.descriptor_id())?; // P1-1 source encoding
+        AxisDescriptor::try_new(self.name(), 2, params)
+    }
+    fn measure(
+        &self,
+        _node: &Node,
+        _space: &Space,
+    ) -> Result<AxisMeasurement, AxisMeasurementError> {
+        AxisMeasurement::try_new(self.value, MetricSource::Heuristic)
     }
     fn compute(&self, _node: &Node, _space: &Space) -> f64 {
         self.value
@@ -142,15 +183,23 @@ impl Axis for WitnessDepthAxis {
     fn name(&self) -> &'static str {
         "witness_depth"
     }
-    /// **INV-T9 Adım 3 (effective normalized):** Descriptor `self.value`'yu bağlar;
-    /// ham `(ratio, distinct)` DEĞİL. Formula marker 3 = `raw=ratio*ln(1+distinct)`,
-    /// `raw/(1+raw)` soft-normalize. `from_witness(-0.3,5)` ve `(0.0,5)` max(0) sonrası
-    /// aynı value üretirse → aynı descriptor.
+    /// **INV-T9 #70 (semantics v2, P1-1 source encoding):** Descriptor `self.value`'yu
+    /// + Heuristic source ID bytes bağlar. Ham `(ratio, distinct)` DEĞİL.
+    ///
+    /// Formula marker `3` = `raw=ratio*ln(1+distinct)`, `raw/(1+raw)` soft-normalize.
     fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
         let mut params = AxisParameterEncoder::new();
         params.push_u8(3); // formula marker: raw=ratio*ln(1+distinct), raw/(1+raw)
         params.push_f64(self.value)?;
-        AxisDescriptor::try_new(self.name(), 1, params)
+        params.push_bytes(MetricSource::Heuristic.descriptor_id())?; // P1-1 source encoding
+        AxisDescriptor::try_new(self.name(), 2, params)
+    }
+    fn measure(
+        &self,
+        _node: &Node,
+        _space: &Space,
+    ) -> Result<AxisMeasurement, AxisMeasurementError> {
+        AxisMeasurement::try_new(self.value, MetricSource::Heuristic)
     }
     fn compute(&self, _node: &Node, _space: &Space) -> f64 {
         self.value
@@ -173,27 +222,37 @@ impl Axis for WitnessDepthAxis {
 /// **`D` (Martin main-sequence distance) ayrı derived metric'tir** —
 /// `DerivedPosition.main_sequence_distance`, `compute_derived` ile (inv #10). z'ye
 /// gömülü DEĞİL.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InstabilityAxis;
-
-impl InstabilityAxis {
-    pub fn new() -> Self {
-        Self
-    }
+///
+/// **INV-T9 #70:** Construction-time source — CouplingAxis ile aynı graph topology
+/// kökenini bağlar. `new()` güvenli default `Placeholder`; production preset
+/// `try_with_source(TreeSitter)` (preset tek `topology_source` parametresi ile Coupling
+/// ve Instability'a aynı source'u geçirir).
+#[derive(Debug, Clone, Copy)]
+pub struct InstabilityAxis {
+    source: MetricSource,
 }
 
-impl Axis for InstabilityAxis {
-    fn name(&self) -> &'static str {
-        "instability"
+impl InstabilityAxis {
+    /// Güvenli default — provenance bilinmiyor (Placeholder).
+    pub fn new() -> Self {
+        Self {
+            source: MetricSource::Placeholder,
+        }
     }
-    /// **INV-T9 Adım 3:** Parametresiz axis, algoritma semantik kimliği explicit.
-    /// Formula marker 0 = value-level Martin `I = Ce/(Ce+Ca)`, isolated→0.5.
-    fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
-        let mut params = AxisParameterEncoder::new();
-        params.push_u8(0); // parametresiz marker
-        AxisDescriptor::try_new(self.name(), 1, params)
+
+    /// Fallible constructor — Mixed reddedilir.
+    pub fn try_with_source(source: MetricSource) -> Result<Self, AxisSourceError> {
+        Ok(Self {
+            source: validate_direct_source(source)?,
+        })
     }
-    fn compute(&self, node: &Node, space: &Space) -> f64 {
+
+    pub fn source(&self) -> MetricSource {
+        self.source
+    }
+
+    /// Value-only projection (legacy `compute()` için helper).
+    fn compute_value(&self, node: &Node, space: &Space) -> f64 {
         // Value-only degrees: type-only import'lar Ce/Ca'dan hariç (CouplingAxis ile aynı
         // rationale — runtime dependency değil).
         let ce = space.out_degree_value(node.id, EdgeKind::Imports) as f64; // fan-out
@@ -207,6 +266,32 @@ impl Axis for InstabilityAxis {
     }
 }
 
+impl Default for InstabilityAxis {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Axis for InstabilityAxis {
+    fn name(&self) -> &'static str {
+        "instability"
+    }
+    /// **INV-T9 #70 (semantics v2, P1-1 source encoding):** Formula marker 0 (Martin
+    /// `I = Ce/(Ce+Ca)`, isolated→0.5) + source ID bytes.
+    fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
+        let mut params = AxisParameterEncoder::new();
+        params.push_u8(0); // formula marker: value-level Martin I, isolated→0.5
+        params.push_bytes(self.source.descriptor_id())?; // P1-1 source encoding
+        AxisDescriptor::try_new(self.name(), 2, params)
+    }
+    fn measure(&self, node: &Node, space: &Space) -> Result<AxisMeasurement, AxisMeasurementError> {
+        AxisMeasurement::try_new(self.compute_value(node, space), self.source)
+    }
+    fn compute(&self, node: &Node, space: &Space) -> f64 {
+        self.compute_value(node, space)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // y — Cohesion (LCOM4 proxy, precomputed) — Faz 1.9
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -214,47 +299,90 @@ impl Axis for InstabilityAxis {
 /// `y` ekseni — **Kohezyon** (LCOM4).
 ///
 /// **Per-node cohesion:** `compute(node, space)` öncelikle `node.cohesion` okur
-/// (analyzer tarafından SCIP LCOM4'ten set edilir, Faz 3.6+). Node'da değer yoksa
-/// (`None`), `fallback` kullanılır (test/repo-level sabit değer için backward-compat).
+/// (analyzer tarafından SCIP LCOM4'ten set edilir — INV-T9 #70: yalnız gerçek SCIP
+/// sonucunda `Some`). Node'da değer yoksa (`None`), `fallback` kullanılır.
 ///
 /// `cohesion ∈ [0, 1]`: `1.0` = tam kohezif (LCOM4=1), `0.0` = kohezyon yok.
+///
+/// **INV-T9 #70 (per-node source policy):**
+/// - `node.cohesion = Some(c)` → `(c, observed_source)` (production analyzer `Scip`)
+/// - `node.cohesion = None` + `fallback = Some(fb)` → `(fb.value, fb.source)`
+/// - `node.cohesion = None` + `fallback = None` → `(0.5, Placeholder)`
+///
+/// **Observational equivalence:** `new()` (None→0.5) ile `try_from_normalized(0.5)`
+/// aynı `effective_fallback (0.5, Placeholder)` → aynı descriptor (P1-1).
 #[derive(Debug, Clone, Copy)]
 pub struct CohesionAxis {
-    /// `node.cohesion == None` durumunda kullanılacak değer (backward-compat).
-    /// `None` = 0.5 nötr default.
-    fallback: Option<f64>,
+    /// Per-node Some değerinin kaynak kökeni (production: `Scip`).
+    observed_source: MetricSource,
+    /// Effective fallback — `None` node'lar için. `None` → `(0.5, Placeholder)` normalize.
+    fallback: Option<AxisMeasurement>,
 }
 
 impl CohesionAxis {
-    /// Per-node cohesion okuyan axis — analyzer `node.cohesion` set ettiğinde gerçek değer kullanılır.
-    /// Set edilmediyse 0.5 nötr default.
-    pub fn new() -> Self {
-        Self { fallback: None }
+    /// Effective fallback — her zaman normalize. `None` → `(0.5, Placeholder)`.
+    /// Constructor provenance DEĞİL effective davranışı bağlar (P1-1).
+    fn effective_fallback(&self) -> AxisMeasurement {
+        self.fallback.unwrap_or(AxisMeasurement {
+            value: 0.5,
+            source: MetricSource::Placeholder,
+        })
     }
 
-    /// Sabit fallback cohesion `[0,1]` — `node.cohesion` None ise bu kullanılır.
-    /// Backward-compat için (eski test'ler `from_normalized`/`from_lcom4` kullanır).
-    pub fn from_normalized(cohesion: f64) -> Self {
+    /// Per-node cohesion okuyan axis — analyzer `node.cohesion` set ettiğinde gerçek değer kullanılır.
+    /// Set edilmediyse `(0.5, Placeholder)` nötr default.
+    pub fn new() -> Self {
         Self {
-            fallback: Some(cohesion.clamp(0.0, 1.0)),
+            observed_source: MetricSource::Placeholder,
+            fallback: None,
         }
+    }
+
+    /// Per-node observed source — production analyzer `try_with_observed_source(MetricSource::Scip)`.
+    /// Mixed reddedilir.
+    pub fn try_with_observed_source(
+        observed_source: MetricSource,
+    ) -> Result<Self, AxisSourceError> {
+        Ok(Self {
+            observed_source: validate_direct_source(observed_source)?,
+            fallback: None,
+        })
+    }
+
+    /// Fallible fallback constructor — non-finite reject, clamp sonrası `[0,1]`.
+    /// Backward-compat için (eski test'ler `from_normalized`/`from_lcom4` kullanır).
+    pub fn try_from_normalized(cohesion: f64) -> Result<Self, AxisMeasurementError> {
+        if !cohesion.is_finite() {
+            return Err(AxisMeasurementError::NonFiniteValue);
+        }
+        let fallback =
+            AxisMeasurement::try_new(cohesion.clamp(0.0, 1.0), MetricSource::Placeholder)?;
+        Ok(Self {
+            observed_source: MetricSource::Placeholder,
+            fallback: Some(fallback),
+        })
     }
 
     /// LCOM4 raw değerinden fallback mapping: `cohesion = 1 / lcom4`.
     /// `lcom4=1` → `1.0` (kohezif), `lcom4=2` → `0.5`, `lcom4≥4` → `≤0.25`.
+    /// İnfallible — LCOM4→cohesion mapping finite garantili.
     pub fn from_lcom4(lcom4: usize) -> Self {
-        let cohesion = if lcom4 == 0 {
+        let value = if lcom4 == 0 {
             1.0 // convention: 0 = undefined → conservative full cohesion
         } else {
             (1.0 / lcom4 as f64).clamp(0.0, 1.0)
         };
         Self {
-            fallback: Some(cohesion),
+            observed_source: MetricSource::Placeholder,
+            fallback: Some(
+                AxisMeasurement::try_new(value, MetricSource::Placeholder)
+                    .expect("LCOM4 mapping is finite and normalized"),
+            ),
         }
     }
 
     pub fn value(&self) -> f64 {
-        self.fallback.unwrap_or(0.5)
+        self.effective_fallback().value
     }
 }
 
@@ -268,19 +396,38 @@ impl Axis for CohesionAxis {
     fn name(&self) -> &'static str {
         "cohesion"
     }
-    /// **INV-T9 Adım 3 (effective normalized, P0-1):** Descriptor `self.value()`
-    /// (effective fallback: None→0.5 veya Some(x)) bağlar; constructor provenance marker'ı
-    /// (None vs Some) DEĞİL. Formula marker 1 = LCOM4→cohesion normalize.
-    /// `new()` (None→0.5) ile `from_normalized(0.5)` aynı descriptor — observational equivalence.
+    /// **INV-T9 #70 (semantics v2, P1-1 source encoding, observational equivalence):**
+    /// Descriptor effective fallback değerini + kaynaklarını bağlar; constructor
+    /// provenance marker'ı (None vs Some) DEĞİL. `new()` (None→0.5) ile
+    /// `try_from_normalized(0.5)` aynı effective fallback → aynı descriptor.
     fn descriptor(&self) -> Result<AxisDescriptor, AxisDescriptorError> {
+        let fb = self.effective_fallback();
         let mut params = AxisParameterEncoder::new();
         params.push_u8(1); // formula marker: LCOM4→cohesion normalize
-        params.push_f64(self.value())?;
-        AxisDescriptor::try_new(self.name(), 1, params)
+        params.push_bytes(self.observed_source.descriptor_id())?; // observed source
+        params.push_bytes(fb.source.descriptor_id())?; // effective fallback source
+        params.push_f64(fb.value)?; // effective fallback value
+        AxisDescriptor::try_new(self.name(), 2, params)
+    }
+    fn measure(
+        &self,
+        node: &Node,
+        _space: &Space,
+    ) -> Result<AxisMeasurement, AxisMeasurementError> {
+        // Per-node policy: node.cohesion Some → observed_source; fallback Some →
+        // fallback source; None → Placeholder (effective_fallback normalize).
+        let fb = self.effective_fallback();
+        let (value, source) = match node.cohesion {
+            Some(c) => (c, self.observed_source),
+            None => (fb.value, fb.source),
+        };
+        AxisMeasurement::try_new(value, source)
     }
     fn compute(&self, node: &Node, _space: &Space) -> f64 {
-        // Per-node cohesion (analyzer SCIP LCOM4) → fallback → 0.5 neutral
-        node.cohesion.or(self.fallback).unwrap_or(0.5)
+        // Legacy value-only projection — effective fallback kullanır.
+        node.cohesion
+            .or(Some(self.effective_fallback().value))
+            .unwrap_or(0.5)
     }
 }
 
@@ -299,12 +446,17 @@ impl CoordinateSystem {
     /// Faz 1.9'da `y` (CohesionAxis LCOM4) + `z` (InstabilityAxis Martin I) eklenir
     /// → `default_raw_five`. `u` (vision alignment) **derived**'dır, preset'te YOK
     /// (inv #4 — `DerivedPosition` içinde `compute_derived` ile, Faz 1.7 `vision.rs`).
+    ///
+    /// **INV-T9 #70:** `topology_source` CouplingAxis'in graph topology kökenini bağlar
+    /// (production: `TreeSitter`, test/synthetic: `Placeholder`). Mixed reddedilir.
     pub fn default_raw_three(
+        topology_source: MetricSource,
         entropy: EntropyAxis,
         witness: WitnessDepthAxis,
     ) -> Result<Self, AxisRegistrationError> {
+        let coupling = CouplingAxis::try_with_source(topology_source)?;
         Self::empty()
-            .try_with_axis(CouplingAxis::new())?
+            .try_with_axis(coupling)?
             .try_with_axis(entropy)?
             .try_with_axis(witness)
     }
@@ -316,17 +468,23 @@ impl CoordinateSystem {
     /// ile `DerivedPosition`'da, `vision.rs` Faz 1.7). `D` (Martin main-sequence) de
     /// derived — `compute_derived` ayrı parametre olarak alır (inv #10).
     ///
-    /// **INV-T9 Adım 3:** `try_with_axis` zinciri — validated registration (duplicate
-    /// reject, identity check). Çağıran `?` ile yaymalı.
+    /// **INV-T9 #70:** `topology_source` tek bir graph topology kökenini Coupling ve
+    /// Instability axis'lerine geçirir (aynı `Space` topology'sünden türetiliyor —
+    /// ayrı parametreler yapay serbestlik yaratır). Production: `TreeSitter`, test/
+    /// synthetic: `Placeholder`. Mixed reddedilir. CohesionAxis caller'a bırakılır
+    /// (production `try_with_observed_source(Scip)`, test/synthetic `new()`).
     pub fn default_raw_five(
+        topology_source: MetricSource,
         cohesion: CohesionAxis,
         entropy: EntropyAxis,
         witness: WitnessDepthAxis,
     ) -> Result<Self, AxisRegistrationError> {
+        let coupling = CouplingAxis::try_with_source(topology_source)?;
+        let instability = InstabilityAxis::try_with_source(topology_source)?;
         Self::empty()
-            .try_with_axis(CouplingAxis::new())? // x — per-node
-            .try_with_axis(cohesion)? // y — precomputed
-            .try_with_axis(InstabilityAxis::new())? // z — per-node
+            .try_with_axis(coupling)? // x — per-node
+            .try_with_axis(cohesion)? // y — precomputed/per-node
+            .try_with_axis(instability)? // z — per-node
             .try_with_axis(entropy)? // w — precomputed
             .try_with_axis(witness) // v — precomputed
     }
@@ -559,6 +717,7 @@ mod tests {
     #[test]
     fn default_raw_three_has_expected_axes() {
         let cs = CoordinateSystem::default_raw_three(
+            MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -574,6 +733,7 @@ mod tests {
     fn default_raw_three_excludes_vision_alignment() {
         // inv #4 — u derived'dır, raw preset'te YOK
         let cs = CoordinateSystem::default_raw_three(
+            MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
         )
@@ -587,6 +747,7 @@ mod tests {
     #[test]
     fn default_raw_three_raw_position_maps_correctly() {
         let cs = CoordinateSystem::default_raw_three(
+            MetricSource::Placeholder,
             EntropyAxis::from_commit_entropy(6.5), // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
             WitnessDepthAxis::from_witness(0.3, 5), // v
         )
@@ -683,15 +844,23 @@ mod tests {
     }
 
     #[test]
-    fn cohesion_from_normalized_clamps() {
-        assert!((CohesionAxis::from_normalized(1.5).value() - 1.0).abs() < 1e-9);
-        assert!((CohesionAxis::from_normalized(-0.3).value() - 0.0).abs() < 1e-9);
-        assert!((CohesionAxis::from_normalized(0.7).value() - 0.7).abs() < 1e-9);
+    fn cohesion_try_from_normalized_clamps() {
+        assert!((CohesionAxis::try_from_normalized(1.5).unwrap().value() - 1.0).abs() < 1e-9);
+        assert!((CohesionAxis::try_from_normalized(-0.3).unwrap().value() - 0.0).abs() < 1e-9);
+        assert!((CohesionAxis::try_from_normalized(0.7).unwrap().value() - 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cohesion_try_from_normalized_rejects_nan() {
+        assert_eq!(
+            CohesionAxis::try_from_normalized(f64::NAN).unwrap_err(),
+            AxisMeasurementError::NonFiniteValue
+        );
     }
 
     #[test]
     fn cohesion_axis_name_is_cohesion() {
-        let a = CohesionAxis::from_normalized(0.5);
+        let a = CohesionAxis::try_from_normalized(0.5).unwrap();
         assert_eq!(a.name(), "cohesion");
     }
 
@@ -782,6 +951,7 @@ mod tests {
     #[test]
     fn default_raw_five_has_five_axes_in_canonical_order() {
         let cs = CoordinateSystem::default_raw_five(
+            MetricSource::Placeholder,
             CohesionAxis::from_lcom4(1),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -804,6 +974,7 @@ mod tests {
     fn default_raw_five_excludes_vision_alignment() {
         // inv #4 — u derived, raw preset'te YOK
         let cs = CoordinateSystem::default_raw_five(
+            MetricSource::Placeholder,
             CohesionAxis::from_lcom4(1),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -818,8 +989,9 @@ mod tests {
     #[test]
     fn default_raw_five_raw_position_all_fields_populated() {
         let cs = CoordinateSystem::default_raw_five(
-            CohesionAxis::from_normalized(0.8),     // y
-            EntropyAxis::from_commit_entropy(6.5),  // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
+            MetricSource::Placeholder,
+            CohesionAxis::try_from_normalized(0.8).unwrap(), // y
+            EntropyAxis::from_commit_entropy(6.5), // w = 0.5 (6.5/13.0, Faz 1.11 cap tune)
             WitnessDepthAxis::from_witness(0.3, 5), // v
         )
         .unwrap();
@@ -845,6 +1017,7 @@ mod tests {
     fn default_raw_five_instability_reflects_per_node_topology() {
         // İki node farklı I değerleri — per-node doğrulama
         let cs = CoordinateSystem::default_raw_five(
+            MetricSource::Placeholder,
             CohesionAxis::from_lcom4(1),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -871,20 +1044,31 @@ mod tests {
 
     #[test]
     fn axis_descriptor_coupling_explicit_implementation() {
-        // Parametresiz axis ama explicit descriptor — algoritma semantik kimliği.
+        // INV-T9 #70 (semantics v2): Parametresiz axis ama explicit descriptor —
+        // formula marker 0 + source ID bytes (default Placeholder).
         let d = CouplingAxis::new().descriptor().unwrap();
         assert_eq!(d.axis_id(), "coupling");
-        assert_eq!(d.semantics_version(), 1);
-        // marker 0 (parametresiz)
-        assert_eq!(d.canonical_parameters(), &[0u8]);
+        assert_eq!(d.semantics_version(), 2);
+        // marker 0 + source ID length-prefix(0x0B=11 "placeholder") + "placeholder"
+        let mut expected = AxisParameterEncoder::new();
+        expected.push_u8(0);
+        expected
+            .push_bytes(MetricSource::Placeholder.descriptor_id())
+            .unwrap();
+        assert_eq!(d.canonical_parameters(), &expected.finish()[..]);
     }
 
     #[test]
     fn axis_descriptor_instability_explicit_implementation() {
         let d = InstabilityAxis::new().descriptor().unwrap();
         assert_eq!(d.axis_id(), "instability");
-        assert_eq!(d.semantics_version(), 1);
-        assert_eq!(d.canonical_parameters(), &[0u8]);
+        assert_eq!(d.semantics_version(), 2);
+        let mut expected = AxisParameterEncoder::new();
+        expected.push_u8(0);
+        expected
+            .push_bytes(MetricSource::Placeholder.descriptor_id())
+            .unwrap();
+        assert_eq!(d.canonical_parameters(), &expected.finish()[..]);
     }
 
     #[test]
@@ -893,12 +1077,16 @@ mod tests {
         let axis = EntropyAxis::from_commit_entropy(6.0);
         let d = axis.descriptor().unwrap();
         assert_eq!(d.axis_id(), "entropy");
-        assert_eq!(d.semantics_version(), 1);
-        // marker 2 + effective value LE bytes
+        assert_eq!(d.semantics_version(), 2);
+        // marker 2 + effective value LE bytes + Heuristic source ID
         let expected_value = (6.0_f64 / 13.0).clamp(0.0, 1.0);
-        let mut expected = vec![2u8];
-        expected.extend_from_slice(&expected_value.to_le_bytes());
-        assert_eq!(d.canonical_parameters(), &expected[..]);
+        let mut expected = AxisParameterEncoder::new();
+        expected.push_u8(2);
+        expected.push_f64(expected_value).unwrap();
+        expected
+            .push_bytes(MetricSource::Heuristic.descriptor_id())
+            .unwrap();
+        assert_eq!(d.canonical_parameters(), &expected.finish()[..]);
     }
 
     #[test]
@@ -906,34 +1094,50 @@ mod tests {
         let axis = WitnessDepthAxis::from_witness(0.3, 5);
         let d = axis.descriptor().unwrap();
         assert_eq!(d.axis_id(), "witness_depth");
-        assert_eq!(d.semantics_version(), 1);
+        assert_eq!(d.semantics_version(), 2);
         let raw = 0.3_f64.max(0.0) * (1.0 + 5.0_f64).ln();
         let expected_value = raw / (1.0 + raw);
-        let mut expected = vec![3u8];
-        expected.extend_from_slice(&expected_value.to_le_bytes());
-        assert_eq!(d.canonical_parameters(), &expected[..]);
+        let mut expected = AxisParameterEncoder::new();
+        expected.push_u8(3);
+        expected.push_f64(expected_value).unwrap();
+        expected
+            .push_bytes(MetricSource::Heuristic.descriptor_id())
+            .unwrap();
+        assert_eq!(d.canonical_parameters(), &expected.finish()[..]);
     }
 
     #[test]
     fn axis_descriptor_cohesion_binds_effective_fallback() {
-        // from_normalized(0.5) → effective fallback 0.5, marker 1.
-        let axis = CohesionAxis::from_normalized(0.5);
+        // try_from_normalized(0.5) → effective fallback (0.5, Placeholder), marker 1.
+        let axis = CohesionAxis::try_from_normalized(0.5).unwrap();
         let d = axis.descriptor().unwrap();
         assert_eq!(d.axis_id(), "cohesion");
-        let mut expected = vec![1u8];
-        expected.extend_from_slice(&0.5_f64.to_le_bytes());
-        assert_eq!(d.canonical_parameters(), &expected[..]);
+        assert_eq!(d.semantics_version(), 2);
+        // marker 1 + observed_source(Placeholder) + fallback_source(Placeholder) + fallback_value(0.5)
+        let mut expected = AxisParameterEncoder::new();
+        expected.push_u8(1);
+        expected
+            .push_bytes(MetricSource::Placeholder.descriptor_id())
+            .unwrap();
+        expected
+            .push_bytes(MetricSource::Placeholder.descriptor_id())
+            .unwrap();
+        expected.push_f64(0.5).unwrap();
+        assert_eq!(d.canonical_parameters(), &expected.finish()[..]);
     }
 
     #[test]
     fn observationally_equivalent_cohesion_configs_share_descriptor() {
-        // **P0-1 (effective model):** new() (None→0.5) ile from_normalized(0.5) aynı
+        // **P0-1 (effective model):** new() (None→0.5) ile try_from_normalized(0.5) aynı
         // effective fallback → aynı descriptor. Constructor provenance marker'ı YOK.
         let d_new = CohesionAxis::new().descriptor().unwrap();
-        let d_norm = CohesionAxis::from_normalized(0.5).descriptor().unwrap();
+        let d_norm = CohesionAxis::try_from_normalized(0.5)
+            .unwrap()
+            .descriptor()
+            .unwrap();
         assert_eq!(
             d_new, d_norm,
-            "new() and from_normalized(0.5) must share descriptor (observational equivalence)"
+            "new() and try_from_normalized(0.5) must share descriptor (observational equivalence)"
         );
     }
 
@@ -957,7 +1161,162 @@ mod tests {
         let d1 = CouplingAxis::new().descriptor().unwrap();
         let mut params = AxisParameterEncoder::new();
         params.push_u8(9); // farklı marker
-        let d2 = AxisDescriptor::try_new("coupling", 1, params).unwrap();
+        let d2 = AxisDescriptor::try_new("coupling", 2, params).unwrap();
         assert_ne!(d1, d2);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 — measure() + source provenance testleri
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn axis_measure_returns_source_for_coupling() {
+        let axis = CouplingAxis::try_with_source(MetricSource::TreeSitter).unwrap();
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        space.insert_edge(import_edge(1, 2));
+        let m = axis.measure(&node(1), &space).unwrap();
+        assert_eq!(m.source, MetricSource::TreeSitter);
+        assert!((m.value - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn axis_measure_returns_heuristic_for_entropy() {
+        let axis = EntropyAxis::from_commit_entropy(6.5);
+        let space = Space::new();
+        let m = axis.measure(&node(1), &space).unwrap();
+        assert_eq!(m.source, MetricSource::Heuristic);
+        assert!((m.value - 0.5).abs() < 1e-9); // 6.5/13.0
+    }
+
+    #[test]
+    fn coupling_axis_rejects_mixed_source() {
+        let err = CouplingAxis::try_with_source(MetricSource::Mixed).unwrap_err();
+        assert_eq!(err, AxisSourceError::MixedCannotBeDeclaredDirectly);
+    }
+
+    #[test]
+    fn instability_axis_rejects_mixed_source() {
+        let err = InstabilityAxis::try_with_source(MetricSource::Mixed).unwrap_err();
+        assert_eq!(err, AxisSourceError::MixedCannotBeDeclaredDirectly);
+    }
+
+    #[test]
+    fn cohesion_axis_rejects_mixed_observed_source() {
+        let err = CohesionAxis::try_with_observed_source(MetricSource::Mixed).unwrap_err();
+        assert_eq!(err, AxisSourceError::MixedCannotBeDeclaredDirectly);
+    }
+
+    #[test]
+    fn cohesion_measure_per_node_source_policy() {
+        // Per-node source policy: Some → observed_source; None → fallback source.
+        let axis = CohesionAxis::try_with_observed_source(MetricSource::Scip).unwrap();
+        let space = Space::new();
+
+        // Some(c) → Scip
+        let node_with = Node {
+            id: 1,
+            cohesion: Some(0.8),
+            ..Default::default()
+        };
+        let m = axis.measure(&node_with, &space).unwrap();
+        assert_eq!(m.source, MetricSource::Scip);
+        assert!((m.value - 0.8).abs() < 1e-9);
+
+        // None → effective fallback Placeholder
+        let node_without = Node {
+            id: 2,
+            cohesion: None,
+            ..Default::default()
+        };
+        let m = axis.measure(&node_without, &space).unwrap();
+        assert_eq!(m.source, MetricSource::Placeholder);
+        assert!((m.value - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn missing_observed_cohesion_remains_placeholder_even_for_scip_axis() {
+        // P2-1 exact regression: observed_source = Scip olsa bile node.cohesion = None
+        // ise fallback source Placeholder olmalı. Analyzer P0 düzeltmesi ile birleşim
+        // noktası — placeholder cohesion Scip olarak yükseltilmez.
+        let axis = CohesionAxis::try_with_observed_source(MetricSource::Scip)
+            .expect("Scip is a valid direct source");
+        let node = Node {
+            cohesion: None,
+            ..Default::default()
+        };
+        let measured = axis
+            .measure(&node, &Space::default())
+            .expect("valid placeholder fallback");
+        assert_eq!(measured.value, 0.5);
+        assert_eq!(measured.source, MetricSource::Placeholder);
+    }
+
+    #[test]
+    fn default_raw_five_rejects_mixed_topology_source() {
+        let err = CoordinateSystem::default_raw_five(
+            MetricSource::Mixed,
+            CohesionAxis::new(),
+            EntropyAxis::from_commit_entropy(6.0),
+            WitnessDepthAxis::from_witness(0.3, 5),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            AxisRegistrationError::InvalidAxisSource(
+                AxisSourceError::MixedCannotBeDeclaredDirectly
+            )
+        );
+    }
+
+    #[test]
+    fn default_raw_three_rejects_mixed_topology_source() {
+        let err = CoordinateSystem::default_raw_three(
+            MetricSource::Mixed,
+            EntropyAxis::from_commit_entropy(6.0),
+            WitnessDepthAxis::from_witness(0.3, 5),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            AxisRegistrationError::InvalidAxisSource(
+                AxisSourceError::MixedCannotBeDeclaredDirectly
+            )
+        );
+    }
+
+    #[test]
+    fn topology_source_propagates_to_both_coupling_and_instability() {
+        // Coupling ve Instability aynı topology_source alır.
+        let cs = CoordinateSystem::default_raw_five(
+            MetricSource::TreeSitter,
+            CohesionAxis::new(),
+            EntropyAxis::from_commit_entropy(6.0),
+            WitnessDepthAxis::from_witness(0.3, 5),
+        )
+        .unwrap();
+        let mut space = Space::new();
+        space.insert_node(node(1));
+        space.insert_node(node(2));
+        space.insert_edge(import_edge(1, 2));
+
+        // Coupling ve Instability descriptor'ları TreeSitter source ID taşır.
+        let descriptors: std::collections::HashMap<_, _> = cs
+            .canonical_raw_axis_descriptors()
+            .unwrap()
+            .into_iter()
+            .map(|d| (d.axis_id().to_string(), d))
+            .collect();
+        let coupling = descriptors.get("coupling").unwrap();
+        assert!(coupling
+            .canonical_parameters()
+            .windows(b"tree-sitter".len())
+            .any(|w| w == b"tree-sitter"));
+        let instability = descriptors.get("instability").unwrap();
+        assert!(instability
+            .canonical_parameters()
+            .windows(b"tree-sitter".len())
+            .any(|w| w == b"tree-sitter"));
     }
 }

@@ -1436,6 +1436,7 @@ mod tests {
             is_type_only: false,
         });
         let cs = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -2198,6 +2199,7 @@ mod tests {
             is_type_only: false,
         });
         let cs = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             CohesionAxis::new(),
             EntropyAxis::from_commit_entropy(6.0),
             WitnessDepthAxis::from_witness(0.3, 5),
@@ -3068,6 +3070,7 @@ mod tests {
             );
         }
         let cs = crate::coords::CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::Placeholder,
             crate::axes::CohesionAxis::new(),
             crate::axes::EntropyAxis::from_commit_entropy(6.0),
             crate::axes::WitnessDepthAxis::from_witness(0.3, 5),

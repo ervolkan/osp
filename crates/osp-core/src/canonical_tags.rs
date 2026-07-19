@@ -189,13 +189,17 @@ canonical_tag_newtype! {
 }
 
 canonical_tag_newtype! {
-    /// Metric source canonical tag — 4 varyant.
+    /// Metric source canonical tag — 5 varyant.
+    ///
+    /// **INV-T9 #70:** `Mixed=4` yalnız heterojen aggregation çıktısıdır. Authorization
+    /// wire representation — coords katmanı `descriptor_id()` ayrı stable byte ID kullanır.
     pub struct CanonicalMetricSourceTag;
     domain: MetricSource;
     TreeSitter => 0,
     Scip => 1,
     Placeholder => 2,
     Heuristic => 3,
+    Mixed => 4,
 }
 
 canonical_tag_newtype! {
@@ -449,6 +453,7 @@ mod tests {
             (MetricSource::Scip, 1),
             (MetricSource::Placeholder, 2),
             (MetricSource::Heuristic, 3),
+            (MetricSource::Mixed, 4),
         ];
         for (src, expected) in cases {
             let tag = CanonicalMetricSourceTag::try_from(&src).unwrap();

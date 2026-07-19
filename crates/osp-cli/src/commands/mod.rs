@@ -169,7 +169,7 @@ pub fn run_analyze(args: AnalyzeArgs) -> anyhow::Result<()> {
 /// `osp trajectory init` — SpaceEngine kur (analyze + coord system + vision).
 pub fn run_trajectory_init(args: TrajectoryInitArgs) -> anyhow::Result<()> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
-    use osp_core::coords::CoordinateSystem;
+    use osp_core::coords::{CoordinateSystem, MetricSource};
     use osp_core::engine::{EngineConfig, SpaceEngine};
     use osp_core::vision::VisionVector;
 
@@ -180,7 +180,9 @@ pub fn run_trajectory_init(args: TrajectoryInitArgs) -> anyhow::Result<()> {
     };
     let result = analyze_repo_with_config(&args.repo, &registry, &config)?;
     let cs = CoordinateSystem::default_raw_five(
-        CohesionAxis::new(),
+        // INV-T9 #70: production preset — graph topology TreeSitter, observed cohesion Scip.
+        MetricSource::TreeSitter,
+        CohesionAxis::try_with_observed_source(MetricSource::Scip)?,
         EntropyAxis::from_commit_entropy(6.0),
         WitnessDepthAxis::from_witness(0.3, 5),
     )?;
@@ -206,7 +208,7 @@ pub fn run_trajectory_init(args: TrajectoryInitArgs) -> anyhow::Result<()> {
 /// `osp trajectory attempt` — D2 navigator + MockLlmClient/RuntimeLlmClient.
 pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
-    use osp_core::coords::CoordinateSystem;
+    use osp_core::coords::{CoordinateSystem, MetricSource};
     use osp_core::engine::{EngineConfig, SpaceEngine};
     use osp_core::vision::VisionVector;
 
@@ -216,7 +218,9 @@ pub fn run_trajectory_attempt(args: TrajectoryAttemptArgs) -> anyhow::Result<()>
     let result = analyze_repo_with_config(&args.repo, &registry, &config)?;
     // 2. Engine (D2 gerçek measure).
     let cs = CoordinateSystem::default_raw_five(
-        CohesionAxis::new(),
+        // INV-T9 #70: production preset — graph topology TreeSitter, observed cohesion Scip.
+        MetricSource::TreeSitter,
+        CohesionAxis::try_with_observed_source(MetricSource::Scip)?,
         EntropyAxis::from_commit_entropy(6.0),
         WitnessDepthAxis::from_witness(0.3, 5),
     )?;

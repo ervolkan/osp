@@ -109,53 +109,41 @@ impl OperatorCapability {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ProvenancedRawPosition (INV-T4 — source type-level)
+// ProvenancedRawPosition (INV-T4 → INV-T9 #70 neutral coords layer)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// INV-T4 — Çıplak `RawPosition` (f64) provenance taşıyamaz. Her axis için ayrı
-/// `AxisMetric { value, source }` — predicate evaluate source'u type-level kontrol eder.
-/// Placeholder/heuristic kaynaklı ölçümlerle task kapatılamaz (epistemolojik bütünlük).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AxisMetric {
-    /// Metric değeri (NaN/Inf yasak).
-    pub value: f64,
-    /// Değerin kaynağı (provenance) — TreeSitter/Scip/Placeholder/Heuristic.
-    pub source: MetricSource,
-}
+/// INV-T9 #70 — Neutral coords-layer tipler `AxisMeasurement` / `MeasuredRawPosition`
+/// artık `coords.rs`'te yaşar (provenance-native, validated). Bu alias'lar public path
+/// compatibility sağlar — `AxisMetric` / `ProvenancedRawPosition` kullanan tüm caller'lar
+/// (navigator, engine, authorization, test fixture'ları) unchanged çalışır.
+///
+/// **KRİTİK:** Bu birer `pub use` re-export alias'tır. `type AxisMetric = ...` yapılsaydı
+/// struct literal construction (`AxisMetric { value, source }`) derlenmezdi. Bu alias'ı
+/// `type` alias'a DEĞİŞTİRMEYİN — navigator.rs:170, engine.rs:2379, trajectory.rs test
+/// fixture'ları struct literal kullanır.
+pub use crate::coords::AxisMeasurement as AxisMetric;
+pub use crate::coords::MeasuredRawPosition as ProvenancedRawPosition;
 
-/// 5 core axis'in her biri için provenance'lı ölçüm. `Claim.computed_raw`'ın
-/// trajectory katmanındaki karşılığı — predicate bunu değerlendirir (INV-T3).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ProvenancedRawPosition {
-    pub coupling: AxisMetric,
-    pub cohesion: AxisMetric,
-    pub instability: AxisMetric,
-    pub entropy: AxisMetric,
-    pub witness_depth: AxisMetric,
-}
-
-impl ProvenancedRawPosition {
+/// INV-T9 #70 (P2-2 truth-surface): Commit 1 beş core raw axis için provenance-native
+/// access kurar. Derived/custom `PredicateAxis` varyantları (`RiskScore`, `MainSequenceDistance`,
+/// `Custom`) fail-closed resolution DEĞİŞTİRİLMEDİ — mevcat `_ => coupling` legacy fallback
+/// behavior olarak korunur ve derived/custom predicate'lar için provenance-correct support
+/// olarak sunulmaz. Uzun vadeli API: `raw_axis(PredicateAxis) -> Option<&AxisMeasurement>`
+/// veya typed error — ayrı takip maddesi.
+///
+/// Bu inherent impl coords.rs'te DEĞİL trajectory.rs'te yaşar çünkü `PredicateAxis`
+/// trajectory semantiğidir; coords neutral katmanı trajectory'ye bağımlı olmamalı (P1-4).
+impl crate::coords::MeasuredRawPosition {
     /// Belirli bir axis'in `AxisMetric`'ini al (predicate evaluate için).
-    pub fn axis(&self, predicate_axis: PredicateAxis) -> &AxisMetric {
+    pub fn axis(&self, predicate_axis: PredicateAxis) -> &crate::coords::AxisMeasurement {
         match predicate_axis {
             PredicateAxis::Coupling => &self.coupling,
             PredicateAxis::Cohesion => &self.cohesion,
             PredicateAxis::Instability => &self.instability,
             PredicateAxis::Entropy => &self.entropy,
             PredicateAxis::WitnessDepth => &self.witness_depth,
-            // Derived/custom axis — şu an coupling'e fallback (Aşama C'de genişletme).
+            // Derived/custom axis — legacy coupling fallback (P2-2: unchanged, ayrı takip).
             _ => &self.coupling,
-        }
-    }
-
-    /// Sadece değerleri RawPosition'a indirge (loss/distance hesabı için, source'suz).
-    pub fn to_raw(&self) -> RawPosition {
-        RawPosition {
-            x: self.coupling.value,
-            y: self.cohesion.value,
-            z: self.instability.value,
-            w: self.entropy.value,
-            v: self.witness_depth.value,
         }
     }
 }

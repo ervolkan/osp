@@ -246,6 +246,7 @@ pub struct PipelineResultJson {
 pub fn cmd_simulate_claim(repo_path: &str, scenario: &str) -> Result<PipelineResultJson, String> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use osp_core::coords::CoordinateSystem;
+    use osp_core::coords::MetricSource;
     use osp_core::engine::{EngineConfig, SpaceEngine};
     use osp_core::space::{Edge, EdgeKind, Node, NodeKind};
     use osp_core::vision::VisionVector;
@@ -258,11 +259,14 @@ pub fn cmd_simulate_claim(repo_path: &str, scenario: &str) -> Result<PipelineRes
         .map_err(|e| e.to_string())?;
 
     // Build engine with default rules + vision
+    // INV-T9 #70: production topology_source = TreeSitter, observed cohesion = Scip.
     let cs = CoordinateSystem::default_raw_five(
-        CohesionAxis::new(),
+        MetricSource::TreeSitter,
+        CohesionAxis::try_with_observed_source(MetricSource::Scip).map_err(|e| e.to_string())?,
         EntropyAxis::from_commit_entropy(6.0),
         WitnessDepthAxis::from_witness(0.3, 5),
-    );
+    )
+    .map_err(|e| e.to_string())?;
     let vision = VisionVector::new(osp_core::coords::RawPosition {
         x: 0.4,
         y: 0.6,
@@ -489,6 +493,7 @@ pub struct WhatIfResultJson {
 pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResultJson, String> {
     use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use osp_core::coords::CoordinateSystem;
+    use osp_core::coords::MetricSource;
     use osp_core::coords::RawPosition;
     use osp_core::engine::{EngineConfig, SpaceEngine};
     use osp_core::space::{Edge, EdgeKind, Node, NodeKind};
@@ -501,11 +506,14 @@ pub fn cmd_compute_whatif(repo_path: &str, scenario: &str) -> Result<WhatIfResul
         .map_err(|e| e.to_string())?;
 
     // Build engine
+    // INV-T9 #70: production topology_source = TreeSitter, observed cohesion = Scip.
     let cs = CoordinateSystem::default_raw_five(
-        CohesionAxis::new(),
+        MetricSource::TreeSitter,
+        CohesionAxis::try_with_observed_source(MetricSource::Scip).map_err(|e| e.to_string())?,
         EntropyAxis::from_commit_entropy(6.0),
         WitnessDepthAxis::from_witness(0.3, 5),
-    );
+    )
+    .map_err(|e| e.to_string())?;
     let vision = VisionVector::new(RawPosition {
         x: 0.4,
         y: 0.6,

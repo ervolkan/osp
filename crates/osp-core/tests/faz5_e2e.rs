@@ -17,7 +17,7 @@ use osp_core::agent::{
     compute_space_slice, EvidenceSummary, NewNodeSpec, OutputContract, PermissionMask, SpaceSlice,
 };
 use osp_core::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
-use osp_core::coords::{CoordinateSystem, RawPosition};
+use osp_core::coords::{CoordinateSystem, MetricSource, RawPosition};
 use osp_core::engine::{EngineCommitError, EngineConfig, SpaceEngine};
 use osp_core::space::{Edge, EdgeKind, Node, NodeKind, Space};
 use osp_core::vision::VisionVector;
@@ -68,6 +68,8 @@ fn make_project_space() -> Space {
 
 fn make_engine(space: Space) -> SpaceEngine {
     let cs = CoordinateSystem::default_raw_five(
+        // INV-T9 #70: e2e test fixture — Placeholder topology + Placeholder cohesion.
+        MetricSource::Placeholder,
         CohesionAxis::new(),
         EntropyAxis::from_commit_entropy(6.0),
         WitnessDepthAxis::from_witness(0.5, 3),

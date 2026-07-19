@@ -225,6 +225,7 @@ pub(crate) struct MetricProjectionReport {
     pub projected_axis_values: usize,
     pub skipped_placeholder: usize,
     pub skipped_heuristic: usize,
+    pub skipped_mixed: usize,
     pub skipped_zero_confidence: usize,
     pub analyzer_declared_axes: AxisSet, // capability (analyzer declares 3 axes)
     pub analyzer_unavailable_axes: AxisSet, // capability (entropy/witness_depth)
@@ -239,6 +240,9 @@ pub(crate) struct MetricProjectionReport {
 pub(crate) enum MetricSourceRejection {
     PlaceholderSource,
     HeuristicNotAdmitted,
+    /// **INV-T9 #70:** `Mixed` aggregation result observed code evidence'ına
+    /// yükseltilmemeli — TreeSitter/Scip'ten farklı epistemik kategori.
+    MixedSourceNotAdmitted,
 }
 
 /// Exhaustive match → yeni MetricSource compile-time zorlanır.
@@ -250,6 +254,7 @@ fn admit_metric_source(
         MetricSource::Scip => Ok(ObservedCodeMetricSource::Scip),
         MetricSource::Placeholder => Err(MetricSourceRejection::PlaceholderSource),
         MetricSource::Heuristic => Err(MetricSourceRejection::HeuristicNotAdmitted),
+        MetricSource::Mixed => Err(MetricSourceRejection::MixedSourceNotAdmitted),
     }
 }
 
@@ -380,7 +385,7 @@ pub(crate) fn project_code_metrics(
                 }
             })?;
 
-            // Source admission (Placeholder/Heuristic skip — N4: Heuristic defensive policy).
+            // Source admission (Placeholder/Heuristic/Mixed skip — N4: defensive policy).
             let source = match admit_metric_source(metric_value.source) {
                 Ok(s) => s,
                 Err(MetricSourceRejection::PlaceholderSource) => {
@@ -389,6 +394,10 @@ pub(crate) fn project_code_metrics(
                 }
                 Err(MetricSourceRejection::HeuristicNotAdmitted) => {
                     report.skipped_heuristic += 1;
+                    continue;
+                }
+                Err(MetricSourceRejection::MixedSourceNotAdmitted) => {
+                    report.skipped_mixed += 1;
                     continue;
                 }
             };
