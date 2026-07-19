@@ -85,8 +85,7 @@ fn agent_mcp_source_excludes_operator_authority_tools() {
 /// yüzeyine ait, agent yüzeyine değil).
 #[test]
 fn agent_mcp_source_excludes_operator_session_constructors() {
-    let src = std::fs::read_to_string(server_src_path())
-        .expect("src/server.rs readable");
+    let src = std::fs::read_to_string(server_src_path()).expect("src/server.rs readable");
 
     // Operator session constructor'ları — MCP source'da çağrılmamalı.
     assert!(
