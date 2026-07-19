@@ -203,7 +203,9 @@ pub fn run_interactive<R: BufRead, W: Write>(
                         continue;
                     }
                 };
-                if let Err(e) = run_informed_supersede(&service, input, output, &old, &new, &operator) {
+                if let Err(e) =
+                    run_informed_supersede(&service, input, output, &old, &new, &operator)
+                {
                     writeln!(output, "✗ preview render failed: {e}").ok();
                 }
             }
@@ -466,8 +468,7 @@ fn run_informed_resolution<R: BufRead, W: Write>(
     use crate::errors::{ExpectedResolutionTarget, ResolveCodeEntityCommand};
 
     // (1) Minimal canonical preview (tek canonical model — standalone query ile aynı).
-    let preview = match service
-        .execute_resolve_code_entity_preview(ConceptNodeId(candidate.into()))
+    let preview = match service.execute_resolve_code_entity_preview(ConceptNodeId(candidate.into()))
     {
         Ok(p) => p,
         Err(e) => {
@@ -480,7 +481,10 @@ fn run_informed_resolution<R: BufRead, W: Write>(
     render_resolve_code_entity_preview_text(output, &preview)?;
 
     // (3) Confirmation — tam target gösterildi, operator pins.
-    write!(output, "  Resolve this exact candidate and target basis? [y/N] ")?;
+    write!(
+        output,
+        "  Resolve this exact candidate and target basis? [y/N] "
+    )?;
     output.flush()?;
     let mut confirm = String::new();
     if input.read_line(&mut confirm).unwrap_or(0) == 0 {
@@ -751,8 +755,11 @@ mod tests {
         seed.rule_candidates.push(mk("RuleCandidate:New"));
         let store = InMemoryAnchorStore::with_seed(seed);
         let path = dir.join("store2.json");
-        write_persisted_store(&path, &PersistedStore::from_snapshot(store.export_snapshot()))
-            .unwrap();
+        write_persisted_store(
+            &path,
+            &PersistedStore::from_snapshot(store.export_snapshot()),
+        )
+        .unwrap();
         path
     }
 
@@ -763,7 +770,10 @@ mod tests {
         let repo = crate::application::repository::FileReviewStore::new(&path);
         let service = ReviewApplicationService::new(repo);
         let mut input = Cursor::new(b"y\nreason\n"); // confirmation + reason (asla okunmamalı)
-        let mut output = FailingWriter { written: 0, limit: 5 }; // render çok erken fail
+        let mut output = FailingWriter {
+            written: 0,
+            limit: 5,
+        }; // render çok erken fail
         let result = run_informed_supersede(
             &service,
             &mut input,
@@ -776,7 +786,10 @@ mod tests {
         assert!(result.is_err(), "render failure must propagate Err");
         // Revision unchanged — mutation gerçekleşmedi.
         let persisted = crate::store_io::read_persisted_store(&path).unwrap();
-        assert_eq!(persisted.revision, 0, "mutation must not run after render failure");
+        assert_eq!(
+            persisted.revision, 0,
+            "mutation must not run after render failure"
+        );
     }
 
     /// Content-aware stage writer: yazılan içerikte `trigger` byte dizisi geçtikten SONRA
@@ -791,17 +804,27 @@ mod tests {
     impl Write for StageFailingWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
             self.sink.extend_from_slice(buf);
-            if self.sink.windows(self.trigger.len()).any(|w| w == self.trigger) {
+            if self
+                .sink
+                .windows(self.trigger.len())
+                .any(|w| w == self.trigger)
+            {
                 self.triggered = true;
             }
             if self.triggered {
-                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage writer failed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stage writer failed",
+                ));
             }
             Ok(buf.len())
         }
         fn flush(&mut self) -> io::Result<()> {
             if self.triggered {
-                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "stage flush failed"));
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stage flush failed",
+                ));
             }
             Ok(())
         }
@@ -828,7 +851,9 @@ mod tests {
             "RuleCandidate:New",
             &OperatorId::new("op"),
         );
-        let revision = crate::store_io::read_persisted_store(&path).unwrap().revision;
+        let revision = crate::store_io::read_persisted_store(&path)
+            .unwrap()
+            .revision;
         (result, revision)
     }
 
@@ -839,8 +864,14 @@ mod tests {
     #[test]
     fn supersede_confirmation_prompt_failure_aborts_mutation() {
         let (result, revision) = run_stage_failure_test(b"Apply this exact supersession");
-        assert!(result.is_err(), "confirmation prompt failure must propagate Err");
-        assert_eq!(revision, 0, "mutation must not run after confirmation prompt failure");
+        assert!(
+            result.is_err(),
+            "confirmation prompt failure must propagate Err"
+        );
+        assert_eq!(
+            revision, 0,
+            "mutation must not run after confirmation prompt failure"
+        );
     }
 
     /// Reason prompt failure: preview + confirmation prompt başarılı, operator "y" verdi,
@@ -851,6 +882,9 @@ mod tests {
     fn supersede_reason_prompt_failure_aborts_mutation() {
         let (result, revision) = run_stage_failure_test(b"  Reason:");
         assert!(result.is_err(), "reason prompt failure must propagate Err");
-        assert_eq!(revision, 0, "mutation must not run after reason prompt failure");
+        assert_eq!(
+            revision, 0,
+            "mutation must not run after reason prompt failure"
+        );
     }
 }

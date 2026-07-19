@@ -11,7 +11,7 @@
 use std::io::{self, Write};
 
 use crate::application::review::{
-    SupersedeBlockerCode, SupersedePreviewOutput, SupersedeEndpointPreview,
+    SupersedeBlockerCode, SupersedeEndpointPreview, SupersedePreviewOutput,
 };
 
 impl SupersedeBlockerCode {
@@ -30,7 +30,11 @@ impl SupersedeBlockerCode {
 }
 
 /// Endpoint detay satırlarını yaz (renderer ortak parça).
-fn write_endpoint<W: Write>(out: &mut W, label: &str, ep: &SupersedeEndpointPreview) -> io::Result<()> {
+fn write_endpoint<W: Write>(
+    out: &mut W,
+    label: &str,
+    ep: &SupersedeEndpointPreview,
+) -> io::Result<()> {
     writeln!(out, "  {label}:")?;
     writeln!(out, "    ID: {}", ep.id)?;
     writeln!(out, "    Status: {}", ep.status)?;
@@ -49,7 +53,11 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
     output: &mut W,
     preview: &SupersedePreviewOutput,
 ) -> io::Result<()> {
-    writeln!(output, "Supersession preview (revision {})", preview.revision)?;
+    writeln!(
+        output,
+        "Supersession preview (revision {})",
+        preview.revision
+    )?;
     writeln!(output)?;
 
     write_endpoint(output, "Superseded endpoint", &preview.superseded)?;
@@ -93,10 +101,7 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
             preview.lineage.root
         )?;
     } else {
-        writeln!(
-            output,
-            "Lineage (successor outgoing committed DAG):"
-        )?;
+        writeln!(output, "Lineage (successor outgoing committed DAG):")?;
         // Sade chain tespiti: her node ≤1 outgoing ve ≤1 incoming → compact chain göster.
         use std::collections::BTreeMap;
         let mut out_count: BTreeMap<&str, usize> = BTreeMap::new();
@@ -113,8 +118,12 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
             // Compact chain: root → ... → leaf (edges sıralı).
             let mut chain: Vec<String> = Vec::new();
             // root = from olan ama to olmayan node (veya ilk edge'in from'u).
-            let tos: std::collections::BTreeSet<&str> =
-                preview.lineage.edges.iter().map(|e| e.to.as_str()).collect();
+            let tos: std::collections::BTreeSet<&str> = preview
+                .lineage
+                .edges
+                .iter()
+                .map(|e| e.to.as_str())
+                .collect();
             let root = preview
                 .lineage
                 .nodes
@@ -136,11 +145,7 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
         } else {
             // DAG — edge-list (branching korunur).
             for e in &preview.lineage.edges {
-                writeln!(
-                    output,
-                    "  {} --Supersedes--> {}",
-                    e.from, e.to
-                )?;
+                writeln!(output, "  {} --Supersedes--> {}", e.from, e.to)?;
             }
         }
         if let Some(t) = preview.lineage.truncation {
@@ -160,7 +165,7 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
     writeln!(output, "Compatibility:")?;
     writeln!(
         output,
-    "  Kind compatible: {}    Family compatible: {}    Cycle risk: {}",
+        "  Kind compatible: {}    Family compatible: {}    Cycle risk: {}",
         preview.compatibility.kind_compatible,
         preview.compatibility.family_compatible,
         preview.compatibility.cycle_risk
@@ -172,7 +177,11 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
         output,
         "Structurally eligible at revision {}: {}",
         preview.revision,
-        if preview.structurally_eligible { "yes" } else { "no" }
+        if preview.structurally_eligible {
+            "yes"
+        } else {
+            "no"
+        }
     )?;
     if let Some(primary) = preview.primary_structural_blocker {
         writeln!(output, "Primary structural blocker:")?;
@@ -181,7 +190,12 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
             .iter()
             .find(|b| b.code == primary)
             .expect("primary_structural_blocker has matching entry");
-        writeln!(output, "  {} — {}", primary.label(), primary_blocker.message)?;
+        writeln!(
+            output,
+            "  {} — {}",
+            primary.label(),
+            primary_blocker.message
+        )?;
         let additional: Vec<_> = preview
             .blocking_reasons
             .iter()
@@ -211,11 +225,11 @@ pub(crate) fn render_supersede_preview_text<W: Write>(
     }
     writeln!(
         output,
-    "Operator note: this is a read-only point-in-time assessment."
+        "Operator note: this is a read-only point-in-time assessment."
     )?;
     writeln!(
         output,
-    "  Mutation revalidates both digests and currentness under lock."
+        "  Mutation revalidates both digests and currentness under lock."
     )?;
     // Self-supersede operatör notu.
     if preview

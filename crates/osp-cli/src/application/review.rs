@@ -15,10 +15,10 @@
 //! Session'ın kendi StaleBasis'i tautolojik (zararsız) — tek mesaja map (Review 4).
 
 use osp_core::anchoring::review::{
-    node_digest, NodeDigest, OperatorId, OperatorReviewSession, PresentedBasis,
-    PresentedResolutionBasis, PresentedResolutionTarget, PresentedSupersedeBasis,
+    node_digest, CodeEntityResolutionSession, NodeDigest, OperatorId, OperatorReviewSession,
+    PresentedBasis, PresentedResolutionBasis, PresentedResolutionTarget, PresentedSupersedeBasis,
     ResolutionError, ResolutionOutcome, ResolutionRecord, SupersedeError, SupersedeRecord,
-    SupersedeSession, CodeEntityResolutionSession,
+    SupersedeSession,
 };
 use osp_core::anchoring::store::{InMemoryAnchorStore, StoreError};
 use osp_core::anchoring::types::ConceptNodeId;
@@ -27,8 +27,8 @@ use osp_core::anchoring::{DecisionStatus, NonEmptyExplanation};
 use crate::application::repository::ReviewStoreRepository;
 use crate::errors::{
     format_endpoint_status, ExpectedResolutionTarget, PersistedResolveCodeEntityOutput,
-    PersistedReviewOutput, PersistedSupersedeOutput, ResolveCodeEntityCommand,
-    ResolveCodeEntityMutation, ResolutionOutcomeView, ReviewError, ReviewMutation,
+    PersistedReviewOutput, PersistedSupersedeOutput, ResolutionOutcomeView,
+    ResolveCodeEntityCommand, ResolveCodeEntityMutation, ReviewError, ReviewMutation,
     ReviewSupersedeMutation, SupersedeCommand, SupersedeDigests, SupersedeEndpoint,
 };
 
@@ -52,9 +52,7 @@ pub enum ReviewQuery {
     /// PR E2 (tur 3 P1-4) — minimal canonical resolution preview (target reveal).
     /// `osp review resolve-code-entity-preview <candidate>` + confirmation aynı query'yi kullanır.
     /// Tek `read_validated_store()` — candidate digest + identity key + target + revision aynı snapshot.
-    ResolveCodeEntityPreview {
-        candidate: ConceptNodeId,
-    },
+    ResolveCodeEntityPreview { candidate: ConceptNodeId },
 }
 
 /// Mutation review komutları — `--operator` zorunlu, `expected_basis_digest` precondition.
@@ -402,8 +400,7 @@ impl<R: ReviewStoreRepository> ReviewApplicationService<R> {
         &self,
         candidate: ConceptNodeId,
     ) -> Result<ResolutionPreviewOutput, ReviewError> {
-        match self
-            .execute_query(ReviewQuery::ResolveCodeEntityPreview { candidate })? {
+        match self.execute_query(ReviewQuery::ResolveCodeEntityPreview { candidate })? {
             ReviewReadOutput::ResolveCodeEntityPreview(output) => Ok(output),
             _ => unreachable!("query/output variant mismatch"),
         }
@@ -557,8 +554,7 @@ fn build_supersede_preview(
             code: SupersedeBlockerCode::AlreadySuperseded,
             message: format!(
                 "{} is already superseded by {}",
-                superseded.0,
-                incoming[0].0
+                superseded.0, incoming[0].0
             ),
         });
     }
@@ -718,11 +714,11 @@ impl ResolutionPreviewOutput {
     pub fn expected_target(&self) -> ExpectedResolutionTarget {
         use crate::errors::ExpectedResolutionTarget;
         match &self.target {
-            ResolutionTargetPreview::Create {
-                proposed_entity_id,
-            } => ExpectedResolutionTarget::Create {
-                proposed_entity_id: ConceptNodeId(proposed_entity_id.clone()),
-            },
+            ResolutionTargetPreview::Create { proposed_entity_id } => {
+                ExpectedResolutionTarget::Create {
+                    proposed_entity_id: ConceptNodeId(proposed_entity_id.clone()),
+                }
+            }
             ResolutionTargetPreview::Reuse {
                 entity_id,
                 entity_digest_hex,
@@ -761,27 +757,27 @@ fn build_resolve_code_entity_preview(
         .map_err(|e| map_resolution_error(candidate, e))?;
 
     let view_node = basis.candidate_id();
-    let candidate_node = store.graph().node(view_node).ok_or_else(|| {
-        ReviewError::NotFound(view_node.0.clone())
-    })?;
+    let candidate_node = store
+        .graph()
+        .node(view_node)
+        .ok_or_else(|| ReviewError::NotFound(view_node.0.clone()))?;
     let digest = node_digest(candidate_node);
 
     // Identity key preview — scheme + policy + canonical_key.
     let identity_key = basis.identity_key();
     let (scheme_str, case_policy_str) = match identity_key.scheme() {
-        osp_core::anchoring::identity::CodeIdentityScheme::AnalysisPathV1 { case_policy } => (
-            "analysis-path-v1".to_string(),
-            format!("{case_policy:?}"),
-        ),
+        osp_core::anchoring::identity::CodeIdentityScheme::AnalysisPathV1 { case_policy } => {
+            ("analysis-path-v1".to_string(), format!("{case_policy:?}"))
+        }
     };
 
     // Target preview — Create proposed_entity_id / Reuse entity_id + digest + status.
     let target_preview = match basis.target() {
-        PresentedResolutionTarget::Create {
-            proposed_entity_id,
-        } => ResolutionTargetPreview::Create {
-            proposed_entity_id: proposed_entity_id.0.clone(),
-        },
+        PresentedResolutionTarget::Create { proposed_entity_id } => {
+            ResolutionTargetPreview::Create {
+                proposed_entity_id: proposed_entity_id.0.clone(),
+            }
+        }
         PresentedResolutionTarget::Reuse {
             entity_id,
             entity_digest,
@@ -1209,10 +1205,7 @@ fn apply_resolution(
 ///
 /// Tur 2 P1-A: `candidate_id` context — unit variant'lar (`MissingIdentityBinding`,
 /// `AlreadyResolved`) context'ten ID alır. `CandidateNotFound(id)` tuple pattern.
-fn map_resolution_error(
-    candidate_id: &ConceptNodeId,
-    error: ResolutionError,
-) -> ReviewError {
+fn map_resolution_error(candidate_id: &ConceptNodeId, error: ResolutionError) -> ReviewError {
     use osp_core::anchoring::review::ResolutionError as RE;
     match error {
         RE::CandidateNotFound(id) => ReviewError::NotFound(id.0),
@@ -1229,7 +1222,9 @@ fn map_resolution_error(
         RE::MissingIdentityBinding => ReviewError::MissingIdentityBinding(candidate_id.0.clone()),
         RE::AlreadyResolved => ReviewError::AlreadyResolved(candidate_id.0.clone()),
         RE::StaleResolutionTarget => ReviewError::StaleResolutionTarget,
-        RE::ReuseTargetIncompatible => ReviewError::NotPromotable("reuse target incompatible".into()),
+        RE::ReuseTargetIncompatible => {
+            ReviewError::NotPromotable("reuse target incompatible".into())
+        }
         RE::EntityNotLiveForResolution { entity_id, status } => {
             ReviewError::EntityNotLiveForResolution {
                 entity_id: entity_id.0,
@@ -1302,9 +1297,8 @@ fn map_resolution_store_error(
         }
         StoreError::DuplicateLiveCodeEntityIdentity => ReviewError::DuplicateLiveEntity,
         StoreError::StaleResolutionTarget => ReviewError::StaleResolutionTarget,
-        StoreError::ResolutionBasisCandidateMismatch { .. } | StoreError::AuditSequenceExhausted => {
-            ReviewError::Store(source.to_string())
-        }
+        StoreError::ResolutionBasisCandidateMismatch { .. }
+        | StoreError::AuditSequenceExhausted => ReviewError::Store(source.to_string()),
         // NOT mapped (seeding-only — graph init handles): BindingNodeNotFound, DuplicateBinding.
         // NOT mapped (unreachable from resolution): supersede/decision-specific variants.
         _ => ReviewError::Store(source.to_string()),
@@ -1418,9 +1412,7 @@ mod tests {
     // Rich SupersedePreview builder unit tests
     // ═══════════════════════════════════════════════════════════════════════════
 
-    use osp_core::anchoring::review::{
-        OperatorId, PresentedSupersedeBasis, SupersedeSession,
-    };
+    use osp_core::anchoring::review::{OperatorId, PresentedSupersedeBasis, SupersedeSession};
     use osp_core::anchoring::types::{ConceptNode, ConceptNodeKind, GraphSeed};
     use osp_core::anchoring::{DecisionStatus, PositionFamily};
 
@@ -1446,7 +1438,9 @@ mod tests {
         let basis = PresentedSupersedeBasis::compile(store, &sup, &suc).expect("basis");
         let reason = NonEmptyExplanation::new("t").unwrap();
         let mut session = SupersedeSession::open_for_operator(OperatorId::new("t"));
-        session.supersede(store, &sup, &suc, basis, reason).expect("supersede");
+        session
+            .supersede(store, &sup, &suc, basis, reason)
+            .expect("supersede");
     }
 
     fn accepted_node(id: &str) -> ConceptNode {
@@ -1506,12 +1500,15 @@ mod tests {
     #[test]
     fn preview_already_superseded_primary_blocker() {
         let mut seed = GraphSeed::default();
-        seed.rule_candidates.push(accepted_node("RuleCandidate:Old"));
-        seed.rule_candidates.push(accepted_node("RuleCandidate:New"));
-        seed.rule_candidates.push(accepted_node("RuleCandidate:Newer"));
+        seed.rule_candidates
+            .push(accepted_node("RuleCandidate:Old"));
+        seed.rule_candidates
+            .push(accepted_node("RuleCandidate:New"));
+        seed.rule_candidates
+            .push(accepted_node("RuleCandidate:Newer"));
         let mut store = InMemoryAnchorStore::with_seed(seed);
         supersede_in_place(&mut store, "RuleCandidate:Old", "RuleCandidate:New"); // New→Old committed
-        // Preview: supersede Old (already superseded) → AlreadySuperseded primary.
+                                                                                  // Preview: supersede Old (already superseded) → AlreadySuperseded primary.
         let preview = build_supersede_preview(
             &store,
             &ConceptNodeId("RuleCandidate:Old".into()),
@@ -1525,8 +1522,14 @@ mod tests {
             preview.primary_structural_blocker,
             Some(SupersedeBlockerCode::AlreadySuperseded)
         );
-        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::AlreadySuperseded));
-        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::SupersededNotCurrent));
+        assert!(preview
+            .blocking_reasons
+            .iter()
+            .any(|b| b.code == SupersedeBlockerCode::AlreadySuperseded));
+        assert!(preview
+            .blocking_reasons
+            .iter()
+            .any(|b| b.code == SupersedeBlockerCode::SupersededNotCurrent));
         // superseded_incoming accessor'dan beslenir.
         assert_eq!(
             preview.lineage.superseded_incoming,
@@ -1593,7 +1596,8 @@ mod tests {
         old.decision_status = DecisionStatus::Rejected;
         let mut seed = GraphSeed::default();
         seed.rule_candidates.push(old);
-        seed.rule_candidates.push(accepted_node("RuleCandidate:New"));
+        seed.rule_candidates
+            .push(accepted_node("RuleCandidate:New"));
         let store = InMemoryAnchorStore::with_seed(seed);
         let preview = build_supersede_preview(
             &store,
@@ -1618,7 +1622,7 @@ mod tests {
         seed.rule_candidates.push(accepted_node("RuleCandidate:B"));
         let mut store = InMemoryAnchorStore::with_seed(seed);
         supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // committed B→A
-        // Preview: supersede B (target), successor A → proposed A→B; B→A mevcut → cycle.
+                                                                              // Preview: supersede B (target), successor A → proposed A→B; B→A mevcut → cycle.
         let preview = build_supersede_preview(
             &store,
             &ConceptNodeId("RuleCandidate:B".into()), // superseded
@@ -1628,7 +1632,10 @@ mod tests {
         .unwrap();
         assert!(!preview.structurally_eligible);
         assert!(preview.compatibility.cycle_risk);
-        assert!(preview.blocking_reasons.iter().any(|b| b.code == SupersedeBlockerCode::Cycle));
+        assert!(preview
+            .blocking_reasons
+            .iter()
+            .any(|b| b.code == SupersedeBlockerCode::Cycle));
     }
 
     /// Lineage chain: supersede(A, B) → B→A committed. Preview successor=B → [B@0, A@1].
@@ -1639,7 +1646,7 @@ mod tests {
         seed.rule_candidates.push(accepted_node("RuleCandidate:B"));
         let mut store = InMemoryAnchorStore::with_seed(seed);
         supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:B"); // B→A
-        // Preview successor=B (outgoing chain [B, A]); superseded=A ineligible ama lineage gösterilir.
+                                                                              // Preview successor=B (outgoing chain [B, A]); superseded=A ineligible ama lineage gösterilir.
         let preview = build_supersede_preview(
             &store,
             &ConceptNodeId("RuleCandidate:A".into()),
@@ -1662,7 +1669,7 @@ mod tests {
         let mut store = InMemoryAnchorStore::with_seed(seed);
         supersede_in_place(&mut store, "RuleCandidate:A", "RuleCandidate:C"); // C→A
         supersede_in_place(&mut store, "RuleCandidate:B", "RuleCandidate:C"); // C→B
-        // Preview successor=C → outgoing [A, B]; superseded=A ineligible ama lineage gösterilir.
+                                                                              // Preview successor=C → outgoing [A, B]; superseded=A ineligible ama lineage gösterilir.
         let preview = build_supersede_preview(
             &store,
             &ConceptNodeId("RuleCandidate:A".into()),
@@ -1735,7 +1742,10 @@ mod tests {
         // Closed-output: excluded N0'a hiçbir edge.
         let node_ids: std::collections::BTreeSet<String> =
             lineage.nodes.iter().map(|n| n.id.clone()).collect();
-        assert!(!node_ids.contains("RuleCandidate:N0"), "N0 must be excluded");
+        assert!(
+            !node_ids.contains("RuleCandidate:N0"),
+            "N0 must be excluded"
+        );
         for e in &lineage.edges {
             assert!(
                 node_ids.contains(&e.from) && node_ids.contains(&e.to),
@@ -1887,9 +1897,10 @@ mod tests {
     fn map_resolution_store_error_binding_wrong_kind_maps_not_promotable() {
         // Tur 3 P1-2 — BindingWrongKind reachable (resolution_basis_view store.rs:1711-1715).
         let id = ConceptNodeId("CodeEntityCandidate:src/lib.rs".into());
-        let source: Box<dyn std::error::Error + Send + Sync> = Box::new(StoreError::BindingWrongKind {
-            kind: ConceptNodeKind::Concept,
-        });
+        let source: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(StoreError::BindingWrongKind {
+                kind: ConceptNodeKind::Concept,
+            });
         let err = map_resolution_store_error(&id, source);
         match err {
             ReviewError::NotPromotable(msg) => {
@@ -1918,7 +1929,10 @@ mod tests {
         let err = map_resolution_store_error(&id2, source);
         match err {
             ReviewError::NotPromotable(msg) => {
-                assert!(msg.contains("accepted"), "Accepted → NotPromotable, msg: {msg}");
+                assert!(
+                    msg.contains("accepted"),
+                    "Accepted → NotPromotable, msg: {msg}"
+                );
             }
             other => panic!("Accepted → NotPromotable, got {other:?}"),
         }
@@ -1937,9 +1951,7 @@ mod tests {
         )
         .unwrap();
         match &preview.target {
-            ResolutionTargetPreview::Create {
-                proposed_entity_id,
-            } => {
+            ResolutionTargetPreview::Create { proposed_entity_id } => {
                 assert!(
                     proposed_entity_id.starts_with("CodeEntity:"),
                     "proposed_entity_id CodeEntity: prefix, got {proposed_entity_id}"
@@ -1949,9 +1961,7 @@ mod tests {
         }
         // expected_target() infallible — Create variant.
         match preview.expected_target() {
-            ExpectedResolutionTarget::Create {
-                proposed_entity_id,
-            } => {
+            ExpectedResolutionTarget::Create { proposed_entity_id } => {
                 assert!(proposed_entity_id.0.starts_with("CodeEntity:"));
             }
             other => panic!("expected Create expected_target, got {other:?}"),
@@ -2028,11 +2038,11 @@ mod tests {
         // (1) Preview compile — production path'in ilk adımı.
         let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
         let expected_target = match basis.target() {
-            PresentedResolutionTarget::Create {
-                proposed_entity_id,
-            } => ExpectedResolutionTarget::Create {
-                proposed_entity_id: proposed_entity_id.clone(),
-            },
+            PresentedResolutionTarget::Create { proposed_entity_id } => {
+                ExpectedResolutionTarget::Create {
+                    proposed_entity_id: proposed_entity_id.clone(),
+                }
+            }
             _ => unreachable!("0 entity → Create"),
         };
         let cmd = ResolveCodeEntityCommand {
@@ -2099,11 +2109,11 @@ mod tests {
         // (1) Candidate A preview → Create (0 live entity).
         let basis_a = PresentedResolutionBasis::compile(&store, &candidate_a).unwrap();
         let create_target = match basis_a.target() {
-            PresentedResolutionTarget::Create {
-                proposed_entity_id,
-            } => ExpectedResolutionTarget::Create {
-                proposed_entity_id: proposed_entity_id.clone(),
-            },
+            PresentedResolutionTarget::Create { proposed_entity_id } => {
+                ExpectedResolutionTarget::Create {
+                    proposed_entity_id: proposed_entity_id.clone(),
+                }
+            }
             other => panic!("expected Create (0 entity), got {other:?}"),
         };
         let create_digest = basis_a.candidate_digest();
@@ -2113,11 +2123,11 @@ mod tests {
             candidate: candidate_b.clone(),
             expected_candidate_digest: basis_b.candidate_digest(),
             expected_target: match basis_b.target() {
-                PresentedResolutionTarget::Create {
-                    proposed_entity_id,
-                } => ExpectedResolutionTarget::Create {
-                    proposed_entity_id: proposed_entity_id.clone(),
-                },
+                PresentedResolutionTarget::Create { proposed_entity_id } => {
+                    ExpectedResolutionTarget::Create {
+                        proposed_entity_id: proposed_entity_id.clone(),
+                    }
+                }
                 _ => unreachable!(),
             },
             reason: "resolve B first".into(),
@@ -2316,11 +2326,11 @@ mod tests {
         // (1) İlk resolve → Created.
         let basis = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
         let expected_target = match basis.target() {
-            PresentedResolutionTarget::Create {
-                proposed_entity_id,
-            } => ExpectedResolutionTarget::Create {
-                proposed_entity_id: proposed_entity_id.clone(),
-            },
+            PresentedResolutionTarget::Create { proposed_entity_id } => {
+                ExpectedResolutionTarget::Create {
+                    proposed_entity_id: proposed_entity_id.clone(),
+                }
+            }
             _ => unreachable!(),
         };
         let cmd = ResolveCodeEntityCommand {
@@ -2334,11 +2344,11 @@ mod tests {
         //     Store R6 outgoing ResolvesTo check → AlreadyResolved (target validation öncesi).
         let basis2 = PresentedResolutionBasis::compile(&store, &candidate_id).unwrap();
         let expected_target2 = match basis2.target() {
-            PresentedResolutionTarget::Create {
-                proposed_entity_id,
-            } => ExpectedResolutionTarget::Create {
-                proposed_entity_id: proposed_entity_id.clone(),
-            },
+            PresentedResolutionTarget::Create { proposed_entity_id } => {
+                ExpectedResolutionTarget::Create {
+                    proposed_entity_id: proposed_entity_id.clone(),
+                }
+            }
             PresentedResolutionTarget::Reuse {
                 entity_id,
                 entity_digest,

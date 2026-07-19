@@ -104,7 +104,9 @@ fn serve_file(request: tiny_http::Request, filename: &str, mime: &str) {
 fn respond_json<T: Serialize>(request: tiny_http::Request, data: &T) {
     let body = serde_json::to_string(data).unwrap_or_else(|_| "{}".to_string());
     let response = Response::from_string(body)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap())
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap(),
+        )
         .with_header(Header::from_bytes(&b"Access-Control-Allow-Origin"[..], b"*").unwrap());
     request.respond(response).ok();
 }
@@ -113,7 +115,9 @@ fn respond_error(request: tiny_http::Request, code: u16, message: &str) {
     let body = serde_json::json!({ "error": message });
     let response = Response::from_string(body.to_string())
         .with_status_code(code)
-        .with_header(Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap());
+        .with_header(
+            Header::from_bytes(&b"Content-Type"[..], b"application/json".as_ref()).unwrap(),
+        );
     request.respond(response).ok();
 }
 

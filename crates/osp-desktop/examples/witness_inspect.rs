@@ -31,7 +31,13 @@ fn main() {
     }
 
     // Tanıdık svelte dosyalarını ara
-    let targets = ["runtime.js", "CHANGELOG.md", "compiler.js", "index.ts", "package.json"];
+    let targets = [
+        "runtime.js",
+        "CHANGELOG.md",
+        "compiler.js",
+        "index.ts",
+        "package.json",
+    ];
     println!("\n--- Known files (witness + risk context) ---");
     for n in &result.space.nodes {
         let Some(path) = &n.path else { continue };
@@ -54,7 +60,13 @@ fn main() {
         };
         println!(
             "  {:>6} commits · {} authors · {:>6} churn · {:.0}% solo · {}d ago · [{}] · {}",
-            w_commits, w_authors, w_churn, w_own * 100.0, w_days, label, path
+            w_commits,
+            w_authors,
+            w_churn,
+            w_own * 100.0,
+            w_days,
+            label,
+            path
         );
     }
 

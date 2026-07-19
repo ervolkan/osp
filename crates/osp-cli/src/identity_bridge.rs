@@ -84,10 +84,7 @@ pub enum IdentityBridgeError {
         "canonicalization drift: cli key {cli_key:?} != core key {core_key:?} \
          (caller policy mismatch — use AnalysisIdentityContext)"
     )]
-    CanonicalizationDrift {
-        cli_key: String,
-        core_key: String,
-    },
+    CanonicalizationDrift { cli_key: String, core_key: String },
 }
 
 /// CLI `CanonicalCodeIdentity` → core `CodeIdentityKey`.
@@ -129,10 +126,7 @@ pub fn to_core_identity_key(
 mod tests {
     use super::*;
 
-    fn ctx(
-        scheme: AnalysisIdentityScheme,
-        policy: PathCasePolicy,
-    ) -> AnalysisIdentityContext {
+    fn ctx(scheme: AnalysisIdentityScheme, policy: PathCasePolicy) -> AnalysisIdentityContext {
         AnalysisIdentityContext::new(scheme, policy)
     }
 
@@ -140,10 +134,14 @@ mod tests {
 
     #[test]
     fn to_core_identity_key_case_sensitive_passthrough() {
-        let identity = CanonicalCodeIdentity::new("src/auth.rs", PathCasePolicy::CaseSensitive).unwrap();
+        let identity =
+            CanonicalCodeIdentity::new("src/auth.rs", PathCasePolicy::CaseSensitive).unwrap();
         let key = to_core_identity_key(
             &identity,
-            ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::CaseSensitive),
+            ctx(
+                AnalysisIdentityScheme::PathV1,
+                PathCasePolicy::CaseSensitive,
+            ),
         )
         .unwrap();
         assert_eq!(key.canonical_key(), "src/auth.rs");
@@ -155,11 +153,15 @@ mod tests {
     fn to_core_identity_key_ascii_case_insensitive_lowercase_idempotent() {
         // CLI AsciiCaseInsensitive zaten lowercase üretti → core tekrar lowercase idempotent.
         let identity =
-            CanonicalCodeIdentity::new("src/Auth.rs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
+            CanonicalCodeIdentity::new("src/Auth.rs", PathCasePolicy::AsciiCaseInsensitive)
+                .unwrap();
         assert_eq!(identity.identity_key(), "src/auth.rs"); // CLI lowercase
         let key = to_core_identity_key(
             &identity,
-            ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::AsciiCaseInsensitive),
+            ctx(
+                AnalysisIdentityScheme::PathV1,
+                PathCasePolicy::AsciiCaseInsensitive,
+            ),
         )
         .unwrap();
         assert_eq!(key.canonical_key(), "src/auth.rs");
@@ -171,13 +173,17 @@ mod tests {
     fn to_core_identity_key_control_char_rejects() {
         // CLI constructor NUL reject eder ama diğer control char'lar geçebilir; core reject.
         // \u{0001} (SOH) — control char ama NUL değil.
-        let identity = CanonicalCodeIdentity::new("src/\u{0001}auth.rs", PathCasePolicy::CaseSensitive);
+        let identity =
+            CanonicalCodeIdentity::new("src/\u{0001}auth.rs", PathCasePolicy::CaseSensitive);
         // CLI constructor geçirebilir veya reddedebilir; her durumda core validation downstream.
         match identity {
             Ok(id) => {
                 let err = to_core_identity_key(
                     &id,
-                    ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::CaseSensitive),
+                    ctx(
+                        AnalysisIdentityScheme::PathV1,
+                        PathCasePolicy::CaseSensitive,
+                    ),
                 )
                 .unwrap_err();
                 assert!(matches!(
@@ -209,10 +215,14 @@ mod tests {
 
     #[test]
     fn analysis_scheme_path_v1_maps_to_core_analysis_path_v1_with_case_policy() {
-        let identity = CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap();
+        let identity =
+            CanonicalCodeIdentity::new("src/x.rs", PathCasePolicy::CaseSensitive).unwrap();
         let key = to_core_identity_key(
             &identity,
-            ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::CaseSensitive),
+            ctx(
+                AnalysisIdentityScheme::PathV1,
+                PathCasePolicy::CaseSensitive,
+            ),
         )
         .unwrap();
         match key.scheme() {
@@ -226,8 +236,13 @@ mod tests {
 
     #[test]
     fn to_core_identity_key_deterministic_round_trip() {
-        let identity = CanonicalCodeIdentity::new("src/payment.rs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let context = ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::AsciiCaseInsensitive);
+        let identity =
+            CanonicalCodeIdentity::new("src/payment.rs", PathCasePolicy::AsciiCaseInsensitive)
+                .unwrap();
+        let context = ctx(
+            AnalysisIdentityScheme::PathV1,
+            PathCasePolicy::AsciiCaseInsensitive,
+        );
         let k1 = to_core_identity_key(&identity, context).unwrap();
         let k2 = to_core_identity_key(&identity, context).unwrap();
         assert_eq!(k1, k2);
@@ -255,18 +270,19 @@ mod tests {
         // Not: CanonicalCodeIdentity private fields; sadece public constructor ile üretilebilir.
         // CaseSensitive policy ile "Src/Auth.rs" → identity_key = "Src/Auth.rs" (case korunur).
         // Core AsciiCaseInsensitive → canonical_key = "src/auth.rs" → drift.
-        let identity = CanonicalCodeIdentity::new("Src/Auth.rs", PathCasePolicy::CaseSensitive).unwrap();
+        let identity =
+            CanonicalCodeIdentity::new("Src/Auth.rs", PathCasePolicy::CaseSensitive).unwrap();
         assert_eq!(identity.identity_key(), "Src/Auth.rs"); // CaseSensitive: case korunur
         let err = to_core_identity_key(
             &identity,
-            ctx(AnalysisIdentityScheme::PathV1, PathCasePolicy::AsciiCaseInsensitive),
+            ctx(
+                AnalysisIdentityScheme::PathV1,
+                PathCasePolicy::AsciiCaseInsensitive,
+            ),
         )
         .unwrap_err();
         match err {
-            IdentityBridgeError::CanonicalizationDrift {
-                cli_key,
-                core_key,
-            } => {
+            IdentityBridgeError::CanonicalizationDrift { cli_key, core_key } => {
                 assert_eq!(cli_key, "Src/Auth.rs");
                 assert_eq!(core_key, "src/auth.rs");
             }

@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, ArgGroup};
+use clap::{ArgGroup, Args};
 use osp_core::anchoring::store::{AnchorStore, InMemoryAnchorStore};
 
 use crate::analysis_bridge::project_analysis;
@@ -171,10 +171,7 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
         let ep = &bridge_output.evidence_projection.report;
         eprintln!("Evidence construction: completed");
         eprintln!("Evidence objects: {}", ep.evidence_objects_created);
-        eprintln!(
-            "Partial evidence objects: {}",
-            ep.partial_evidence_objects
-        );
+        eprintln!("Partial evidence objects: {}", ep.partial_evidence_objects);
         eprintln!("Evidence runtime consumer: none in graph init");
         eprintln!("Evidence persistence: disabled");
         eprintln!("{}", bridge_output.graph_report);
@@ -197,9 +194,7 @@ pub fn run_graph_init(args: GraphInitArgs) -> anyhow::Result<()> {
     // seed_code_identity_bindings_trusted: node existence + kind + family + duplicate + R7 validation.
     // Tur 1 review P2-1: başarılı seeding stderr'i durable write SONRASI basılır
     // (restore validation + serialization/write/fsync/atomic replace fail ederse "seeded" iddia edilemez).
-    let seeded_binding_count = identity_bindings
-        .as_ref()
-        .map_or(0, Vec::len);
+    let seeded_binding_count = identity_bindings.as_ref().map_or(0, Vec::len);
     if let Some(bindings) = &identity_bindings {
         if !bindings.is_empty() {
             store

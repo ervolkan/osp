@@ -676,9 +676,9 @@ fn serialize_navigator_result(result: &osp_core::navigator::NavigatorResult) -> 
         }),
         NavigatorResult::RequiresRevision(rev) => serde_json::json!({
             "outcome": "RequiresRevision",
-            "task_id": rev.task_id,
-            "claim_id": rev.claim_id,
-            "rejecting_witnesses": rev.reasons.as_slice().iter().map(|r| r.witness).collect::<Vec<_>>(),
+            "task_id": rev.task_id(),
+            "claim_id": rev.claim_id(),
+            "rejecting_witnesses": rev.reasons().map(|r| r.as_slice().iter().map(|x| x.witness).collect::<Vec<_>>()).unwrap_or_default(),
             "commit_state": "rejected_by_witness",
             "next_action": "requires_revision",
         }),

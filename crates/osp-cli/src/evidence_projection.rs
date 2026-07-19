@@ -34,7 +34,9 @@ use osp_core::anchoring::types::{
     ObservedCodeEvidence, ObservedPhysicalMetric, ObservedPhysicalMetricError,
     ObservedPhysicalMetrics, ObservedPhysicalMetricsError,
 };
-use osp_core::anchoring::{MetricScalarViolation as CoreMetricScalarViolation, PhysicalCodeMetricAxis};
+use osp_core::anchoring::{
+    MetricScalarViolation as CoreMetricScalarViolation, PhysicalCodeMetricAxis,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Conversion context + output
@@ -85,7 +87,9 @@ pub(crate) enum EvidenceProjectionError {
     /// Semantik: "sıfır coverage'a sahip metric observation değildir; PR B'de omission olması
     /// gerekirdi". coverage=0, strength>0 core'da temsil edilebilir ama PR B confidence formülü
     /// (confidence coverage içerir) + zero-confidence omission ile tutarsız → conversion reject.
-    #[error("{node_id} {axis:?} axis zero coverage — observation değildir (PR B omission beklenir)")]
+    #[error(
+        "{node_id} {axis:?} axis zero coverage — observation değildir (PR B omission beklenir)"
+    )]
     ZeroCoverage {
         node_id: ConceptNodeId,
         axis: PhysicalCodeAxis,
@@ -120,17 +124,13 @@ pub(crate) enum EvidenceProjectionError {
     /// Store canonical disiplin mirror: aynı node için batch içindeki her duplicate binding reject.
     /// Explicit index-building `BTreeMap::insert` duplicate'i yakalar.
     #[error("duplicate code identity binding for node {node_id}")]
-    DuplicateBindingNode {
-        node_id: ConceptNodeId,
-    },
+    DuplicateBindingNode { node_id: ConceptNodeId },
     /// PR F — Projected metric node has no code identity binding (fail-fast reject).
     ///
     /// Semantik: "metric node için binding yoksa evidence üretilemez". PR D `ZeroCoverage`
     /// pattern analog — sessiz skip YOK (tutarlılık > kullanılabilirlik).
     #[error("projected metric node has no code identity binding: {node_id}")]
-    UnboundNode {
-        node_id: ConceptNodeId,
-    },
+    UnboundNode { node_id: ConceptNodeId },
     /// PR F review P1-1 — Aynı identity key'e bağlı birden fazla candidate node aynı axis
     /// için conflicting (value/provenance/strength/coverage) metric taşıyorsa reject.
     ///
@@ -181,13 +181,14 @@ fn convert_metric_to_observation(
     let source = metric.provenance().source();
 
     // Strength re-validate (EvidenceStrength::new — InvalidStrength).
-    let strength = EvidenceStrength::new(metric.provenance().confidence().get()).map_err(|source| {
-        EvidenceProjectionError::InvalidStrength {
-            node_id: node_id.clone(),
-            axis: draft_axis,
-            source,
-        }
-    })?;
+    let strength =
+        EvidenceStrength::new(metric.provenance().confidence().get()).map_err(|source| {
+            EvidenceProjectionError::InvalidStrength {
+                node_id: node_id.clone(),
+                axis: draft_axis,
+                source,
+            }
+        })?;
 
     // Zero coverage reject (tur 4 karar 3 — contract drift defense).
     let coverage_raw = metric.provenance().coverage().get();
@@ -280,16 +281,15 @@ pub(crate) fn project_observed_evidence(
 
     for metric in metrics {
         let node_id = metric.node_id();
-        let identity_key = bindings_by_node.get(node_id).ok_or_else(|| {
-            EvidenceProjectionError::UnboundNode {
-                node_id: node_id.clone(),
-            }
-        })?;
+        let identity_key =
+            bindings_by_node
+                .get(node_id)
+                .ok_or_else(|| EvidenceProjectionError::UnboundNode {
+                    node_id: node_id.clone(),
+                })?;
         let draft_axis = metric.axis();
 
-        let identity_entry = by_identity
-            .entry((*identity_key).clone())
-            .or_default();
+        let identity_entry = by_identity.entry((*identity_key).clone()).or_default();
 
         match identity_entry.get(&draft_axis) {
             // Bu key+axis için zaten metric var — conflict veya dedup karar ver.
@@ -374,11 +374,15 @@ mod tests {
     use osp_core::anchoring::code_evidence::{
         CodeEvidenceProvider, InMemoryCodeEvidenceSource, ResolvedCodeEvidenceProvider,
     };
-    use osp_core::anchoring::code_evidence::{CodeIdentityBindingLookup, CodeIdentityLookupError, ResolvedCodeIdentity};
+    use osp_core::anchoring::code_evidence::{
+        CodeIdentityBindingLookup, CodeIdentityLookupError, ResolvedCodeIdentity,
+    };
     use osp_core::anchoring::gate::AnchorGateContext;
     use osp_core::anchoring::identity::{CodeIdentityKey, CodeIdentityScheme, CodePathCasePolicy};
     use osp_core::anchoring::pipeline::AnchorPipeline;
-    use osp_core::anchoring::types::{CodeIdentityBinding, ConceptNodeId, ObservedCodeMetricSource};
+    use osp_core::anchoring::types::{
+        CodeIdentityBinding, ConceptNodeId, ObservedCodeMetricSource,
+    };
     use osp_core::anchoring::{ConceptEdgeKind, ConceptGraph, PacketSource};
 
     /// Deterministik test timestamp.
@@ -450,9 +454,7 @@ mod tests {
             self.bindings
                 .iter()
                 .find(|b| &b.node_id == node_id)
-                .map(|b| {
-                    ResolvedCodeIdentity::new(b.node_id.clone(), b.identity_key.clone())
-                })
+                .map(|b| ResolvedCodeIdentity::new(b.node_id.clone(), b.identity_key.clone()))
                 .ok_or_else(|| CodeIdentityLookupError::NodeNotFound(node_id.clone()))
         }
     }
@@ -557,7 +559,8 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
+        let out =
+            project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         let evidence = &out.evidence[0];
         // 5 axis → try_to_physical_vector Ok (full vector).
         let pv = evidence
@@ -593,7 +596,8 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
+        let out =
+            project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         let observations = out.evidence[0].observations().values();
         assert_eq!(observations[0].axis(), PhysicalCodeMetricAxis::Coupling);
         assert_eq!(observations[0].source(), ts());
@@ -651,7 +655,8 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
+        let out =
+            project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         assert_eq!(out.report.partial_evidence_objects, 1);
         // try_to_physical_vector Err (missing Entropy + WitnessDepth).
         assert!(out.evidence[0]
@@ -701,7 +706,8 @@ mod tests {
             0.85,
             1.0,
         )];
-        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
+        let out =
+            project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
 
         // 2. PR F adapter wire — key-faced source + lookup stub + adapter → CodeEvidenceProvider.
         // Production identity key = CodeEntityCandidate:payment.py (binding_for helper).
@@ -720,10 +726,7 @@ mod tests {
         assert!(found.observations().minimum_observed_strength().get() > 0.0);
 
         // 3. evidence_strength — scorer'ın çağırdığı provider method.
-        let strength = provider
-            .evidence_strength(&candidate_node)
-            .unwrap()
-            .get();
+        let strength = provider.evidence_strength(&candidate_node).unwrap().get();
         assert!(strength > 0.0);
 
         // 4. AnchorPipeline — CodeEntityCandidate: ref → ExpectedImplementation (extractor.rs:64).
@@ -731,7 +734,13 @@ mod tests {
         let pipeline = AnchorPipeline::default_pipeline();
         let text = "CodeEntityCandidate:payment.py implements authentication";
         let plan = pipeline
-            .run_with_source(text, "en", &ConceptGraph::new(), PacketSource::Operator, &gate_ctx)
+            .run_with_source(
+                text,
+                "en",
+                &ConceptGraph::new(),
+                PacketSource::Operator,
+                &gate_ctx,
+            )
             .expect("ExpectedImplementation candidate üretilmeli");
 
         // 5. Assert: ExpectedImplementation candidate, code_evidence_score > 0 (scorer seam).
@@ -797,7 +806,8 @@ mod tests {
             1.5, // forged — range dışı confidence
             1.0,
         )];
-        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx())
+            .unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidStrength {
@@ -818,7 +828,8 @@ mod tests {
             0.8,
             1.5, // forged — range dışı coverage (zero değil, AboveMaximum)
         )];
-        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx())
+            .unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidCoverage {
@@ -840,7 +851,8 @@ mod tests {
             0.8,
             1.0,
         )];
-        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx())
+            .unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::InvalidObservation {
@@ -875,7 +887,8 @@ mod tests {
                 1.0,
             ),
         ];
-        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx())
+            .unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::ConflictingIdentityObservation {
@@ -907,9 +920,14 @@ mod tests {
                 1.0,
             ),
         ];
-        let out = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
+        let out =
+            project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap();
         assert_eq!(out.evidence.len(), 1, "deduplicate → tek evidence");
-        assert_eq!(out.evidence[0].observations().values().len(), 1, "tek Coupling observation");
+        assert_eq!(
+            out.evidence[0].observations().values().len(),
+            1,
+            "tek Coupling observation"
+        );
     }
 
     #[test]
@@ -977,7 +995,7 @@ mod tests {
             projected_metric_for_tests(
                 candidate_b.clone(),
                 PhysicalCodeAxis::Coupling, // aynı axis
-                0.6,                         // farklı değer → conflict
+                0.6,                        // farklı değer → conflict
                 ts(),
                 0.9,
                 1.0,
@@ -1052,7 +1070,8 @@ mod tests {
             0.8,
             0.0, // forged — zero coverage + positive strength
         )];
-        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx()).unwrap_err();
+        let err = project_observed_evidence(&metrics, &bindings_for_metrics(&metrics), ctx())
+            .unwrap_err();
         assert!(matches!(
             err,
             EvidenceProjectionError::ZeroCoverage {

@@ -12,7 +12,7 @@
 //! - **duplicate canonical kontrolü:** `insert_node` HashMap sessiz overwrite eder;
 //!   post-init restore-validasyon yakalar ama hata kaynağı bulanıklaşır → DTO'da erken yakala.
 
-use osp_core::anchoring::types::{ConceptNodeKind, ConceptNodeId, GraphSeed};
+use osp_core::anchoring::types::{ConceptNodeId, ConceptNodeKind, GraphSeed};
 
 use crate::graph_seed_builder::{GraphSeedBuilder, GraphSeedBuilderError, GraphSeedNodeDraft};
 
@@ -270,12 +270,24 @@ mod tests {
         assert_eq!(graph.rule_candidates[0].id.0, "RuleCandidate:Beta");
         assert_eq!(graph.code_entities[0].id.0, "CodeEntity:Gamma");
         // Family hardcoded ConceptualIntent (F1 legacy compat).
-        assert_eq!(graph.concepts[0].position_family, PositionFamily::ConceptualIntent);
-        assert_eq!(graph.rule_candidates[0].position_family, PositionFamily::ConceptualIntent);
-        assert_eq!(graph.code_entities[0].position_family, PositionFamily::ConceptualIntent);
+        assert_eq!(
+            graph.concepts[0].position_family,
+            PositionFamily::ConceptualIntent
+        );
+        assert_eq!(
+            graph.rule_candidates[0].position_family,
+            PositionFamily::ConceptualIntent
+        );
+        assert_eq!(
+            graph.code_entities[0].position_family,
+            PositionFamily::ConceptualIntent
+        );
         // Status Candidate (INV-C5 — illegal state unrepresentable).
         assert_eq!(graph.concepts[0].decision_status, DecisionStatus::Candidate);
-        assert_eq!(graph.rule_candidates[0].decision_status, DecisionStatus::Candidate);
+        assert_eq!(
+            graph.rule_candidates[0].decision_status,
+            DecisionStatus::Candidate
+        );
         // Aliases preserved.
         assert_eq!(graph.rule_candidates[0].aliases, vec!["b".to_string()]);
         assert!(graph.concepts[0].aliases.is_empty());
@@ -285,9 +297,21 @@ mod tests {
         let d1 = osp_core::anchoring::review::node_digest(&graph.concepts[0]);
         let d2 = osp_core::anchoring::review::node_digest(&graph.rule_candidates[0]);
         let d3 = osp_core::anchoring::review::node_digest(&graph.code_entities[0]);
-        assert_eq!(d1.get(), 16897406824438811853, "Concept:Alpha digest frozen");
-        assert_eq!(d2.get(), 15636681671644259112, "RuleCandidate:Beta+[b] digest frozen");
-        assert_eq!(d3.get(), 16641907892218766788, "CodeEntity:Gamma digest frozen");
+        assert_eq!(
+            d1.get(),
+            16897406824438811853,
+            "Concept:Alpha digest frozen"
+        );
+        assert_eq!(
+            d2.get(),
+            15636681671644259112,
+            "RuleCandidate:Beta+[b] digest frozen"
+        );
+        assert_eq!(
+            d3.get(),
+            16641907892218766788,
+            "CodeEntity:Gamma digest frozen"
+        );
     }
 
     /// O6' legacy negatif: duplicate canonical → fail-closed (DuplicateCanonical).

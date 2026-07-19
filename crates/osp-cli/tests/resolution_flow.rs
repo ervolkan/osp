@@ -43,7 +43,13 @@ fn show_digest(store: &std::path::Path, id: &str) -> String {
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "show", id, "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "show",
+            id,
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -60,8 +66,18 @@ fn accept_candidate(store: &std::path::Path, id: &str) {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "accept", id, "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+            "review",
+            "accept",
+            id,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "ok",
+            "--yes",
+            "--basis-digest",
+            &d,
         ])
         .assert()
         .success();
@@ -72,8 +88,13 @@ fn preview_json(store: &std::path::Path, candidate: &str) -> serde_json::Value {
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity-preview", candidate,
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "resolve-code-entity-preview",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -102,13 +123,22 @@ fn resolve_code_entity_created_mutlu_yol() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "canonical entity",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "canonical entity",
             "--yes",
-            "--candidate-digest", candidate_digest,
-            "--target-outcome", "create",
-            "--target-entity-id", proposed_entity_id,
+            "--candidate-digest",
+            candidate_digest,
+            "--target-outcome",
+            "create",
+            "--target-entity-id",
+            proposed_entity_id,
         ])
         .assert()
         .success()
@@ -133,13 +163,22 @@ fn resolve_code_entity_stale_candidate_digest_rejects() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "x",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "x",
             "--yes",
-            "--candidate-digest", "0000000000000000",  // stale
-            "--target-outcome", "create",
-            "--target-entity-id", proposed_entity_id,
+            "--candidate-digest",
+            "0000000000000000", // stale
+            "--target-outcome",
+            "create",
+            "--target-entity-id",
+            proposed_entity_id,
         ])
         .assert()
         .failure()
@@ -158,13 +197,22 @@ fn resolve_code_entity_candidate_not_accepted_rejects() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "x",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "x",
             "--yes",
-            "--candidate-digest", "0000000000000000",
-            "--target-outcome", "create",
-            "--target-entity-id", "CodeEntity:deadbeef",
+            "--candidate-digest",
+            "0000000000000000",
+            "--target-outcome",
+            "create",
+            "--target-entity-id",
+            "CodeEntity:deadbeef",
         ])
         .assert()
         .failure()
@@ -185,11 +233,18 @@ fn resolve_code_entity_non_tty_requires_target_flags() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "x",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "x",
             "--yes",
-            "--candidate-digest", "0000000000000000",
+            "--candidate-digest",
+            "0000000000000000",
             // target flags YOK
         ])
         .assert()
@@ -215,13 +270,20 @@ fn resolve_code_entity_operator_env_fallback() {
         .unwrap()
         .env("OSP_OPERATOR", "envop")
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--reason", "canonical",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--reason",
+            "canonical",
             "--yes",
-            "--candidate-digest", candidate_digest,
-            "--target-outcome", "create",
-            "--target-entity-id", proposed_entity_id,
+            "--candidate-digest",
+            candidate_digest,
+            "--target-outcome",
+            "create",
+            "--target-entity-id",
+            proposed_entity_id,
         ])
         .assert()
         .success();
@@ -254,8 +316,11 @@ fn preview_missing_candidate_not_found() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity-preview", "CodeEntityCandidate:MISSING",
-            "--store", store.to_str().unwrap(),
+            "review",
+            "resolve-code-entity-preview",
+            "CodeEntityCandidate:MISSING",
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -274,8 +339,11 @@ fn preview_text_output_renders_target() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity-preview", candidate,
-            "--store", store.to_str().unwrap(),
+            "review",
+            "resolve-code-entity-preview",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -301,14 +369,24 @@ fn resolve_code_entity_created_json_output() {
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "canonical",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "canonical",
             "--yes",
-            "--candidate-digest", candidate_digest,
-            "--target-outcome", "create",
-            "--target-entity-id", proposed_entity_id,
-            "--format", "json",
+            "--candidate-digest",
+            candidate_digest,
+            "--target-outcome",
+            "create",
+            "--target-entity-id",
+            proposed_entity_id,
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -317,9 +395,12 @@ fn resolve_code_entity_created_json_output() {
         .clone();
     let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
     assert_eq!(v["mutation"]["status"], "resolved");
-    assert_eq!(v["mutation"]["outcome"], "created");  // typed snake_case (tur 3 P2-4)
+    assert_eq!(v["mutation"]["outcome"], "created"); // typed snake_case (tur 3 P2-4)
     assert_eq!(v["mutation"]["candidate_node_id"], candidate);
-    assert!(v["mutation"]["entity_node_id"].as_str().unwrap().starts_with("CodeEntity:"));
+    assert!(v["mutation"]["entity_node_id"]
+        .as_str()
+        .unwrap()
+        .starts_with("CodeEntity:"));
     assert!(v["mutation"]["resolution_sequence"].is_number());
     assert!(v["revision"].is_number());
 }
@@ -350,8 +431,10 @@ fn target_drift_repository_revision_snapshot_unchanged() {
     let before = read_persisted(&store);
     let before_revision = before["revision"].as_u64().unwrap();
     let before_snapshot = before["snapshot"].clone();
-    let before_resolution_records =
-        before["snapshot"]["resolution_records"].as_array().unwrap().len();
+    let before_resolution_records = before["snapshot"]["resolution_records"]
+        .as_array()
+        .unwrap()
+        .len();
     let before_bindings = before["snapshot"]["code_identity_bindings"]
         .as_array()
         .unwrap()
@@ -366,14 +449,24 @@ fn target_drift_repository_revision_snapshot_unchanged() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "resolve-code-entity", candidate,
-            "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "x",
+            "review",
+            "resolve-code-entity",
+            candidate,
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "x",
             "--yes",
-            "--candidate-digest", candidate_digest,
-            "--target-outcome", "reuse",  // Create basis ↔ Reuse expected → drift
-            "--target-entity-id", "CodeEntity:deadbeefdeadbeef",
-            "--target-entity-digest", "0000000000000001",
+            "--candidate-digest",
+            candidate_digest,
+            "--target-outcome",
+            "reuse", // Create basis ↔ Reuse expected → drift
+            "--target-entity-id",
+            "CodeEntity:deadbeefdeadbeef",
+            "--target-entity-digest",
+            "0000000000000001",
         ])
         .assert()
         .failure()

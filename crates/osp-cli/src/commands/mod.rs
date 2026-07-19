@@ -381,7 +381,8 @@ fn run_navigator<L: osp_core::navigator::LlmClient>(
         NavigatorResult::RequiresRevision(rev) => {
             println!(
                 "↻ Requires revision (explicit witness rejection) — task {}, claim {}",
-                rev.task_id, rev.claim_id
+                rev.task_id(),
+                rev.claim_id()
             );
             exit_codes::REQUIRES_REVISION
         }

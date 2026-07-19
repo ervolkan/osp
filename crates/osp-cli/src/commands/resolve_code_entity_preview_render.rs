@@ -9,9 +9,7 @@
 
 use std::io::{self, Write};
 
-use crate::application::review::{
-    ResolutionPreviewOutput, ResolutionTargetPreview,
-};
+use crate::application::review::{ResolutionPreviewOutput, ResolutionTargetPreview};
 
 /// Resolution preview'ı text olarak render et (body-only — confirmation/reason prompt YOK).
 pub fn render_resolve_code_entity_preview_text<W: Write>(
@@ -32,9 +30,7 @@ pub fn render_resolve_code_entity_preview_text<W: Write>(
     writeln!(output)?;
     writeln!(output, "Resolution target:")?;
     match &preview.target {
-        ResolutionTargetPreview::Create {
-            proposed_entity_id,
-        } => {
+        ResolutionTargetPreview::Create { proposed_entity_id } => {
             writeln!(output, "  outcome:           create")?;
             writeln!(output, "  proposed_entity:   {proposed_entity_id}")?;
         }

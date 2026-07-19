@@ -434,7 +434,10 @@ mod tests {
         let migrated = read_persisted_store(&path).unwrap();
         assert_eq!(migrated.store_schema_version, 2);
         assert_eq!(migrated.revision, 42, "revision preserved (tur 3 P1-1)");
-        assert_eq!(migrated.snapshot.audit_sequence, 0, "audit_sequence preserved");
+        assert_eq!(
+            migrated.snapshot.audit_sequence, 0,
+            "audit_sequence preserved"
+        );
         assert!(
             migrated.snapshot.resolution_records.is_empty(),
             "v1 → v2 boş resolution ledger"

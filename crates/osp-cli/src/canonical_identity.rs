@@ -88,7 +88,9 @@ impl CanonicalCodeIdentity {
                 "." | "" => {
                     // Son segment "." veya boş → directory-intent (trailing `/` veya `/.`).
                     if is_last && i > 0 {
-                        return Err(CanonicalIdentityError::DirectoryLikePath(normalized.clone()));
+                        return Err(CanonicalIdentityError::DirectoryLikePath(
+                            normalized.clone(),
+                        ));
                     }
                     // İç segment "."/boş → kaldır (normalize).
                     continue;
@@ -146,7 +148,9 @@ fn reject_absolute_forms(normalized: &str) -> Result<(), CanonicalIdentityError>
     // Drive-relative de absolute değildir ama drive context bağımlı → reddet (dürüst adlandırma).
     let bytes = normalized.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        return Err(CanonicalIdentityError::WindowsDrivePrefixed(normalized.to_string()));
+        return Err(CanonicalIdentityError::WindowsDrivePrefixed(
+            normalized.to_string(),
+        ));
     }
     Ok(())
 }
@@ -230,16 +234,20 @@ mod tests {
     #[test]
     fn case_only_difference_different_identity_sensitive() {
         // Case-sensitive: iki ayrı identity.
-        let a = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::CaseSensitive).unwrap();
-        let b = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::CaseSensitive).unwrap();
+        let a =
+            CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::CaseSensitive).unwrap();
+        let b =
+            CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::CaseSensitive).unwrap();
         assert_ne!(a.identity_key(), b.identity_key());
     }
 
     #[test]
     fn case_only_difference_same_identity_insensitive() {
         // AsciiCaseInsensitive: aynı identity_key (collision detection için).
-        let a = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let b = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
+        let a = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive)
+            .unwrap();
+        let b = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive)
+            .unwrap();
         assert_eq!(a.identity_key(), b.identity_key());
         assert_ne!(a.display_path(), b.display_path()); // display farklı
     }
@@ -248,8 +256,16 @@ mod tests {
 
     #[test]
     fn same_input_same_policy_platform_independent() {
-        let a = CanonicalCodeIdentity::new("src/Payment/Service.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let b = CanonicalCodeIdentity::new("src/Payment/Service.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
+        let a = CanonicalCodeIdentity::new(
+            "src/Payment/Service.cs",
+            PathCasePolicy::AsciiCaseInsensitive,
+        )
+        .unwrap();
+        let b = CanonicalCodeIdentity::new(
+            "src/Payment/Service.cs",
+            PathCasePolicy::AsciiCaseInsensitive,
+        )
+        .unwrap();
         assert_eq!(a, b);
     }
 

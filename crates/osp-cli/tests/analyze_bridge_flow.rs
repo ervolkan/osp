@@ -11,11 +11,7 @@ use tempfile::{tempdir, TempDir};
 /// Fixture repo: 3 .py dosyası → 3 Module node → 3 CodeEntityCandidate.
 fn fixture_repo() -> TempDir {
     let dir = tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("payment.py"),
-        "class Payment:\n    pass\n",
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("payment.py"), "class Payment:\n    pass\n").unwrap();
     std::fs::write(dir.path().join("user.py"), "class User:\n    pass\n").unwrap();
     std::fs::write(dir.path().join("util.py"), "class Util:\n    pass\n").unwrap();
     dir
@@ -55,7 +51,14 @@ fn analyze_init_creates_candidate_store() {
     // `osp graph status` → candidates: 3.
     let status_out = Command::cargo_bin("osp")
         .unwrap()
-        .args(["graph", "status", "--store", store.to_str().unwrap(), "--format", "json"])
+        .args([
+            "graph",
+            "status",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
         .assert()
         .success()
         .get_output()
@@ -278,8 +281,12 @@ fn force_with_invalid_seed_preserves_existing_store_byte_identical() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--seed", valid_seed.to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--seed",
+            valid_seed.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -291,8 +298,13 @@ fn force_with_invalid_seed_preserves_existing_store_byte_identical() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--seed", invalid_seed.to_str().unwrap(),
-            "--store", store.to_str().unwrap(), "--force",
+            "graph",
+            "init",
+            "--seed",
+            invalid_seed.to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--force",
         ])
         .assert()
         .failure()
@@ -317,8 +329,12 @@ fn force_overwrites_existing_store() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -327,8 +343,12 @@ fn force_overwrites_existing_store() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -338,8 +358,13 @@ fn force_overwrites_existing_store() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(), "--force",
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--force",
         ])
         .assert()
         .success();
@@ -375,7 +400,12 @@ fn analyze_idempotent_node_identities() {
         let out = Command::cargo_bin("osp")
             .unwrap()
             .args([
-                "review", "list", "--store", store.to_str().unwrap(), "--format", "json",
+                "review",
+                "list",
+                "--store",
+                store.to_str().unwrap(),
+                "--format",
+                "json",
             ])
             .assert()
             .success()
@@ -399,7 +429,10 @@ fn analyze_idempotent_node_identities() {
     let tuples1 = extract_tuples(&store1);
     let tuples2 = extract_tuples(&store2);
     // Gerçek kimlik karşılaştırması — tamamen farklı NodeId'ler üretilse bile yakalanır.
-    assert_eq!(tuples1, tuples2, "two analyses must produce identical node identity set");
+    assert_eq!(
+        tuples1, tuples2,
+        "two analyses must produce identical node identity set"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -426,8 +459,12 @@ fn pr_e2_analyze_seeds_code_identity_bindings() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -455,8 +492,12 @@ fn pr_e2_binding_node_id_matches_candidate() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -465,7 +506,12 @@ fn pr_e2_binding_node_id_matches_candidate() {
     let list_out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "list", "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "list",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -502,8 +548,12 @@ fn pr_e2_empty_analysis_no_bindings() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -526,8 +576,12 @@ fn pr_e2_snapshot_round_trip_with_bindings() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "graph", "init", "--analyze", repo.path().to_str().unwrap(),
-            "--store", store.to_str().unwrap(),
+            "graph",
+            "init",
+            "--analyze",
+            repo.path().to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -535,9 +589,7 @@ fn pr_e2_snapshot_round_trip_with_bindings() {
     // `osp graph validate` → INV-C16 validation (binding + ledger + audit_seq density).
     Command::cargo_bin("osp")
         .unwrap()
-        .args([
-            "graph", "validate", "--store", store.to_str().unwrap(),
-        ])
+        .args(["graph", "validate", "--store", store.to_str().unwrap()])
         .assert()
         .success()
         .stdout(contains("Store valid"))

@@ -60,7 +60,7 @@ impl AnalysisIdentityScheme {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeEntityCandidate {
     identity: CanonicalCodeIdentity,
-    concept_node_id: ConceptNodeId,  // R1: pre-derived, scheme-parametre YOK
+    concept_node_id: ConceptNodeId, // R1: pre-derived, scheme-parametre YOK
 }
 
 impl CodeEntityCandidate {
@@ -68,7 +68,10 @@ impl CodeEntityCandidate {
     /// (aynı modül) üretici. identity + concept_node_id tutarlılığı caller convention değil
     /// type boundary ile korunur. Test modülü aynı modül olduğu için erişebilir.
     fn new(identity: CanonicalCodeIdentity, concept_node_id: ConceptNodeId) -> Self {
-        Self { identity, concept_node_id }
+        Self {
+            identity,
+            concept_node_id,
+        }
     }
 
     pub fn into_parts(self) -> (CanonicalCodeIdentity, ConceptNodeId) {
@@ -146,7 +149,7 @@ impl AnalysisCandidateSeed {
             .map(|entity| {
                 let (identity, concept_node_id) = entity.into_parts();
                 GraphSeedNodeDraft::analysis_code_entity(
-                    concept_node_id,           // R1: pre-derived
+                    concept_node_id,                    // R1: pre-derived
                     identity.display_path().to_owned(), // canonical = gözlemlenen yazım
                 )
             })
@@ -247,23 +250,28 @@ pub(crate) fn project_candidate_nodes(
         }
 
         // Path çöz — MissingNodePath typed error (I3).
-        let path = analysis.node_paths.get(&node_id).ok_or_else(|| {
-            BridgeError::MissingNodePath { node_id }
-        })?;
+        let path = analysis
+            .node_paths
+            .get(&node_id)
+            .ok_or_else(|| BridgeError::MissingNodePath { node_id })?;
 
         // Canonical identity üret (lexical normalizasyon + case fold).
         let identity = CanonicalCodeIdentity::new(path, policy)?;
 
         // R1: ID tek noktada türetilir — hem entity'ye hem index'e.
-        let concept_node_id =
-            scheme.derive_node_id(ConceptNodeKind::CodeEntityCandidate, identity.identity_key());
+        let concept_node_id = scheme.derive_node_id(
+            ConceptNodeKind::CodeEntityCandidate,
+            identity.identity_key(),
+        );
         identity_index.insert(node_id, concept_node_id.clone())?;
 
         // Metadata observable (BridgeRunReport) — graph'a DÖNÜŞMEZ (M1).
         *classifications_observed
             .entry(format!("{:?}", node.classification))
             .or_default() += 1;
-        *roles_observed.entry(format!("{:?}", node.role)).or_default() += 1;
+        *roles_observed
+            .entry(format!("{:?}", node.role))
+            .or_default() += 1;
 
         entities.push(CodeEntityCandidate::new(identity, concept_node_id));
         projected_modules += 1;
@@ -336,11 +344,9 @@ pub(crate) fn project_analysis(
 ) -> Result<BridgeRunOutput, BridgeError> {
     let scheme = AnalysisIdentityScheme::PathV1;
     let candidate_proj = project_candidate_nodes(analysis, policy, scheme)?;
-    let metric_projection = crate::metric_projection::project_code_metrics(
-        analysis,
-        &candidate_proj.identity_index,
-    )
-    .map_err(BridgeError::MetricProjection)?;
+    let metric_projection =
+        crate::metric_projection::project_code_metrics(analysis, &candidate_proj.identity_index)
+            .map_err(BridgeError::MetricProjection)?;
     let evidence_projection = crate::evidence_projection::project_observed_evidence(
         &metric_projection.metrics,
         &candidate_proj.code_identity_bindings,
@@ -493,30 +499,71 @@ mod tests {
     #[test]
     fn happy_path_3_modules_3_candidates() {
         let analysis = analysis_result(vec![
-            (1, "src/payment.rs", NodeClassification::Production, NodeRole::Core),
-            (2, "src/user.rs", NodeClassification::Production, NodeRole::Adapter),
-            (3, "src/util.rs", NodeClassification::Production, NodeRole::Utility),
+            (
+                1,
+                "src/payment.rs",
+                NodeClassification::Production,
+                NodeRole::Core,
+            ),
+            (
+                2,
+                "src/user.rs",
+                NodeClassification::Production,
+                NodeRole::Adapter,
+            ),
+            (
+                3,
+                "src/util.rs",
+                NodeClassification::Production,
+                NodeRole::Utility,
+            ),
         ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         assert_eq!(bridge.candidate_seed.entities().len(), 3);
         assert_eq!(bridge.graph_report.projected_modules, 3);
         assert_eq!(bridge.graph_report.skipped_non_module, 0);
         // Deterministic sort (identity_key ascending).
-        assert_eq!(bridge.candidate_seed.entities()[0].identity().display_path(), "src/payment.rs");
-        assert_eq!(bridge.candidate_seed.entities()[1].identity().display_path(), "src/user.rs");
-        assert_eq!(bridge.candidate_seed.entities()[2].identity().display_path(), "src/util.rs");
+        assert_eq!(
+            bridge.candidate_seed.entities()[0]
+                .identity()
+                .display_path(),
+            "src/payment.rs"
+        );
+        assert_eq!(
+            bridge.candidate_seed.entities()[1]
+                .identity()
+                .display_path(),
+            "src/user.rs"
+        );
+        assert_eq!(
+            bridge.candidate_seed.entities()[2]
+                .identity()
+                .display_path(),
+            "src/util.rs"
+        );
     }
 
     // ── NodeId identity_keyden; canonical display_path (F-yeni) ───────────────
 
     #[test]
     fn node_id_from_identity_key_canonical_display() {
-        let analysis = analysis_result(vec![
-            (1, "src/Payment.rs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
+        let analysis = analysis_result(vec![(
+            1,
+            "src/Payment.rs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::AsciiCaseInsensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         let drafts = bridge.candidate_seed.clone().into_drafts();
         assert_eq!(drafts.len(), 1);
         // NodeId identity_key'den (case-folded).
@@ -527,16 +574,30 @@ mod tests {
     fn case_only_rename_same_node_id_different_canonical_and_digest() {
         // F-yeni identity-durum sözleşmesi (üçlü assert): aynı NodeId, farklı canonical,
         // farklı NodeDigest. INV-C12 muhafazakâr — operatöre sunulan basis değişti.
-        let a = analysis_result(vec![
-            (1, "src/Payment.cs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let b = analysis_result(vec![
-            (1, "src/payment.cs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let bridge_a =
-            project_analysis(&a, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
-        let bridge_b =
-            project_analysis(&b, PathCasePolicy::AsciiCaseInsensitive, test_evidence_context()).unwrap();
+        let a = analysis_result(vec![(
+            1,
+            "src/Payment.cs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let b = analysis_result(vec![(
+            1,
+            "src/payment.cs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let bridge_a = project_analysis(
+            &a,
+            PathCasePolicy::AsciiCaseInsensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
+        let bridge_b = project_analysis(
+            &b,
+            PathCasePolicy::AsciiCaseInsensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
         let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         // GraphSeed'e dönüştür (canonical + digest karşılaştırması için).
@@ -545,7 +606,10 @@ mod tests {
         let node_a = &graph_a.code_entities[0];
         let node_b = &graph_b.code_entities[0];
         // (1) Aynı NodeId (identity_key aynı — case-folded).
-        assert_eq!(node_a.id, node_b.id, "case-only rename must preserve NodeId");
+        assert_eq!(
+            node_a.id, node_b.id,
+            "case-only rename must preserve NodeId"
+        );
         // (2) Farklı canonical (display_path — case korunur).
         assert_ne!(
             node_a.canonical, node_b.canonical,
@@ -562,8 +626,10 @@ mod tests {
     #[test]
     fn case_sensitive_policy_different_node_ids() {
         // Case-sensitive: Payment.cs + payment.cs → farklı identity_key → farklı NodeId.
-        let a = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::CaseSensitive).unwrap();
-        let b = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::CaseSensitive).unwrap();
+        let a =
+            CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::CaseSensitive).unwrap();
+        let b =
+            CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::CaseSensitive).unwrap();
         assert_ne!(a.identity_key(), b.identity_key());
     }
 
@@ -572,12 +638,18 @@ mod tests {
     #[test]
     fn same_path_different_metadata_same_node_id() {
         // Aynı path farklı classification/role → aynı NodeId (metadata graph'a sızmaz).
-        let a = analysis_result(vec![
-            (1, "src/payment.rs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let b = analysis_result(vec![
-            (1, "src/payment.rs", NodeClassification::Test, NodeRole::Support),
-        ]);
+        let a = analysis_result(vec![(
+            1,
+            "src/payment.rs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let b = analysis_result(vec![(
+            1,
+            "src/payment.rs",
+            NodeClassification::Test,
+            NodeRole::Support,
+        )]);
         let bridge_a =
             project_analysis(&a, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
         let bridge_b =
@@ -585,9 +657,15 @@ mod tests {
         let drafts_a = bridge_a.candidate_seed.clone().into_drafts();
         let drafts_b = bridge_b.candidate_seed.clone().into_drafts();
         assert_eq!(drafts_a[0].id(), drafts_b[0].id()); // aynı NodeId
-        // Report farklı (metadata observable, graph değil).
-        assert_ne!(bridge_a.graph_report.classifications_observed, bridge_b.graph_report.classifications_observed);
-        assert_ne!(bridge_a.graph_report.roles_observed, bridge_b.graph_report.roles_observed);
+                                                        // Report farklı (metadata observable, graph değil).
+        assert_ne!(
+            bridge_a.graph_report.classifications_observed,
+            bridge_b.graph_report.classifications_observed
+        );
+        assert_ne!(
+            bridge_a.graph_report.roles_observed,
+            bridge_b.graph_report.roles_observed
+        );
     }
 
     // ── O5: error-matrix ──────────────────────────────────────────────────────
@@ -608,11 +686,21 @@ mod tests {
     #[test]
     fn case_collision_same_key_different_display() {
         // Aynı identity_key (ascii-insensitive) + farklı display → CaseCollision.
-        let id1 = CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
-        let id2 = CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive).unwrap();
+        let id1 =
+            CanonicalCodeIdentity::new("src/Payment.cs", PathCasePolicy::AsciiCaseInsensitive)
+                .unwrap();
+        let id2 =
+            CanonicalCodeIdentity::new("src/payment.cs", PathCasePolicy::AsciiCaseInsensitive)
+                .unwrap();
         let entities = vec![
-            CodeEntityCandidate::new(id1, ConceptNodeId("CodeEntityCandidate:src/payment.cs".into())),
-            CodeEntityCandidate::new(id2, ConceptNodeId("CodeEntityCandidate:src/payment.cs".into())),
+            CodeEntityCandidate::new(
+                id1,
+                ConceptNodeId("CodeEntityCandidate:src/payment.cs".into()),
+            ),
+            CodeEntityCandidate::new(
+                id2,
+                ConceptNodeId("CodeEntityCandidate:src/payment.cs".into()),
+            ),
         ];
         let err = AnalysisCandidateSeed::try_new(entities).unwrap_err();
         assert!(matches!(err, AnalysisSeedError::CaseCollision { .. }));
@@ -649,7 +737,12 @@ mod tests {
             semantic_coverage: SemanticCoverage::none("testhead".into()),
             diagnostics: vec![],
         };
-        let err = project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap_err();
+        let err = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap_err();
         assert!(matches!(err, BridgeError::MissingNodePath { node_id: 42 }));
     }
 
@@ -657,11 +750,18 @@ mod tests {
 
     #[test]
     fn analysis_never_produces_accepted() {
-        let analysis = analysis_result(vec![
-            (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let analysis = analysis_result(vec![(
+            1,
+            "src/a.rs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         let drafts = bridge.candidate_seed.clone().into_drafts();
         // Tüm drafts Candidate (INV-C5 — analysis_code_entity constructor baked).
         let graph_seed = crate::graph_seed_builder::GraphSeedBuilder::build(drafts).unwrap();
@@ -678,8 +778,12 @@ mod tests {
     #[test]
     fn empty_analysis_accepted() {
         let analysis = analysis_result(vec![]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         assert!(bridge.candidate_seed.is_empty());
         assert_eq!(bridge.graph_report.projected_modules, 0);
     }
@@ -688,11 +792,18 @@ mod tests {
 
     #[test]
     fn bridge_run_report_deterministic_no_wall_clock() {
-        let analysis = analysis_result(vec![
-            (1, "src/a.rs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let analysis = analysis_result(vec![(
+            1,
+            "src/a.rs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         let report = &bridge.graph_report;
         // repository_head Option<String> — wall_clock/local_path YOK.
         let display = format!("{report}");
@@ -705,14 +816,32 @@ mod tests {
     fn same_analysis_bit_equivalent_seed() {
         let analysis = || {
             analysis_result(vec![
-                (1, "src/zebra.rs", NodeClassification::Production, NodeRole::Core),
-                (2, "src/apple.rs", NodeClassification::Production, NodeRole::Adapter),
+                (
+                    1,
+                    "src/zebra.rs",
+                    NodeClassification::Production,
+                    NodeRole::Core,
+                ),
+                (
+                    2,
+                    "src/apple.rs",
+                    NodeClassification::Production,
+                    NodeRole::Adapter,
+                ),
             ])
         };
-        let bridge_a =
-            project_analysis(&analysis(), PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
-        let bridge_b =
-            project_analysis(&analysis(), PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge_a = project_analysis(
+            &analysis(),
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
+        let bridge_b = project_analysis(
+            &analysis(),
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         // Node identities bit-equivalent (deterministic sort).
         assert_eq!(bridge_a.candidate_seed, bridge_b.candidate_seed);
     }
@@ -723,12 +852,31 @@ mod tests {
     fn pr_e2_one_binding_per_candidate() {
         // PR E2 — her candidate için bir binding üretilir (1:1 cardinality).
         let analysis = analysis_result(vec![
-            (1, "src/payment.rs", NodeClassification::Production, NodeRole::Core),
-            (2, "src/user.rs", NodeClassification::Production, NodeRole::Adapter),
-            (3, "src/util.rs", NodeClassification::Production, NodeRole::Utility),
+            (
+                1,
+                "src/payment.rs",
+                NodeClassification::Production,
+                NodeRole::Core,
+            ),
+            (
+                2,
+                "src/user.rs",
+                NodeClassification::Production,
+                NodeRole::Adapter,
+            ),
+            (
+                3,
+                "src/util.rs",
+                NodeClassification::Production,
+                NodeRole::Utility,
+            ),
         ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         // 3 candidate → 3 binding.
         assert_eq!(bridge.candidate_seed.entities().len(), 3);
         assert_eq!(bridge.code_identity_bindings.len(), 3);
@@ -739,11 +887,18 @@ mod tests {
     #[test]
     fn pr_e2_binding_node_id_matches_candidate_concept_node_id() {
         // PR E2 — binding'in node_id'si candidate'ın concept_node_id'si (R1 single-derivation).
-        let analysis = analysis_result(vec![
-            (1, "src/auth.rs", NodeClassification::Production, NodeRole::Core),
-        ]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let analysis = analysis_result(vec![(
+            1,
+            "src/auth.rs",
+            NodeClassification::Production,
+            NodeRole::Core,
+        )]);
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         assert_eq!(bridge.code_identity_bindings.len(), 1);
         let candidate = &bridge.candidate_seed.entities()[0];
         let binding = &bridge.code_identity_bindings[0];
@@ -759,8 +914,12 @@ mod tests {
     fn pr_e2_empty_analysis_no_bindings() {
         // PR E2 — empty analysis → binding YOK (I7 pattern).
         let analysis = analysis_result(vec![]);
-        let bridge =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         assert!(bridge.candidate_seed.is_empty());
         assert!(bridge.code_identity_bindings.is_empty());
         assert_eq!(bridge.graph_report.projected_identity_bindings, 0);
@@ -770,13 +929,31 @@ mod tests {
     fn pr_e2_bindings_deterministic_with_candidate_sort() {
         // PR E2 — binding'ler candidate deterministic sort'uyla uyumlu.
         let analysis = analysis_result(vec![
-            (1, "src/zebra.rs", NodeClassification::Production, NodeRole::Core),
-            (2, "src/apple.rs", NodeClassification::Production, NodeRole::Adapter),
+            (
+                1,
+                "src/zebra.rs",
+                NodeClassification::Production,
+                NodeRole::Core,
+            ),
+            (
+                2,
+                "src/apple.rs",
+                NodeClassification::Production,
+                NodeRole::Adapter,
+            ),
         ]);
-        let bridge_a =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
-        let bridge_b =
-            project_analysis(&analysis, PathCasePolicy::CaseSensitive, test_evidence_context()).unwrap();
+        let bridge_a = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
+        let bridge_b = project_analysis(
+            &analysis,
+            PathCasePolicy::CaseSensitive,
+            test_evidence_context(),
+        )
+        .unwrap();
         // Binding'ler bit-equivalent (deterministic).
         assert_eq!(
             bridge_a.code_identity_bindings.len(),

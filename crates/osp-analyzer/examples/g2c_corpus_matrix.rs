@@ -551,7 +551,9 @@ fn run_one_experiment(
             output_contract: OutputContract::strict(),
             // G2c harness: controlled experiment → auto-approve (production değil).
             witness_policy: osp_core::navigator::NavigatorWitnessPolicy::HarnessAutoApprove,
-            pending_authorization_store: Box::new(osp_core::authorization::NullPendingAuthorizationStore),
+            pending_authorization_store: Box::new(
+                osp_core::authorization::NullPendingAuthorizationStore,
+            ),
             clock: Box::new(osp_core::authorization::FixedClock(1700000000)),
         };
         nav.run_task(task_id, 1)
@@ -563,15 +565,18 @@ fn run_one_experiment(
         NavigatorResult::ExceededManeuverLimit { attempts, .. } => {
             ("ExceededManeuverLimit".to_string(), *attempts)
         }
-        NavigatorResult::AwaitingWitnesses { pending, .. } => {
-            ("AwaitingWitnesses".to_string(), pending.attempt_num.get() as usize)
-        }
-        NavigatorResult::RequiresRevision(rev) => {
-            ("RequiresRevision".to_string(), rev.attempt_num().get() as usize)
-        }
-        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => {
-            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_num.get() as usize)
-        }
+        NavigatorResult::AwaitingWitnesses { pending, .. } => (
+            "AwaitingWitnesses".to_string(),
+            pending.attempt_num.get() as usize,
+        ),
+        NavigatorResult::RequiresRevision(rev) => (
+            "RequiresRevision".to_string(),
+            rev.attempt_num().get() as usize,
+        ),
+        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => (
+            "PendingAuthorizationPersistenceFailure".to_string(),
+            pending.attempt_num.get() as usize,
+        ),
         NavigatorResult::WitnessEvaluationError(_) => ("WitnessEvaluationError".to_string(), 0),
         NavigatorResult::SystemFailure(_) => ("SystemFailure".to_string(), 0),
         NavigatorResult::RequiresOperatorApproval { attempts, .. } => {
@@ -853,7 +858,9 @@ fn run_synthetic_rq9(
             output_contract: OutputContract::strict(),
             // G2c harness: controlled experiment → auto-approve (production değil).
             witness_policy: osp_core::navigator::NavigatorWitnessPolicy::HarnessAutoApprove,
-            pending_authorization_store: Box::new(osp_core::authorization::NullPendingAuthorizationStore),
+            pending_authorization_store: Box::new(
+                osp_core::authorization::NullPendingAuthorizationStore,
+            ),
             clock: Box::new(osp_core::authorization::FixedClock(1700000000)),
         };
         nav.run_task(task_id, 1)
@@ -865,15 +872,18 @@ fn run_synthetic_rq9(
         NavigatorResult::ExceededManeuverLimit { attempts, .. } => {
             ("ExceededManeuverLimit".to_string(), *attempts)
         }
-        NavigatorResult::AwaitingWitnesses { pending, .. } => {
-            ("AwaitingWitnesses".to_string(), pending.attempt_num.get() as usize)
-        }
-        NavigatorResult::RequiresRevision(rev) => {
-            ("RequiresRevision".to_string(), rev.attempt_num().get() as usize)
-        }
-        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => {
-            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_num.get() as usize)
-        }
+        NavigatorResult::AwaitingWitnesses { pending, .. } => (
+            "AwaitingWitnesses".to_string(),
+            pending.attempt_num.get() as usize,
+        ),
+        NavigatorResult::RequiresRevision(rev) => (
+            "RequiresRevision".to_string(),
+            rev.attempt_num().get() as usize,
+        ),
+        NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => (
+            "PendingAuthorizationPersistenceFailure".to_string(),
+            pending.attempt_num.get() as usize,
+        ),
         NavigatorResult::WitnessEvaluationError(_) => ("WitnessEvaluationError".to_string(), 0),
         NavigatorResult::SystemFailure(_) => ("SystemFailure".to_string(), 0),
         NavigatorResult::RequiresOperatorApproval { attempts, .. } => {
@@ -1087,8 +1097,14 @@ fn main() -> Result<()> {
         };
         for (repo_label, repo_path, lang) in &external_corpus {
             if !repo_path.exists() {
-                println!("  {repo_label}: SKIP (path not found: {})", repo_path.display());
-                errors.push(format!("{repo_label}: path not found ({})", repo_path.display()));
+                println!(
+                    "  {repo_label}: SKIP (path not found: {})",
+                    repo_path.display()
+                );
+                errors.push(format!(
+                    "{repo_label}: path not found ({})",
+                    repo_path.display()
+                ));
                 continue;
             }
             for task_type in [TaskType::CouplingReduction, TaskType::InstabilityReduction] {

@@ -195,8 +195,13 @@ compatibility-supported).
 `PendingAuthorization` carries predicate completion, mutation decision, intended apply
 target, authorization basis digest, base space-view revision, evaluation context
 digest, witness requirement, **witness hold reason** (Sabitleme 1), witness snapshot,
-attempt evidence id, created_at. All authorization-gated mutations covered
+attempt num (AttemptNumber, 1-based), embedded `SuspendedAttemptEvidence` snapshot,
+evidence digest, created_at. All authorization-gated mutations covered
 (AcceptAsCompleted + AcceptAsProgress).
+
+**#72 closure:** The dangling `attempt_evidence_id` field is removed; `attempt_num`
+(AttemptNumber) replaces it as trajectory sequence only (not an evidence lookup key).
+Embedded `SuspendedAttemptEvidence` + `evidence_digest` are the source of truth.
 
 ### Self-contained artifact (Sabitleme 3)
 
@@ -205,20 +210,50 @@ the digest. `verify()` recomputes the digest on load and rejects mismatches (tam
 corruption detection). Single canonical schema string `"osp.pending-authorization.v1"`
 (no separate schema_version in record).
 
-**#72 (CLOSED):** The envelope is now self-contained w.r.t. **both** the authorization
-basis **and** the attempt evidence. Complete embedded attempt-evidence integrity is
-established:
+**#72 (Implemented — awaiting scoped review):** The envelope is now self-contained
+w.r.t. **both** the authorization basis **and** the attempt evidence. Complete embedded
+attempt-evidence integrity is established (closure commit landed; issue OPEN pending
+scoped review):
 - Canonical `SuspendedAttemptEvidence` snapshot (common header + tagged disposition enum)
   is embedded in `PendingAuthorization` and `RevisionRequired`.
+- **Closure (P0-1):** `RevisionRequired` minimal shape — only `evidence_digest` +
+  `suspended_attempt_evidence`; no outer duplicate fields. Accessors via evidence.
+- **Closure (P0-1 load/creation ayrımı):** `Envelope::new()` = creation (digest
+  compute + write); `try_new_with_verified_digests()` = load (stored digest preserved,
+  recompute + compare). Tampered digest on load no longer "repaired".
+- **Closure (P0-2 strict wire):** `PendingAuthorization`, `PendingAuthorizationEnvelope`,
+  `RevisionRequired`, `SuspendedAttemptEvidence`, `SuspendedAttemptDisposition` use
+  custom Deserialize + `deny_unknown_fields`. Stale `attempt_evidence_id` field rejected.
+- **Closure (P0-2 persist-boundary):** `persist()` calls `verify()` before any side
+  effect; invalid envelope cannot reach disk (`InvalidEnvelope` error).
+- **Closure (P0-3 single sort key):** `canonical_rejection_key` is the single source
+  for constructor canonicalization, wire strict check, digest encoding, duplicate
+  detection. No Rust-tuple vs lexicographic-byte drift.
+- **Closure (P1-1 API normalize / wire strict):** Production API `try_new` normalizes
+  arbitrary input; wire load `try_from_canonical_wire` strictly rejects non-canonical
+  order (no silent normalization).
+- **Closure (P1-2 evidence constructor validation):** `validate_evidence_semantics`
+  in constructor — Held hold_reason↔snapshot, Rejected snapshot finite/non-neg +
+  canonical + duplicate-free. Envelope `verify()` defensive replay.
+- **Closure (P1-3 record-internal vs envelope verification):** `validate_internal`
+  (record↔evidence) separate from envelope `verify()` (record↔basis).
 - Domain-separated `SuspendedAttemptEvidenceDigest` (`osp.attempt-evidence.v1\0`).
-- Full 11-adım `verify()` chain: record ↔ basis ↔ evidence cross-field verification
-  (task_id, claim_id, attempt_num, basis digest binding, predicate/mutation/apply/
-  revision/ec-digest, witness requirement ↔ policy, disposition ↔ reason/snapshot
-  semantic consistency).
 - Typed mismatch errors (P1): each invariant violation produces a distinct error
   variant for diagnostic clarity.
 - Surface-specific disposition: `PendingAuthorization` only Held, `RevisionRequired`
   only Rejected.
+
+**Held/Rejected verification scope:**
+- Held evidence propagation is verified end-to-end through the navigator (when the
+  fixture produces Held).
+- Rejected evidence construction is verified through the production mapper
+  (`revision_required_from_rejection`) used by the navigator's Rejected arm
+  (`rejected_mapper_constructs_canonical_revision_evidence` test).
+- Upstream production reachability of the Rejected arm is currently absent because
+  witness Q3 honest-reject signaling is not wired; this is tracked separately in #73.
+- Deterministic Held fixture (predicate satisfied → Held) is a fixture-design gap;
+  current fixtures may produce ExceededManeuverLimit/NoMoreProposals instead. This
+  gap is documented and not silently treated as evidence production success.
 
 ### Navigator-owned persistence (P0-1)
 
@@ -256,7 +291,7 @@ Err(EngineCommitError::Internal(..)) => { /* terminal */ }
 Budget isolation: Held/Rejected/terminal paths have no `continue`. Authorization
 waiting consumes no additional maneuver budget (proposal generation counts once).
 
-### `RevisionRequired` evidence preservation (#72 CLOSED)
+### `RevisionRequired` evidence preservation (#72 Implemented — awaiting scoped review)
 
 `NavigatorResult::RequiresRevision(RevisionRequired)` carries task_id, claim_id,
 authorization basis digest, witness reasons (NonEmpty), witness snapshot, and the
@@ -415,24 +450,34 @@ non-breaking):
 
 ## 9. Deferred boundary
 
-INV-T9 Steps 1-6 + #72 established suspension semantics, claim continuity, budget
-isolation, persist-before-return, exhaustive error taxonomy, canonical decision-basis
-(rule sequence binding, claim-specific effective vision, structural-delta defensive
-integrity), canonical v1 byte contract (golden vectors), store hardening, and embedded
-attempt-evidence integrity (canonical `SuspendedAttemptEvidence` snapshot + domain-
-separated evidence digest + full record↔basis↔evidence cross-field verification). The
-following remain **merge-blocking** (tracked as separate issues):
+INV-T9 Steps 1-6 + #72 (closure landed, scoped review pending) established suspension
+semantics, claim continuity, budget isolation, persist-before-return, exhaustive error
+taxonomy, canonical decision-basis (rule sequence binding, claim-specific effective
+vision, structural-delta defensive integrity), canonical v1 byte contract (golden
+vectors), store hardening, and embedded attempt-evidence integrity (canonical
+`SuspendedAttemptEvidence` snapshot + domain-separated evidence digest + full
+record↔basis↔evidence cross-field verification). The following remain **merge-blocking**
+(tracked as separate issues):
 
 - **#70 — EngineMeasurement pipeline:** real per-axis provenance + engine-issued
   measurement token. The golden vectors lock the v1 byte encoding of the currently
   defined models; they do not prove runtime data is correctly produced. #70 is the
   runtime semantic-correctness blocker.
+- **#73 — witness Q3 honest-reject production wiring:** `EngineCommitResult::Rejected`
+  production reachability. #72 evidence construction for Rejected is verified through
+  the production mapper; upstream reachability (real witness gate producing Rejected)
+  is tracked in #73. PR #69 merge decision requires governance call on whether
+  Rejected end-to-end reachability is merge-blocking.
 
-**#72 (CLOSED):** Embedded attempt-evidence integrity landed. Canonical
-`SuspendedAttemptEvidence` snapshot in `PendingAuthorization` + `RevisionRequired`,
-domain-separated evidence digest (`osp.attempt-evidence.v1\0`), record ↔ basis ↔
-evidence cross-field verification (11-adım chain with typed mismatch errors), and
-store identity migration (artifact filename + receipt use evidence identity).
+**#72 (Implemented — awaiting scoped review):** Embedded attempt-evidence integrity
+landed. Canonical `SuspendedAttemptEvidence` snapshot in `PendingAuthorization` +
+`RevisionRequired` (minimal shape), domain-separated evidence digest
+(`osp.attempt-evidence.v1\0`), record ↔ basis ↔ evidence cross-field verification
+(11-adım chain with typed mismatch errors), store identity migration (artifact
+filename + receipt use evidence identity), creation/load path ayrımı (P0-1), persist-
+boundary verify (P0-2), single canonical rejection key (P0-3), strict wire + API
+normalize ayrımı (P1-1), evidence constructor semantic validation (P1-2), record-
+internal vs envelope verification ayrımı (P1-3). Issue OPEN pending scoped review.
 
 **Separate lifecycle follow-up (not merge-blocking):**
 

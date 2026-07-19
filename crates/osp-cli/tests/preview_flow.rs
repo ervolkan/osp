@@ -130,12 +130,24 @@ fn supersede_preview_happy_path_text() {
         .stdout
         .clone();
     let out = String::from_utf8(out).unwrap();
-    assert!(out.contains("Structurally eligible"), "expected eligibility: {out}");
+    assert!(
+        out.contains("Structurally eligible"),
+        "expected eligibility: {out}"
+    );
     assert!(out.contains(": yes"), "expected yes: {out}");
-    assert!(out.contains("Proposed committed edge"), "expected proposed edge: {out}");
-    assert!(out.contains("NewRule --Supersedes--> RuleCandidate:OldRule"), "expected direction: {out}");
+    assert!(
+        out.contains("Proposed committed edge"),
+        "expected proposed edge: {out}"
+    );
+    assert!(
+        out.contains("NewRule --Supersedes--> RuleCandidate:OldRule"),
+        "expected direction: {out}"
+    );
     // Freshness tokens emit edilir (eligible durumda).
-    assert!(out.contains("--superseded-digest"), "expected freshness tokens: {out}");
+    assert!(
+        out.contains("--superseded-digest"),
+        "expected freshness tokens: {out}"
+    );
 }
 
 /// Mutlu yol JSON — 8+ alan contract.
@@ -186,8 +198,18 @@ fn supersede_preview_incompatible_kind() {
         Command::cargo_bin("osp")
             .unwrap()
             .args([
-                "review", "accept", id, "--store", store.to_str().unwrap(),
-                "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &d,
             ])
             .assert()
             .success();
@@ -195,8 +217,14 @@ fn supersede_preview_incompatible_kind() {
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:OldRule", "Concept:NewConcept",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:OldRule",
+            "Concept:NewConcept",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success() // ineligible dahil exit 0
@@ -223,19 +251,35 @@ fn supersede_preview_reports_prospective_cycle() {
         Command::cargo_bin("osp")
             .unwrap()
             .args([
-                "review", "accept", id, "--store", store.to_str().unwrap(),
-                "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &d,
             ])
             .assert()
             .success();
     }
     supersede(&store, "RuleCandidate:A", "RuleCandidate:B"); // committed B→A
-    // Preview: supersede B, successor A → proposed A→B; B→A mevcut → cycle.
+                                                             // Preview: supersede B, successor A → proposed A→B; B→A mevcut → cycle.
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:B", "RuleCandidate:A",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:B",
+            "RuleCandidate:A",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -263,19 +307,35 @@ fn supersede_preview_lineage_chain() {
         Command::cargo_bin("osp")
             .unwrap()
             .args([
-                "review", "accept", id, "--store", store.to_str().unwrap(),
-                "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &d,
             ])
             .assert()
             .success();
     }
     supersede(&store, "RuleCandidate:A", "RuleCandidate:B"); // B→A
-    // Preview successor=B (outgoing chain [B, A]); superseded=A ineligible ama lineage gösterilir.
+                                                             // Preview successor=B (outgoing chain [B, A]); superseded=A ineligible ama lineage gösterilir.
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:A", "RuleCandidate:B",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:A",
+            "RuleCandidate:B",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success()
@@ -303,8 +363,12 @@ fn supersede_preview_missing_endpoint_error() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:MISSING", "RuleCandidate:NewRule",
-            "--store", store.to_str().unwrap(),
+            "review",
+            "supersede-preview",
+            "RuleCandidate:MISSING",
+            "RuleCandidate:NewRule",
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -319,8 +383,14 @@ fn supersede_preview_self_supersede_eligible_query() {
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:OldRule", "RuleCandidate:OldRule",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:OldRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success() // ineligible dahil exit 0
@@ -348,16 +418,32 @@ fn supersede_preview_non_accepted_blocker() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "accept", "RuleCandidate:New", "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+            "review",
+            "accept",
+            "RuleCandidate:New",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "ok",
+            "--yes",
+            "--basis-digest",
+            &d,
         ])
         .assert()
         .success();
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:Old", "RuleCandidate:New",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:Old",
+            "RuleCandidate:New",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success() // non-accepted = blocking_reason, exit 0
@@ -378,8 +464,14 @@ fn supersede_preview_ineligible_exit_zero() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:OldRule", "RuleCandidate:OldRule",
-            "--store", store.to_str().unwrap(), "--format", "json",
+            "review",
+            "supersede-preview",
+            "RuleCandidate:OldRule",
+            "RuleCandidate:OldRule",
+            "--store",
+            store.to_str().unwrap(),
+            "--format",
+            "json",
         ])
         .assert()
         .success();
@@ -402,7 +494,10 @@ fn wizard_supersede_ineligible_no_prompt() {
         .clone();
     let out = String::from_utf8(out).unwrap();
     // Rich preview render edilir — self blocker gösterilir.
-    assert!(out.contains("Self supersede"), "expected self blocker: {out}");
+    assert!(
+        out.contains("Self supersede"),
+        "expected self blocker: {out}"
+    );
     // ineligible → confirmation prompt yok.
     assert!(
         !out.contains("Apply this exact supersession?"),
@@ -425,16 +520,30 @@ fn supersede_preview_ineligible_hides_state_transition() {
     Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "accept", "RuleCandidate:New", "--store", store.to_str().unwrap(),
-            "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+            "review",
+            "accept",
+            "RuleCandidate:New",
+            "--store",
+            store.to_str().unwrap(),
+            "--operator",
+            "t",
+            "--reason",
+            "ok",
+            "--yes",
+            "--basis-digest",
+            &d,
         ])
         .assert()
         .success();
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:Old", "RuleCandidate:New",
-            "--store", store.to_str().unwrap(),
+            "review",
+            "supersede-preview",
+            "RuleCandidate:Old",
+            "RuleCandidate:New",
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success()
@@ -443,7 +552,10 @@ fn supersede_preview_ineligible_hides_state_transition() {
         .clone();
     let out = String::from_utf8(out).unwrap();
     // ineligible → blocked mesajı, state transition yok.
-    assert!(out.contains("currently blocked"), "expected blocked msg: {out}");
+    assert!(
+        out.contains("currently blocked"),
+        "expected blocked msg: {out}"
+    );
     assert!(
         !out.contains("remains current Accepted"),
         "ineligible must not show state transition: {out}"
@@ -466,20 +578,34 @@ fn supersede_preview_consolidation_dag_not_fake_chain() {
         Command::cargo_bin("osp")
             .unwrap()
             .args([
-                "review", "accept", id, "--store", store.to_str().unwrap(),
-                "--operator", "t", "--reason", "ok", "--yes", "--basis-digest", &d,
+                "review",
+                "accept",
+                id,
+                "--store",
+                store.to_str().unwrap(),
+                "--operator",
+                "t",
+                "--reason",
+                "ok",
+                "--yes",
+                "--basis-digest",
+                &d,
             ])
             .assert()
             .success();
     }
     supersede(&store, "RuleCandidate:A", "RuleCandidate:C"); // C→A
     supersede(&store, "RuleCandidate:B", "RuleCandidate:C"); // C→B
-    // Preview successor=C → consolidation DAG (C→A, C→B branching).
+                                                             // Preview successor=C → consolidation DAG (C→A, C→B branching).
     let out = Command::cargo_bin("osp")
         .unwrap()
         .args([
-            "review", "supersede-preview", "RuleCandidate:A", "RuleCandidate:C",
-            "--store", store.to_str().unwrap(),
+            "review",
+            "supersede-preview",
+            "RuleCandidate:A",
+            "RuleCandidate:C",
+            "--store",
+            store.to_str().unwrap(),
         ])
         .assert()
         .success()

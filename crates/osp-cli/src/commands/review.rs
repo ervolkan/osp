@@ -308,7 +308,10 @@ pub fn run_review_supersede_preview(args: ReviewSupersedePreviewArgs) -> anyhow:
         println!("{}", serde_json::to_string_pretty(&preview)?);
     } else {
         let mut stdout = std::io::stdout();
-        crate::commands::supersede_preview_render::render_supersede_preview_text(&mut stdout, &preview)?;
+        crate::commands::supersede_preview_render::render_supersede_preview_text(
+            &mut stdout,
+            &preview,
+        )?;
     }
     Ok(())
 }

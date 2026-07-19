@@ -16,9 +16,7 @@
 
 use std::collections::HashMap;
 
-use osp_core::anchoring::types::{
-    ConceptNode, ConceptNodeId, ConceptNodeKind, GraphSeed,
-};
+use osp_core::anchoring::types::{ConceptNode, ConceptNodeId, ConceptNodeKind, GraphSeed};
 use osp_core::anchoring::{DecisionStatus, PositionFamily};
 
 /// Graph node taslağı — private fields (O3). Illegal state constructor sınırında.
@@ -165,8 +163,13 @@ impl GraphSeedNodeDraft {
 #[derive(Debug, thiserror::Error)]
 pub enum GraphSeedBuilderError {
     #[error("duplicate node (same material): id={node_id}, canonical={canonical}")]
-    DuplicateNode { node_id: ConceptNodeId, canonical: String },
-    #[error("node-id collision (different material): id={node_id}, first={first:?}, second={second:?}")]
+    DuplicateNode {
+        node_id: ConceptNodeId,
+        canonical: String,
+    },
+    #[error(
+        "node-id collision (different material): id={node_id}, first={first:?}, second={second:?}"
+    )]
     NodeIdCollision {
         node_id: ConceptNodeId,
         first: MaterialSummary,
