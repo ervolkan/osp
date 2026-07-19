@@ -472,10 +472,10 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                 Err(e) => return NavigatorResult::SystemFailure(e.to_string()),
             };
 
-        // **INV-T9 #72 (Commit 3):** Evidence record içine gömülü (P0-3 — runtime
-        // `AwaitingWitnesses { pending }` aynı evidence nesnesini taşır). Tekrarlayan
-        // alanlar (witness_hold_reason, witness_snapshot, attempt_evidence_id) hala
-        // transitional olarak set — Commit 4 kaldıracak. Cross-field validation
+        // **INV-T9 #72 (Commit 3+4):** Evidence record içine gömülü (P0-3 — runtime
+        // `AwaitingWitnesses { pending }` aynı evidence nesnesini taşır). Commit 4
+        // ile `attempt_evidence_id` kaldırıldı — `attempt_num` (AttemptNumber)
+        // kullanılır, evidence source of truth. Cross-field validation
         // `Envelope::new()` içinde çalışır (P1 constructor validation).
         let pending = PendingAuthorization {
             task_id: authorization.basis.task_id,
@@ -489,7 +489,7 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
             witness_requirement: authorization.witness_requirement,
             witness_hold_reason: hold_reason,
             witness_snapshot,
-            attempt_evidence_id: attempt_num,
+            attempt_num: attempt_num_validated,
             suspended_attempt_evidence: evidence,
             evidence_digest,
             created_at: self.clock.unix_seconds(),
@@ -844,14 +844,14 @@ impl<'a, L: LlmClient + ?Sized, R: TaskResolver> AgentNavigator<'a, L, R> {
                     // **INV-T9 #72 (Commit 3):** Evidence `RevisionRequired` içine
                     // gömülü. `try_new` surface-specific disposition check yapar
                     // (yalnız Rejected). Transitional tekrarlayan alanlar hala set
-                    // (Commit 4 kaldıracak).
+                    // **INV-T9 #72 (Commit 4):** `attempt_evidence_id` parametresi
+                    // kaldırıldı — evidence attempt_num taşıyor (P1 daraltma).
                     let revision = match crate::authorization::RevisionRequired::try_new(
                         authorization.basis.task_id,
                         authorization.basis.claim_identity.claim_id,
                         basis_digest,
                         reasons,
                         snapshot,
-                        attempt_num as u64,
                         evidence,
                     ) {
                         Ok(r) => r,
@@ -2413,10 +2413,7 @@ mod tests {
                     "Held reason must be witness quorum shortage: {:?}",
                     pending.witness_hold_reason
                 );
-                assert!(
-                    pending.attempt_evidence_id >= 1,
-                    "attempt_evidence_id must be >= 1"
-                );
+                assert!(pending.attempt_num.get() >= 1, "attempt_num must be >= 1");
             }
             NavigatorResult::ExceededManeuverLimit { last_outcome, .. } => {
                 // Predicate fail retry'lerinden — witness'tan değil.
@@ -3005,11 +3002,10 @@ mod tests {
         match result {
             NavigatorResult::AwaitingWitnesses { pending, .. } => {
                 // Evidence factory transitional olarak attempt_evidence_id'yi set eder.
-                // Commit 3'te `suspended_attempt_evidence` field eklenecek; şimdilik
-                // factory'nin çağrıldığını dolaylı doğrularız: attempt_evidence_id >= 1
-                // (AttemptNumber::try_from reject etmedi → factory çalıştı).
+                // Commit 4 ile `attempt_evidence_id` kaldırıldı — `attempt_num`
+                // (AttemptNumber) kullanılır. Evidence source of truth.
                 assert!(
-                    pending.attempt_evidence_id >= 1,
+                    pending.attempt_num.get() >= 1,
                     "Held factory must produce valid attempt_num (AttemptNumber::try_from passed)"
                 );
                 // Engine ownership preserved — disposition payload record'da.

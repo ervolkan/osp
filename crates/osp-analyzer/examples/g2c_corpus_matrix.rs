@@ -564,13 +564,13 @@ fn run_one_experiment(
             ("ExceededManeuverLimit".to_string(), *attempts)
         }
         NavigatorResult::AwaitingWitnesses { pending, .. } => {
-            ("AwaitingWitnesses".to_string(), pending.attempt_evidence_id as usize)
+            ("AwaitingWitnesses".to_string(), pending.attempt_num.get() as usize)
         }
         NavigatorResult::RequiresRevision(rev) => {
-            ("RequiresRevision".to_string(), rev.attempt_evidence_id as usize)
+            ("RequiresRevision".to_string(), rev.attempt_num().get() as usize)
         }
         NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => {
-            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_evidence_id as usize)
+            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_num.get() as usize)
         }
         NavigatorResult::WitnessEvaluationError(_) => ("WitnessEvaluationError".to_string(), 0),
         NavigatorResult::SystemFailure(_) => ("SystemFailure".to_string(), 0),
@@ -866,13 +866,13 @@ fn run_synthetic_rq9(
             ("ExceededManeuverLimit".to_string(), *attempts)
         }
         NavigatorResult::AwaitingWitnesses { pending, .. } => {
-            ("AwaitingWitnesses".to_string(), pending.attempt_evidence_id as usize)
+            ("AwaitingWitnesses".to_string(), pending.attempt_num.get() as usize)
         }
         NavigatorResult::RequiresRevision(rev) => {
-            ("RequiresRevision".to_string(), rev.attempt_evidence_id as usize)
+            ("RequiresRevision".to_string(), rev.attempt_num().get() as usize)
         }
         NavigatorResult::PendingAuthorizationPersistenceFailure { pending, .. } => {
-            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_evidence_id as usize)
+            ("PendingAuthorizationPersistenceFailure".to_string(), pending.attempt_num.get() as usize)
         }
         NavigatorResult::WitnessEvaluationError(_) => ("WitnessEvaluationError".to_string(), 0),
         NavigatorResult::SystemFailure(_) => ("SystemFailure".to_string(), 0),
