@@ -310,7 +310,9 @@ pub enum NavigatorResult {
         persistence: crate::authorization::PendingAuthorizationReceipt,
     },
     /// Explicit witness rejection — agent proposal revises. Budget tüketmez.
-    /// Evidence-preserving: task_id, claim_id, witness snapshot, attempt evidence id.
+    /// Evidence-preserving: embedded `SuspendedAttemptEvidence` (Rejected disposition)
+    /// + `evidence_digest` (INV-T9 #72 — attempt_evidence_id kaldırıldı, dangling
+    /// reference yok; accessor'lar evidence üzerinden).
     RequiresRevision(crate::authorization::RevisionRequired),
     /// Pending authorization persistence failure — terminal (non-retryable).
     PendingAuthorizationPersistenceFailure {
@@ -2216,8 +2218,10 @@ mod tests {
             },
             crate::vision::VisionSource::UserLoaded,
         );
-        // G2c-3 test: navigator boş witness set geçirir → min_approvers 0 (auto-approve).
-        // Gerçek deployment'ta witness policy ayrı (operator approval).
+        // Engine config min_approvers=0 — ancak navigator Production modunda
+        // WitnessSet::new(Vec::new()) oluşturur (hardcoded min_approvers=2/quorum=1.5).
+        // WitnessSet authority engine config değil (#72 closure Faz 1 — P1-1 kök neden).
+        // Held exact test (inv_t9_72_held_production_path_exact) bu engine ile çalışır.
         let mut config = EngineConfig::default_calibrated();
         config.min_approvers = 0;
         SpaceEngine::new(space, cs, vision, config)
@@ -3143,17 +3147,14 @@ mod tests {
 
     /// **INV-T9 #72 (Commit 2):** Held yolu SuspendedAttemptEvidence üretir.
     ///
-    /// Production witness policy + boş set → Held → AwaitingWitnesses.
-    /// `pending.attempt_evidence_id` hala transitional olarak set edilir (Commit 4
-    /// kaldıracak) ama evidence production artık navigator factory'sinden gelir.
-    /// **Reviewer P1-1 (Held exact):** Bu test kaldırıldı — duplicate.
-    /// `inv_t9_deterministic_exact_assertions_with_real_store` zaten aynı fixture ile
-    /// exact AwaitingWitnesses zorluyor (Held üretiyor) ve #72 evidence assertions
-    /// o testte eklendi (attempt_num, disposition Held, evidence_digest == recomputed,
-    /// receipt identity == pending identity). Tek canonical Held exact test.
+    /// Production witness policy + boş set → Held → AwaitingWitnesses. Evidence
+    /// production navigator factory'sinden gelir (embedded SuspendedAttemptEvidence,
+    /// attempt_evidence_id kaldırıldı — dangling reference yok).
     ///
-    /// Bu duplicate test fixture flakiness gösteriyordu (aynı setup'a rağmen non-Held);
-    /// sibling test deterministic Held üretiyor. Evidence assertions sibling testte.
+    /// **Reviewer P1-1:** Bu duplicate test kaldırıldı. Canonical Held exact test artık
+    /// `inv_t9_72_held_production_path_exact` — deterministic fixture (WitnessSet authority,
+    /// scope Node(0), target preferred_vector'den), exact AwaitingWitnesses, call_count==1,
+    /// full evidence assertions + disk reload.
 
     /// **INV-T9 #72 (Commit 2):** Evidence factory production policy'de
     /// retry/budget izolasyonunu değiştirmez.
@@ -3336,10 +3337,12 @@ mod tests {
             &expected_basis_digest,
             "basis digest matches AuthorizationContext basis"
         );
+        // Reviewer P2-1: reason içeriğini exact doğrula (yalnızca length değil).
+        let actual_reasons = rev.reasons().expect("rejected evidence must carry reasons");
         assert_eq!(
-            rev.reasons().map(|r| r.as_slice().len()),
-            Some(1),
-            "reasons preserved"
+            actual_reasons.as_slice(),
+            reasons.as_slice(),
+            "rejection reasons must be preserved exactly"
         );
         assert_eq!(rev.witness_snapshot(), &snapshot, "snapshot preserved");
 
