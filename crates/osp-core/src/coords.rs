@@ -59,7 +59,9 @@ pub struct Position {
 /// Custom axis değeri için provenance modeli (scip-analyzer-design.md §6.1, agent-prompt-semantics.md §2.2).
 ///
 /// `confidence = source_base × coverage × stale_penalty`.
-/// Core axis'ler şu an plain `f64` (deterministik, implicit full-confidence).
+/// Core axes expose a legacy `f64` projection through `compute()`, while provenance-
+/// sensitive authority/evidence paths use `AxisMeasurement { value, source }` through
+/// `measure()` (INV-T9 #70 — Commit 1 semantic v2).
 /// Custom axis'ler `MetricValue` kullanır (Faz 5+ — security/wcag/performance vb.).
 /// Analyzer (osp-analyzer) bu tipti üretir (tree-sitter/SCIP); re-export ile kullanır.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1266,11 +1268,26 @@ mod tests {
     }
 
     #[test]
-    fn axis_measurement_deserialize_rejects_nan() {
-        // P1-2 — wire bypass kapanır: deserialize validation guaranteed.
-        let json = r#"{"value":null,"source":"Scip"}"#; // JSON null → NaN parse fail
+    fn axis_measurement_deserialize_rejects_json_null_value() {
+        // JSON null value → type mismatch (f64 bekliyor). Wire integrity için geçerli
+        // rejection test. NaN binary pattern test'i için `axis_measurement_bincode_deserialize_rejects_nan`.
+        let json = r#"{"value":null,"source":"Scip"}"#;
         let res: Result<AxisMeasurement, _> = serde_json::from_str(json);
-        assert!(res.is_err(), "NaN value must be rejected on deserialize");
+        assert!(
+            res.is_err(),
+            "JSON null value must be rejected on deserialize"
+        );
+    }
+
+    #[test]
+    fn axis_measurement_deserialize_rejects_unknown_field() {
+        // P1-2 — deny_unknown_fields: strict authority surface.
+        let json = r#"{"value":0.5,"source":"Scip","unrecognized_authority":true}"#;
+        let err = serde_json::from_str::<AxisMeasurement>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field"),
+            "unknown field must be rejected: {err}"
+        );
     }
 
     #[test]
@@ -1284,14 +1301,55 @@ mod tests {
     }
 
     #[test]
-    fn axis_measurement_deserialize_rejects_unknown_field() {
-        // P1-2 — deny_unknown_fields: strict authority surface.
-        let json = r#"{"value":0.5,"source":"Scip","unrecognized_authority":true}"#;
+    fn axis_measurement_deserialize_rejects_unknown_source_variant() {
+        // JSON type-safe source enum — unknown variant rejected by serde derive.
+        let json = r#"{"value":0.5,"source":"Bogus"}"#;
         let err = serde_json::from_str::<AxisMeasurement>(json).unwrap_err();
         assert!(
-            err.to_string().contains("unknown field"),
-            "unknown field must be rejected: {err}"
+            err.to_string().contains("unknown variant") || err.to_string().contains("Bogus"),
+            "unknown source variant must be rejected: {err}"
         );
+    }
+
+    #[test]
+    fn axis_measurement_bincode_deserialize_rejects_nan() {
+        // P2-1 (review v6): JSON null test NaN test etmiyordu — bincode gerçek NaN
+        // bit pattern'ini taşıyabilir. Custom Deserialize → try_new() zinciri NaN'ı
+        // reddetmeli (binary snapshot integrity — Faz 2 event-sourcing).
+        let forged = AxisMeasurement {
+            value: f64::NAN,
+            source: MetricSource::Scip,
+        };
+        let bytes = bincode::serialize(&forged).unwrap();
+        let err = bincode::deserialize::<AxisMeasurement>(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("non-finite"),
+            "NaN value must be rejected on bincode deserialize: {err}"
+        );
+    }
+
+    #[test]
+    fn axis_measurement_bincode_deserialize_rejects_out_of_range() {
+        // P2-1: Bincode 2.0 gibi NaN-dışı validation da reject olmalı.
+        let forged = AxisMeasurement {
+            value: 2.0,
+            source: MetricSource::Scip,
+        };
+        let bytes = bincode::serialize(&forged).unwrap();
+        let err = bincode::deserialize::<AxisMeasurement>(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("out of range"),
+            "value=2.0 must be rejected on bincode deserialize: {err}"
+        );
+    }
+
+    #[test]
+    fn axis_measurement_bincode_round_trip_valid() {
+        // Regression: valid AxisMeasurement bincode round-trip stabil.
+        let original = AxisMeasurement::try_new(0.7, MetricSource::Scip).unwrap();
+        let bytes = bincode::serialize(&original).unwrap();
+        let restored: AxisMeasurement = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(original, restored);
     }
 
     #[test]

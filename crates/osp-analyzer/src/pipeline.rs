@@ -197,16 +197,10 @@ pub fn analyze_repo_with_config(
         // CohesionAxis `observed_source: Scip` Placeholder value'ları yanlış Scip olarak
         // yükseltirdi (PR #69 INV-T9 #70 P0 düzeltmesi).
         //
-        // Exhaustive match (P1-4): yeni source eklendiğinde compiler epistemik kararı
-        // yeniden incelemeye zorlar.
+        // Mapping helper'dan gelir — table-driven test ile her source varyantı için
+        // doğrulanmıştır (P2-2 positive + negative regression).
         if let Some(n) = space.nodes.get_mut(&node_id) {
-            n.cohesion = match cohesion.source {
-                MetricSource::Scip => Some(cohesion.value),
-                MetricSource::TreeSitter
-                | MetricSource::Placeholder
-                | MetricSource::Heuristic
-                | MetricSource::Mixed => None,
-            };
+            n.cohesion = admitted_node_cohesion(&cohesion);
         }
         module_metrics.insert(
             node_id,
@@ -398,6 +392,24 @@ fn build_semantic_coverage(
         index_commit: None, // Faz 3.11: SCIP metadata'dan commit hash çıkar
         repo_head,
         stale: false, // Faz 3.11: index_commit ≠ repo_head kontrolü
+    }
+}
+
+/// **INV-T9 #70 (P0):** Analyzer→Node cohesion authority mapping. Yalnız gerçek SCIP
+/// sonucu `Some(value)` olarak Node.cohesion'a yazılır; diğer tüm source'lar `None`
+/// (CohesionAxis fallback→Placeholder ile placeholder'ı Scip olarak yükseltme açığı
+/// kapanır). Exhaustive match — yeni MetricSource eklendiğinde compiler epistemik kararı
+/// yeniden incelemeye zorlar.
+///
+/// Helper olarak extract edildi — `analysis_admitted_node_cohesion_*` table-driven test
+/// her source varyantı için doğru mapping'i doğrular (P2-2 positive + negative regression).
+fn admitted_node_cohesion(metric: &MetricValue) -> Option<f64> {
+    match metric.source {
+        MetricSource::Scip => Some(metric.value),
+        MetricSource::TreeSitter
+        | MetricSource::Placeholder
+        | MetricSource::Heuristic
+        | MetricSource::Mixed => None,
     }
 }
 
@@ -1161,5 +1173,57 @@ mod tests {
                 }),
             "graceful: no crash, witness either empty or unrelated"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 (review v6 P2-2) — Analyzer cohesion authority mapping table-driven test
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn admitted_node_cohesion_mapping_is_scip_only() {
+        // P2-2: Her source varyantı için correct mapping. Bu, pipeline.rs:194'deki
+        // production wiring'in unit-level pin'lemesidir — analyze_repo integration
+        // test'i yalnız negatif (no-SCIP → None) tarafını doğruluyordu. Bu test positive
+        // (SCIP → Some) ve tüm diğer varyantları exhaustive cover eder.
+        let cases: [(MetricSource, Option<f64>); 5] = [
+            (MetricSource::Scip, Some(0.8)), // P0 positive: SCIP → Some(value)
+            (MetricSource::TreeSitter, None),
+            (MetricSource::Placeholder, None),
+            (MetricSource::Heuristic, None),
+            (MetricSource::Mixed, None),
+        ];
+        for (source, expected) in cases {
+            let mv = MetricValue {
+                value: 0.8,
+                source,
+                confidence: 0.5,
+                coverage: 0.5,
+            };
+            assert_eq!(
+                admitted_node_cohesion(&mv),
+                expected,
+                "source={source:?}: expected {expected:?}, got {:?}",
+                admitted_node_cohesion(&mv)
+            );
+        }
+    }
+
+    #[test]
+    fn admitted_node_cohesion_returns_value_for_scip_not_hardcoded() {
+        // Value pass-through: farklı SCIP value'lar aynı şekilde Node.cohesion'a yazılmalı.
+        let v1 = MetricValue {
+            value: 0.3,
+            source: MetricSource::Scip,
+            confidence: 0.9,
+            coverage: 0.95,
+        };
+        let v2 = MetricValue {
+            value: 1.0,
+            source: MetricSource::Scip,
+            confidence: 0.9,
+            coverage: 0.95,
+        };
+        assert_eq!(admitted_node_cohesion(&v1), Some(0.3));
+        assert_eq!(admitted_node_cohesion(&v2), Some(1.0));
     }
 }

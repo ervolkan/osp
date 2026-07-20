@@ -238,6 +238,14 @@ impl MetricPredicate {
                 return PredicateResult::SourceInsufficient;
             }
         }
+        // INV-T9 #70 (P1-1 review v6): `required_source = Mixed` epistemik bir talep
+        // DEĞİLDİR — Mixed yalnız heterojen aggregation çıktısıdır, hiçbir aşamada task
+        // evidence requirement olarak geçerli olamaz. Fail-closed reject — Commit 4
+        // atomik migration'ta `TaskValidationError::InvalidRequiredMetricSource` ile
+        // typed task-validation error'a dönünecek (commit-time guard).
+        if self.required_source == Some(MetricSource::Mixed) {
+            return PredicateResult::SourceInsufficient;
+        }
         // INV-T3: value engine-measured, agent değiştiremez.
         if self
             .operator
@@ -2330,6 +2338,50 @@ mod tests {
             tasks.iter().any(|t| t.label.contains("Aggregate cleanup")),
             "cleanup task for remaining nodes: {:?}",
             tasks.iter().map(|t| &t.label).collect::<Vec<_>>()
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 (review v6 P1-1) — required_source = Mixed fail-closed
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn predicate_rejects_required_source_mixed_even_when_measured_matches() {
+        // Mixed yalnız heterojen aggregation çıktısıdır — task evidence requirement
+        // olarak geçerli değildir. Fail-closed reject, measured.source = Mixed olsa bile.
+        let pred = coupling_pred_le(0.5, Some(MetricSource::Mixed));
+        // measured source = Mixed (axis aggregation sonucu olabilir)
+        let pos = ProvenancedRawPosition {
+            coupling: AxisMetric {
+                value: 0.3,
+                source: MetricSource::Mixed,
+            },
+            ..placeholder_pos(0.3)
+        };
+        let result = pred.evaluate(&pos);
+        assert_eq!(
+            result,
+            PredicateResult::SourceInsufficient,
+            "required_source = Mixed her zaman SourceInsufficient olmalı (epistemik talep değil)"
+        );
+    }
+
+    #[test]
+    fn predicate_required_source_scip_still_admits_matching_scip_measurement() {
+        // Regression: Mixed guard'ı meşru Scip predicate'leri etkilememeli.
+        let pred = coupling_pred_le(0.5, Some(MetricSource::Scip));
+        let pos = ProvenancedRawPosition {
+            coupling: AxisMetric {
+                value: 0.3,
+                source: MetricSource::Scip,
+            },
+            ..placeholder_pos(0.3)
+        };
+        let result = pred.evaluate(&pos);
+        assert_eq!(
+            result,
+            PredicateResult::Satisfied,
+            "Scip requirement + Scip measured hâlâ Satisfied olmalı"
         );
     }
 }
