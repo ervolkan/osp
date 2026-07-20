@@ -3,7 +3,8 @@
 **Tarih:** 2026-07-21
 **Branch:** `fix/inv-t9-witness-suspension`
 **PR:** #69 (https://github.com/ontologicalspace/osp/pull/69)
-**Current head:** `0d73801` (Commit 3 implementation + review v5/v6 closure landed)
+**Current head:** `389e7db` (Commit 3 implementation + review v5/v6/v7 closure landed — reviewer v7 CONDITIONAL APPROVE 9.8/10)
+**Commit 4 split:** 4a (BoundMeasurementSession, P1 merge-blocker — plan reviewer v10 APPROVED 9.9/10) + 4b (atomik authority migration). 4a plan: [`docs/inv-t9-70-commit4a-plan.md`](inv-t9-70-commit4a-plan.md)
 **Issue:** #70 (https://github.com/ontologicalspace/osp/issues/70)
 **Commit 3 review status:** Reviewer v6 REQUEST CHANGES 9.6/10 — **conditional approval** (P1 carryover to Commit 4)
 **Commit 2 closure:** Reviewer APPROVED 10/10 — scoped tamamlandı
@@ -15,7 +16,7 @@
 ```bash
 cd P:/Work/SoftwarePhysics
 git checkout fix/inv-t9-witness-suspension
-git pull  # 0d73801 head olmalı
+git pull  # 389e7db head olmalı
 git log --oneline -5
 RUSTFLAGS="-D warnings" cargo test -p osp-core --lib  # 1017 test geçmeli
 ```
@@ -26,10 +27,11 @@ Sonra Commit 4 planını uygula (aşağıda).
 
 ## Commit 3 durumu (landed — reviewer v7 CONDITIONAL APPROVE 9.8/10)
 
-**3 commit ile landed:**
+**4 commit ile landed:**
 - `22e3d93` — Commit 3: `feat(engine): subject-bound EngineMeasurement tokens`
 - `650c620` — review v5 closure: `test(inv-t9): session fence + golden pin + producer parity`
 - `0d73801` — review v6 closure: `docs(inv-t9): producer contract test + Commit 4 P1 merge-blocker`
+- `389e7db` — review v7 closure: `docs(inv-t9): truth-surface head + producer contract hardening`
 
 ### Commit 3 kazanımları
 
@@ -41,15 +43,21 @@ Sonra Commit 4 planını uygula (aşağıda).
 - 4 existing golden test byte-for-byte unchanged (AuthorizationBasis, MeasurementInput, EvaluationContext, SuspendedAttemptEvidence)
 - 2 yeni v1 golden: MeasurementDeltaDigest (`071b94001b33e714...`), MeasurementRequestDigest (`bcc98fc016a15062...`)
 
-### Reviewer v1→v7 turu (8.9 → 9.3 → 9.6 → 9.7 → 9.2 → 9.6 → 9.8)
+### Reviewer v1→v7 turu (Commit 3 implementation + closures: 8.9 → 9.3 → 9.6 → 9.7 → 9.2 → 9.6 → 9.8)
+
+Commit 3 implementation + 3 closure commit ile landed. Reviewer v7 CONDITIONAL APPROVE 9.8/10 — "Commit 3 için tekrar kapsamlı review gerekmiyor".
+
+### Commit 4a plan reviewer v6→v10 turu (8.9 → 9.3 → 9.6 → 9.7 → 9.6 → 9.9)
+
+Commit 4a planı (BoundMeasurementSession P1 merge-blocker) reviewer v10 APPROVED 9.9/10 — implementation-ready. Plan: [`docs/inv-t9-70-commit4a-plan.md`](inv-t9-70-commit4a-plan.md).
 
 24 P0/P1/P2 bulgusu kapatıldı. Tek açık konu: **measurement-session atomikliği (P1)**.
 
 ---
 
-## ⚠️ Commit 4 P1 MERGE-BLOCKER — BoundMeasurementSession
+## ✅ Commit 4a P1 MERGE-BLOCKER — BoundMeasurementSession (plan reviewer v10 APPROVED 9.9/10)
 
-**Reviewer v6 (9.6/10) carryover:** Commit 3 context-before/context-after fence kalıcı descriptor değişikliğini yakalar ama **ABA senaryosunu yakalamaz**:
+**Reviewer v6 (9.6/10) carryover → Commit 4a planı:** Commit 3 context-before/context-after fence kalıcı descriptor değişikliğini yakalar ama **ABA senaryosunu yakalamaz**:
 
 ```text
 context_before descriptor = A
@@ -60,37 +68,30 @@ context_after descriptor = A
 → ama centroid farklı axis semantikleri altında üretilmiş olabilir
 ```
 
-Commit 3 add-only olduğu için (EngineMeasurement henüz production authority yoluna bağlanmıyor) bu koşul **Commit 4 migration ön koşulu** olarak taşınır.
+**Commit 4 split (kullanıcı kararı):** 4a (BoundMeasurementSession P1 merge-blocker) + 4b (atomik authority migration). 4a additive, authority caller'lara dokunmaz.
 
-### Commit 4 acceptance conditions (EngineMeasurement herhangi bir authority/evidence caller'a bağlanmadan önce)
+**Commit 4a plan reviewer v6→v10 turu (8.9 → 9.3 → 9.6 → 9.7 → 9.6 → 9.9):** Tam plan [`docs/inv-t9-70-commit4a-plan.md`](inv-t9-70-commit4a-plan.md). Kapanan P1/P2'ler:
+- **v8 P1-1:** Her ölçümde pre/post descriptor verify
+- **v8 P1-2:** Refs + descriptors aynı bind işleminden atomik
+- **v8 P1-3:** `coords.rs` authorization tiplerinden bağımsız (neutral layer)
+- **v8 P1-4:** `measured_centroid_in_session` + wrapper (try_compute_raw_from_delta compat)
+- **v9 P1-1:** `AxisStateEpoch` (monoton) — gerçek transient ABA (descriptor equality A→B→A'yı kaçırdı)
+- **v9 P1-2:** Delegasyon yönü — `bind_core_axis_refs` → `bind_core_axes_with_descriptors` → `bind_core_axes` (compat)
+- **v10 P1-1:** `MeasurementSessionPhase` public visibility (private_interfaces warning)
+- **v10 P1-2:** `AxisStateEpoch` external construct (pub const fn new/get, From<u64>, ZERO, Default)
 
-1. **Core axis referanslarını yalnız bir kez bind et** — `BoundMeasurementSession` struct:
-   ```rust
-   pub(crate) struct BoundMeasurementSession<'a> {
-       axes: CoreAxisRefs<'a>,
-       descriptors: CoreAxisDescriptors,
-       context: MeasurementInputContext,
-       context_digest: MeasurementInputDigest,
-   }
-   ```
+### Commit 4a acceptance conditions (EngineMeasurement herhangi bir authority/evidence caller'a bağlanmadan önce — reviewer v10 APPROVED)
 
-2. **Before ve after ölçümlerinin tamamı aynı bound referanslarla yapılmalı** — `measured_centroid_of` artık session üzerinden çalışmalı, `measured_position_of` her çağrıda `bind_core_axes` yapmamalı.
-
-3. **Session başlangıcındaki measurement context token'a bağlanmalı** — `EngineMeasurement.request.measurement_input_digest` session başlangıcındaki digest olmalı.
-
-4. **Session sonunda descriptor/context drift fail-closed doğrulanmalı** — descriptor'lar captured değerlerle karşılaştırılmalı.
-
-5. **ABA descriptor fixture'ı token üretimini reddetmeli** — blocking test:
-   ```rust
-   #[test]
-   fn bound_measurement_session_rejects_aba_descriptor_drift() {
-       // Axis interior mutability: descriptor calls A → B → A
-       // context_before = A, member measurement = B, context_after = A
-       // → MeasurementContextDrift (fail-closed, token üretilmez)
-   }
-   ```
-
-6. **Bu koşullar sağlanmadan legacy measured input migration'ı yapılamaz.**
+1. **Core axis referanslarını yalnız bir kez bind et** — `BoundMeasurementSession` + `BoundCoreAxes` (refs + states)
+2. **Before ve after ölçümlerinin tamamı aynı bound referanslarla** — `measured_centroid_in_session`
+3. **Session başlangıcındaki captured descriptors token'a bağlanmalı** — `MeasurementInputContext::try_new(session.axis_descriptors())`
+4. **Her ölçümde pre/post + session-sonunda descriptor/epoch drift fail-closed** — `AxisStateDrift` (descriptor + monoton epoch)
+5. **ABA fixture'ları token üretimini reddetmeli** — blocking test'ler:
+   - `bound_measurement_session_rejects_persistent_descriptor_drift` (descriptor A→B, B kalır)
+   - `bound_measurement_session_rejects_transient_aba_via_epoch` (descriptor A→B→A, epoch artar)
+   - `session_begin_captures_each_descriptor_once` (descriptor call-count)
+   - `external_axis_can_produce_nonzero_epoch` (AxisStateEpoch external construct)
+6. **Bu koşullar sağlanmadan legacy measured input migration'ı yapılamaz** (Commit 4b).
 
 ### Doğal migration yüzeyi
 
@@ -101,36 +102,38 @@ Commit 4'te `CoordinateSystem` ölçüm yüzeyi yeniden düzenleneceği için `B
 
 ---
 
-## Commit 4 P2 carryover — compile-fail Deserialize guards
+## Commit 4b P2 carryover — compile-fail Deserialize guards
 
-**Reviewer v6 P2-2:** Commit 3'te `EngineMeasurement` ve `MeasurementRequest` `Serialize`-only (Deserialize intentionally absent). Commit 3 test'leri yalnız `Serialize` trait bound'unu doğrular — `Deserialize` eklenirse bile geçer (manuel review ile korunur).
+**Reviewer v6/v7 P2-2:** Commit 3'te `EngineMeasurement` ve `MeasurementRequest` `Serialize`-only (Deserialize intentionally absent). Commit 3 test'leri yalnız `Serialize` trait bound'unu doğrular — `Deserialize` eklenirse bile geçer (manuel review ile korunur).
 
-Commit 4'te `trybuild` compile-fail fixture'ları eklenmeli:
+Commit 4b'de `trybuild` compile-fail fixture'ları eklenmeli (osp-core Cargo.toml:35 `trybuild = "1"` zaten mevcut):
 
 ```text
-tests/ui/engine_measurement_deserialize_forbidden.rs
-tests/ui/measurement_request_deserialize_forbidden.rs
+tests/compile_fail/engine_measurement_deserialize.rs + .stderr
+tests/compile_fail/measurement_request_deserialize.rs + .stderr
 ```
+
+Mevcut konvensiyon `tests/compile_fail/` (NOT `tests/ui/` — handoff doc'un eski önerisi yanlıştı). Orchestrator: `tests/anchoring_typelevel.rs` — `t.compile_fail(...)` çağrıları.
 
 Beklenen compile error: `the trait Deserialize is not implemented for EngineMeasurement`.
 
-`trybuild` dev-dependency olarak eklenmeli.
-
 ---
 
-## Commit 4 — Sözleşme (reviewer v4 plan APPROVED 9.7/10 + v6 carryover)
+## Commit 4b — Sözleşme (reviewer v4 plan APPROVED 9.7/10 + v6 carryover + Commit 4a sonrası)
 
-### Atomik migration
+**Commit 4 split:** 4a (BoundMeasurementSession P1 merge-blocker — plan v10 APPROVED 9.9/10) + 4b (atomik authority migration). 4b, 4a scoped approval sonrası başlar.
+
+### Atomik migration (Commit 4b)
 
 ```text
-TaskCommitInput { claim, omega, task_resolver, measurement }   ← Commit 4
+TaskCommitInput { claim, omega, task_resolver, measurement }   ← Commit 4b
     ↓ measurement: EngineMeasurement
 EngineMeasurement (private-field token)
     ↓ before: MeasuredRawPosition, after: MeasuredRawPosition,
     ↓ context: MeasurementInputContext, request: MeasurementRequest
     ↓ (revision artık request içinde — P2-1 v2 tek truth source)
 measure_task_delta(TaskBoundClaim, expected_base_revision, hint) → EngineMeasurement
-    ↓ BoundMeasurementSession (P1 merge-blocker) ile tek core-axis binding
+    ↓ BoundMeasurementSession (Commit 4a — P1 merge-blocker kapandı) ile tek core-axis binding
     ↓ uses CoordinateSystem::measured_position_of() (Commit 2)
     ↓ derive_task_subject_scope + derive_impact_scope
 Subject/impact aggregate invariant
@@ -174,8 +177,10 @@ Subject/impact aggregate invariant
 
 - **#79** (PredicateAxis fallback) — Commit 4 kapsamı dışı.
 - **#80** (osp-desktop #72-originated errors) — Commit 4 atomik migration'da ele alınacak.
-- **Module scope resolution** — Commit 4'te graph-aware `SubjectScopeResolver` trait.
+- **Module scope resolution** — Commit 4b'de graph-aware `SubjectScopeResolver` trait.
 
 ---
 
-*Bu belge INV-T9 #70 Commit 3 final handoff'tur. Commit 3 reviewer v6 conditional approval (9.6/10), P1 BoundMeasurementSession Commit 4 merge-blocker olarak taşındı.*
+*Bu belge INV-T9 #70 Commit 3 final handoff'tur. Commit 3 reviewer v7 CONDITIONAL APPROVE 9.8/10 (4 commit ile landed: 22e3d93 + 650c620 + 0d73801 + 389e7db). Commit 4a planı (BoundMeasurementSession P1 merge-blocker) reviewer v10 APPROVED 9.9/10 — implementation-ready. Commit 4b atomik authority migration Commit 4a scoped approval sonrası başlar.*
+
+**Güncelleme (2026-07-21):** Head `389e7db`, Commit 4 split (4a + 4b) belgelendi. Commit 4a planı: [`docs/inv-t9-70-commit4a-plan.md`](inv-t9-70-commit4a-plan.md).
