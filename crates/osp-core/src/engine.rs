@@ -3335,6 +3335,38 @@ v = 0.5
             digest, digest_again,
             "measurement digest aynı canonical identity'den üretiliyor"
         );
+
+        // **Reviewer v6 P2-1:** Shared-producer regression guard — `build_authorization_context`
+        // inline structural canonicalization'a geri dönerse (engine.rs:698'den eski inline blok),
+        // bu source-level contract test yakalar. Yukarıdaki iki-çağrı parity test inline'a
+        // dönüşü yakalayamazdı (aynı fonksiyonu iki kez çağırıyordu).
+        //
+        // `include_str!` engine.rs kaynak kodunu derleme zamanında gömer; `build_authorization_context`
+        // body'sinde `canonical_structural_delta_from_claim` çağrısı aranır. Inline node/edge
+        // dönüşümü (eski `canonicalize_node` + `CanonicalEdge { ... }` literal) geri dönerse
+        // test fail eder.
+        let engine_source = include_str!("engine.rs");
+        // build_authorization_context body'sini bul.
+        let builder_start = engine_source
+            .find("fn build_authorization_context(")
+            .expect("build_authorization_context must exist in engine.rs");
+        // İlk `}` ile biten bloğa kadar olan kısmı al (yaklaşık scope).
+        let builder_end = engine_source[builder_start..]
+            .find("\n    }\n")
+            .map(|offset| builder_start + offset)
+            .unwrap_or(engine_source.len());
+        let builder_body = &engine_source[builder_start..builder_end];
+        assert!(
+            builder_body.contains("canonical_structural_delta_from_claim"),
+            "build_authorization_context must call canonical_structural_delta_from_claim \
+             (shared producer). Inline structural canonicalization drift risk."
+        );
+        // Eski inline pattern gergelim — geri döndüğünde test fail etsin.
+        assert!(
+            !builder_body.contains(".iter()\n            .map(canonicalize_node)"),
+            "build_authorization_context must NOT use inline canonicalize_node mapping \
+             (use shared producer instead)"
+        );
     }
 
     /// **Reviewer v5 P2-3:** HeterogeneousPredicateScopes diagnostic kanıtı taşır
