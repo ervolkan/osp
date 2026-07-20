@@ -3988,10 +3988,11 @@ v = 0.5
 
     #[test]
     fn measurement_token_context_equals_session_captured_descriptors() {
-        // ★ Reviewer v11 P2-1 — gerçek EngineMeasurement token'ının context'i,
-        // session açılışında captured descriptor snapshot ile aynı. Manuel context
-        // kurulumu DEĞİL — measure_task_delta production yolu token üretir, token'ın
-        // context'i session snapshot'ından gelir.
+        // ★ Reviewer v11/v12 P2-1 — gerçek EngineMeasurement token'ının context'i,
+        // session açılışında captured descriptor snapshot ile **full equality**:
+        // axis_id + semantics_version + canonical_parameters (byte-for-byte).
+        // Manuel context kurulumu DEĞİL — measure_task_delta production yolu token
+        // üretir, token'ın context'i session snapshot'ından gelir.
         let mut engine = make_measurement_engine();
         engine.space_mut().insert_node(Node {
             id: 1,
@@ -4020,21 +4021,15 @@ v = 0.5
         let mut expected_descriptors = independent_session.axis_descriptors();
         expected_descriptors.sort_unstable_by(|a, b| a.axis_id().cmp(b.axis_id()));
 
-        let token_context_descriptors: Vec<String> = measurement
-            .context()
-            .axis_descriptors()
-            .iter()
-            .map(|d| d.axis_id().to_string())
-            .collect();
-        let expected_ids: Vec<String> = expected_descriptors
-            .iter()
-            .map(|d| d.axis_id().to_string())
-            .collect();
+        // Full descriptor equality — axis_id + semantics_version + canonical_parameters.
+        // axis_id-only karşılaştırma version/parameters farkını kaçırırdı (regression:
+        // token coupling v1/A ama session coupling v2/B → axis_id eşit, descriptor farklı).
         assert_eq!(
-            token_context_descriptors, expected_ids,
-            "token context axis_id set must match session captured snapshot"
+            measurement.context().axis_descriptors(),
+            expected_descriptors.as_slice(),
+            "token context must equal the full captured descriptor snapshot \
+             (axis_id + semantics_version + canonical_parameters)"
         );
-        // Set equality — sıra canonical (axis_id sort) her ikisinde de aynı.
         assert_eq!(
             measurement.context().axis_descriptors().len(),
             5,
