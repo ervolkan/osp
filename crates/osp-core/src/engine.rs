@@ -679,11 +679,10 @@ impl SpaceEngine {
         omega: &crate::witness::WitnessSet,
     ) -> Result<crate::authorization::AuthorizationContext, String> {
         use crate::authorization::{
-            canonicalize_node, AuthorizationBasis, CanonicalEdge, CanonicalEdgeIdentity,
-            CanonicalEdgeKind, CanonicalF64, CanonicalPredicateContent, CanonicalRawPosition,
-            CanonicalStructuralDelta, CanonicalWitnessPolicy, ClaimAuthor, ClaimIdentity,
-            MeasurementInputContext, MeasurementInputDigest, PredicateEvaluationBasis,
-            ProvenancedMeasuredResult, WitnessRequirement,
+            AuthorizationBasis, CanonicalF64, CanonicalPredicateContent, CanonicalRawPosition,
+            CanonicalWitnessPolicy, ClaimAuthor, ClaimIdentity, MeasurementInputContext,
+            MeasurementInputDigest, PredicateEvaluationBasis, ProvenancedMeasuredResult,
+            WitnessRequirement,
         };
         use crate::canonical_tags::{PredicateAxisTag, PredicateModeTag};
         let claim = input.claim;
@@ -691,46 +690,13 @@ impl SpaceEngine {
             .task_id
             .ok_or_else(|| "claim has no task_id for authorization context".to_string())?;
 
-        // Structural delta — claim'in delta_nodes/delta_edges'ından canonical'a çevir.
-        let mut new_nodes: Vec<_> = claim
-            .delta_nodes
-            .iter()
-            .map(canonicalize_node)
-            .collect::<Result<Vec<_>, _>>()
+        // **Reviewer v5 P1-2:** Shared structural delta producer — measurement
+        // `MeasurementDeltaDigest` ile aynı ontology. İki truth source (inline vs
+        // shared producer) drift riskini kapatır. canonical_structural_delta_from_claim
+        // claim'in delta_nodes/delta_edges/removed_edges field'larını canonical'a çevirir
+        // ve try_new (sort + validate) ile tek canonical representation üretir.
+        let structural_delta = crate::authorization::canonical_structural_delta_from_claim(claim)
             .map_err(|e| e.to_string())?;
-        let new_edges: Vec<CanonicalEdge> = claim
-            .delta_edges
-            .iter()
-            .map(|e| {
-                Ok(CanonicalEdge {
-                    from: e.from,
-                    to: e.to,
-                    kind: CanonicalEdgeKind::try_from(&e.kind).map_err(
-                        |err: crate::authorization::CanonicalizationError| err.to_string(),
-                    )?,
-                    is_type_only: e.is_type_only,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let removed_edges: Vec<CanonicalEdgeIdentity> = claim
-            .removed_edges
-            .iter()
-            .map(|e| {
-                Ok(CanonicalEdgeIdentity::new(
-                    e.from,
-                    e.to,
-                    CanonicalEdgeKind::try_from(&e.kind).map_err(
-                        |err: crate::authorization::CanonicalizationError| err.to_string(),
-                    )?,
-                ))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        let structural_delta = CanonicalStructuralDelta::try_new(
-            std::mem::take(&mut new_nodes),
-            new_edges,
-            removed_edges,
-        )
-        .map_err(|e| e.to_string())?;
 
         // Predicate content — task'ın predicate set'inden effective predicate'lara.
         let task = input.task_resolver.resolve(task_id).ok_or_else(|| {
@@ -1522,18 +1488,40 @@ impl SpaceEngine {
         }
 
         // 2. P1-2 (v2): Current revision exact match — view_id + sequence + content_digest.
-        //    `current_space_view_revision` String error döner; structural error'a map'le.
-        let current_revision = self.current_space_view_revision().map_err(|e| {
-            MeasurementError::MeasurementContext(
-                crate::authorization::CanonicalizationError::AxisContextFailed(e),
-            )
-        })?;
+        //    **Reviewer v5 P2-2:** `current_space_view_revision` hatası axis context değil,
+        //    structural digest computation hatası — ayrı varyant (telemetry categorization).
+        let current_revision = self
+            .current_space_view_revision()
+            .map_err(|e| MeasurementError::RevisionComputationFailed { detail: e })?;
         if expected_base_revision != &current_revision {
             return Err(MeasurementError::RevisionMismatch {
                 expected: expected_base_revision.clone(),
                 current: current_revision,
             });
         }
+
+        // **Reviewer v5 P1-1:** Measurement context atomikliği — interior mutability
+        // threat model (Commit 2 fixture'lar kabul etti). before/after ölçümleri
+        // öncesi axis context snapshot'ı al; sonradan tekrar alıp digest equality
+        // kontrolü yap. Drift → fail-closed typed error.
+        //
+        // NOT: Tam `BoundMeasurementSession` (tek bind_core_axes tüm node'lar için)
+        // Commit 4'te CoordinateSystem'e eklenecek — orada axis refs'i session boyunca
+        // pinlemek daha temiz. Commit 3 closure için context-snapshot fence yeterli:
+        // eğer axis interior mutability descriptor'ı değiştirirse digest değişir.
+        let context_before =
+            crate::authorization::MeasurementInputContext::try_from(&self.coord_system)
+                .map_err(MeasurementError::MeasurementContext)?;
+        let context_before_digest = crate::authorization::MeasurementInputDigest::compute(
+            &context_before,
+        )
+        .map_err(|e| {
+            crate::measurement::MeasurementError::Digest(
+                crate::measurement::MeasurementDigestError::MeasurementInputDigest {
+                    detail: e.to_string(),
+                },
+            )
+        })?;
 
         // 3. P2-2 (v3) + P1-4 (v2): Canonical subject scope derivation.
         //    Heterojen predicate scope (farklı canonical set) → typed error.
@@ -1617,9 +1605,31 @@ impl SpaceEngine {
         }
         let after = self.measured_centroid_of(&hypothetical, subject.member_ids())?;
 
-        // 9. P1-2 (v3): Explicit context construction (blanket #[from] YOK).
-        let context = crate::authorization::MeasurementInputContext::try_from(&self.coord_system)
-            .map_err(MeasurementError::MeasurementContext)?;
+        // **Reviewer v5 P1-1:** Context-after snapshot + digest equality fence.
+        // Eğer before/after ölçümleri sırasında axis interior mutability descriptor'ı
+        // değiştirdiyse, context_before_digest ≠ context_after_digest → fail-closed.
+        // Token'ın bağladığı measurement_input_digest böylece tüm ölçümlerin gerçekten
+        // aynı axis semantiği altında üretildiğini kanıtlar.
+        let context_after =
+            crate::authorization::MeasurementInputContext::try_from(&self.coord_system)
+                .map_err(MeasurementError::MeasurementContext)?;
+        let context_after_digest =
+            crate::authorization::MeasurementInputDigest::compute(&context_after).map_err(|e| {
+                crate::measurement::MeasurementError::Digest(
+                    crate::measurement::MeasurementDigestError::MeasurementInputDigest {
+                        detail: e.to_string(),
+                    },
+                )
+            })?;
+        if context_before_digest != context_after_digest {
+            return Err(MeasurementError::MeasurementContextDrift {
+                before: context_before_digest,
+                after: context_after_digest,
+            });
+        }
+
+        // 9. P1-2 (v3): Explicit context (context_after == context_before — fence verify).
+        let context = context_after;
 
         // 10. P1-5 (v3): Shared canonical producer — authorization basis ile aynı ontology.
         let canonical_delta = crate::authorization::canonical_structural_delta_from_claim(
@@ -1660,50 +1670,53 @@ impl SpaceEngine {
         task: &crate::trajectory::Task,
     ) -> Result<crate::measurement::CanonicalSubjectScope, crate::measurement::MeasurementError>
     {
-        use crate::measurement::{MeasurementError, SubjectScopeResolutionError};
+        use crate::measurement::{
+            CanonicalSubjectScope, MeasurementError, SubjectScopeResolutionError,
+        };
         use crate::trajectory::PredicateScope;
 
-        let mut scopes: Vec<Vec<crate::space::NodeId>> = Vec::new();
-        for wp in &task.target_predicate_set.predicates {
-            let mut ids: Vec<crate::space::NodeId> = Vec::new();
-            match &wp.predicate.scope {
-                PredicateScope::Node(id) => ids.push(*id),
-                PredicateScope::Subgraph(member_ids) => ids.extend(member_ids.iter().copied()),
-                PredicateScope::Module(name) => {
-                    return Err(MeasurementError::SubjectScopeResolutionFailed(
-                        SubjectScopeResolutionError::ModuleResolutionUnavailable {
-                            module: name.clone(),
-                        },
-                    ));
-                }
-            }
-            scopes.push(ids);
-        }
-        if scopes.is_empty() {
+        // **Reviewer v5 P1-3:** Her predicate scope doğrudan CanonicalSubjectScope::try_new
+        // üzerinden geçer — sort dedup YOK. Duplicate Subgraph scope (örn [1, 1, 2])
+        // sessizce düzeltilmez, typed error ile reddedilir (authorization
+        // CanonicalSubgraphScope ile aynı sözleşme).
+        let canonical_scopes: Vec<CanonicalSubjectScope> = task
+            .target_predicate_set
+            .predicates
+            .iter()
+            .map(|wp| {
+                let ids = match &wp.predicate.scope {
+                    PredicateScope::Node(id) => vec![*id],
+                    PredicateScope::Subgraph(member_ids) => member_ids.clone(),
+                    PredicateScope::Module(name) => {
+                        return Err(MeasurementError::SubjectScopeResolutionFailed(
+                            SubjectScopeResolutionError::ModuleResolutionUnavailable {
+                                module: name.clone(),
+                            },
+                        ));
+                    }
+                };
+                CanonicalSubjectScope::try_new(ids).map_err(MeasurementError::Digest)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if canonical_scopes.is_empty() {
             return Err(MeasurementError::EmptySubjectScope);
         }
 
-        // P1-4 (v2): Canonical normalize ile heterojen tespiti.
-        let mut canonicalized: Vec<Vec<crate::space::NodeId>> = scopes
-            .into_iter()
-            .map(|mut ids| {
-                ids.sort_unstable();
-                ids.dedup();
-                ids
-            })
-            .collect();
-        let first = canonicalized.remove(0);
-        if first.is_empty() {
-            return Err(MeasurementError::EmptySubjectScope);
-        }
-        for scope in &canonicalized {
-            if scope != &first {
-                return Err(MeasurementError::HeterogeneousPredicateScopes { scopes: vec![] });
+        // P1-4 (v2): Heterojen predicate scope fail-closed. canonical_scopes[0]
+        // referans; diğerleri eşit olmalı. Diagnostic için tüm canonical scope'lar taşınır.
+        let mut iter = canonical_scopes.into_iter();
+        let first = iter.next().expect("non-empty checked above");
+        for other in iter {
+            if other != first {
+                return Err(MeasurementError::HeterogeneousPredicateScopes {
+                    // Reviewer v5 P2-3: diagnostic kanıtı — ilk iki farklı scope.
+                    // Tüm liste yerine iki temsilci yeterli (hata mesajı okunabilir kalır).
+                    scopes: vec![first.clone(), other],
+                });
             }
         }
-        let subject = crate::measurement::CanonicalSubjectScope::try_new(first)
-            .map_err(MeasurementError::Digest)?;
-        Ok(subject)
+        Ok(first)
     }
 
     /// **INV-T9 #70 Commit 3 (P1-1 v3 + P1-4 v3):** Claim → impact scope türetme (canonical).
@@ -1736,13 +1749,17 @@ impl SpaceEngine {
 
         let mut edge_ids: Vec<CanonicalEdgeIdentity> = Vec::new();
         for edge in &claim.delta_edges {
-            let kind = CanonicalEdgeKind::try_from(&edge.kind)
-                .map_err(MeasurementError::MeasurementContext)?;
+            // **Reviewer v5 P2-2:** Structural canonicalization hatası — axis context
+            // değil, canonical tag conversion. Digest yoluna yönlendir (telemetry categorization).
+            let kind = CanonicalEdgeKind::try_from(&edge.kind).map_err(|e| {
+                MeasurementError::Digest(crate::measurement::MeasurementDigestError::from(e))
+            })?;
             edge_ids.push(CanonicalEdgeIdentity::new(edge.from, edge.to, kind));
         }
         for edge in &claim.removed_edges {
-            let kind = CanonicalEdgeKind::try_from(&edge.kind)
-                .map_err(MeasurementError::MeasurementContext)?;
+            let kind = CanonicalEdgeKind::try_from(&edge.kind).map_err(|e| {
+                MeasurementError::Digest(crate::measurement::MeasurementDigestError::from(e))
+            })?;
             edge_ids.push(CanonicalEdgeIdentity::new(edge.from, edge.to, kind));
         }
 
@@ -3202,6 +3219,150 @@ v = 0.5
             ),
             "Module(name) scope must produce typed error (Commit 4 resolver)"
         );
+    }
+
+    /// **Reviewer v5 P1-3:** Duplicate node in Subgraph scope must be rejected
+    /// (sessizce dedup EDİLMEZ — CanonicalSubjectScope::try_new ile aynı sözleşme).
+    #[test]
+    fn measure_task_delta_rejects_duplicate_node_in_subgraph_scope() {
+        let engine = make_measurement_engine();
+        // Subgraph([5, 5]) — duplicate. Authorization CanonicalSubgraphScope reddeder;
+        // measurement yolu da reddetmeli (iki truth source aynı sözleşme).
+        use crate::trajectory::{
+            MetricPredicate, PredicateMode, PredicateSet, TaskPolicy, TaskStatus, WeightedPredicate,
+        };
+        let predicate = MetricPredicate {
+            metric: crate::trajectory::PredicateAxis::Coupling,
+            operator: crate::trajectory::ComparisonOp::Le,
+            threshold: 0.5,
+            scope: crate::trajectory::PredicateScope::Subgraph(vec![5, 5]),
+            required_source: None,
+            tolerance: 0.0,
+        };
+        let ps = PredicateSet {
+            mode: PredicateMode::All,
+            predicates: vec![WeightedPredicate {
+                predicate,
+                weight: Some(1.0),
+            }],
+            preferred_vector: None,
+        };
+        let task = Task {
+            id: 42,
+            milestone_id: 0,
+            label: "dup-subgraph".to_string(),
+            target_predicate_set: ps,
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::Digest(
+                    crate::measurement::MeasurementDigestError::StructuralCanonicalization { .. }
+                ))
+            ),
+            "duplicate node in Subgraph scope must be rejected (not silently deduped)"
+        );
+    }
+
+    /// **Reviewer v5 P1-2:** Authorization basis ve measurement digest aynı shared
+    /// producer'ı kullanmalı — structural delta identity parity.
+    #[test]
+    fn authorization_and_measurement_share_exact_structural_delta_identity() {
+        use crate::authorization::canonical_structural_delta_from_claim;
+        use crate::space::{Edge, EdgeKind, Node, NodeKind};
+        let claim = claim_with_task_id(
+            42,
+            vec![
+                Node {
+                    id: 1,
+                    kind: NodeKind::Module,
+                    mass: 1.0,
+                    ..Default::default()
+                },
+                Node {
+                    id: 2,
+                    kind: NodeKind::Concept,
+                    mass: 2.0,
+                    ..Default::default()
+                },
+            ],
+            vec![Edge {
+                from: 1,
+                to: 2,
+                kind: EdgeKind::Imports,
+                ..Default::default()
+            }],
+            vec![crate::agent::EdgeRef {
+                from: 3,
+                to: 4,
+                kind: EdgeKind::Calls,
+            }],
+        );
+
+        // Shared producer — measurement yolu.
+        let canonical_measurement = canonical_structural_delta_from_claim(&claim).unwrap();
+
+        // Shared producer — authorization basis de bunu kullanır (engine.rs:694).
+        // build_authorization_context producer'a refactor edildi, bu yüzden aynı
+        // CanonicalStructuralDelta değerini üretmeli.
+        let canonical_auth = canonical_structural_delta_from_claim(&claim).unwrap();
+
+        assert_eq!(
+            canonical_measurement, canonical_auth,
+            "shared producer deterministik — iki çağrı aynı değer"
+        );
+
+        // MeasurementDeltaDigest, bu canonical delta üzerinden üretilmeli.
+        let digest = crate::measurement::MeasurementDeltaDigest::compute_from_canonical(
+            &canonical_measurement,
+        )
+        .unwrap();
+        let digest_again =
+            crate::measurement::MeasurementDeltaDigest::compute_from_canonical(&canonical_auth)
+                .unwrap();
+        assert_eq!(
+            digest, digest_again,
+            "measurement digest aynı canonical identity'den üretiliyor"
+        );
+    }
+
+    /// **Reviewer v5 P2-3:** HeterogeneousPredicateScopes diagnostic kanıtı taşır
+    /// (boş Vec değil, iki temsilci scope).
+    #[test]
+    fn heterogeneous_predicate_scopes_carries_diagnostic_scopes() {
+        let engine = make_measurement_engine();
+        let task = task_with_heterogeneous_scopes(1, 2, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        match result {
+            Err(crate::measurement::MeasurementError::HeterogeneousPredicateScopes { scopes }) => {
+                assert_eq!(
+                    scopes.len(),
+                    2,
+                    "diagnostic — iki temsilci scope taşınmalı (boş Vec değil)"
+                );
+            }
+            other => panic!(
+                "expected HeterogeneousPredicateScopes with 2 scopes, got {:?}",
+                other
+            ),
+        }
     }
 
     // === Impact scope (P1-1 v3 + P1-4 v3) ===

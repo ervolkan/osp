@@ -539,9 +539,24 @@ pub enum MeasurementError {
     #[error("coordinate measurement failed: {0}")]
     CoordinateMeasurement(#[from] crate::coords::CoordinateMeasurementError),
 
-    /// `MeasurementInputContext::try_from` hatası. Explicit mapping (blanket `#[from]` YOK).
+    /// `MeasurementInputContext::try_from` hatası (coordinate axis context construction).
+    /// Explicit mapping (blanket `#[from]` YOK — reviewer v4 P1-2).
     #[error("measurement context construction failed: {0}")]
     MeasurementContext(crate::authorization::CanonicalizationError),
+
+    /// **Reviewer v5 P2-2:** Revision computation hatası (SpaceDigest/SpaceViewRevision).
+    /// `current_space_view_revision` hatası — axis context değil, structural digest.
+    #[error("space view revision computation failed: {detail}")]
+    RevisionComputationFailed { detail: String },
+
+    /// **Reviewer v5 P1-1:** Measurement context drift — interior mutability threat.
+    /// before/after ölçümleri arası axis descriptor/state değişti; token'ın bağladığı
+    /// digest tüm ölçümlerin aynı axis semantiği altında üretildiğini kanıtlayamaz.
+    #[error("measurement context drift: before={before:?}, after={after:?}")]
+    MeasurementContextDrift {
+        before: crate::authorization::MeasurementInputDigest,
+        after: crate::authorization::MeasurementInputDigest,
+    },
 
     /// Digest construction hatası (delta/request/input digest + structural canonicalization).
     #[error("measurement digest construction failed: {0}")]
@@ -881,26 +896,33 @@ mod tests {
 
     // === EngineMeasurement private-field token (P2-2 v2) ===
 
+    /// **Reviewer v5 P2-1:** Serialize-only invariant regression test.
+    ///
+    /// NOT: Bu test yalnız `Serialize` trait bound'ını doğrular — `Deserialize` eklenirse
+    /// bile geçer. Gerçek compile-fail UI test (`trybuild`) Commit 4'te eklenecek
+    /// (orada dev-dependency genişletme yapılacak). Şimdilik bu test, `Serialize` derive
+    /// edildiğini ve tipin pub API'de erişilebilir olduğunu doğrular; `Deserialize`
+    /// absence invariant'ı manuel review ile korunur (engine.rs/measurement.rs derive
+    /// listelerinde `Deserialize` yok).
     #[test]
-    fn engine_measurement_cannot_deserialize() {
-        // EngineMeasurement derives only Serialize — serde_json::from_str must fail at compile
-        // time (Deserialize not implemented). We verify by attempting type-bound check.
-        fn assert_not_deserialize<T>()
+    fn engine_measurement_remains_serialize_only() {
+        fn assert_serialize<T>()
         where
             T: serde::Serialize,
         {
         }
-        assert_not_deserialize::<EngineMeasurement>();
+        assert_serialize::<EngineMeasurement>();
     }
 
+    /// **Reviewer v5 P2-1:** Açıklama yukarıdaki ile aynı.
     #[test]
-    fn measurement_request_cannot_deserialize() {
-        fn assert_serialize_only<T>()
+    fn measurement_request_remains_serialize_only() {
+        fn assert_serialize<T>()
         where
             T: serde::Serialize,
         {
         }
-        assert_serialize_only::<MeasurementRequest>();
+        assert_serialize::<MeasurementRequest>();
     }
 
     // === Test fixture helpers ===
@@ -1084,22 +1106,38 @@ mod tests {
         assert_eq!(digest, restored);
     }
 
+    /// **Reviewer v5 P1-4:** Real pinned golden — encoding değişirse test fail etmeli.
+    /// Probe ile üretilip sabitlendi (`eprintln!` → pin). 65-karakter placeholder YOK.
+    const MEASUREMENT_DELTA_V1_GOLDEN_HEX: &str =
+        "071b94001b33e71415479910c0ee69f68b2a859dd0b5b052faf36a9d5b156bb3";
+
     #[test]
     fn measurement_delta_digest_v1_golden() {
         let delta = sample_canonical_delta();
         let digest = MeasurementDeltaDigest::compute_from_canonical(&delta).unwrap();
-        let hex = digest.to_hex();
-        // Golden pinned — encoding değişirse güncellenmeli.
-        const MEASUREMENT_DELTA_V1_GOLDEN_HEX: &str =
-            "ff0159b5e3d8d1f0f51fb1b8a3fc3f4f0e9b4b8d11f4e3c2d1b0a9f8e7d6c5b4a";
-        // Note: golden pinned dynamically first — will be updated after first successful run.
-        // Use a stable check that doesn't break on minor encoder changes.
-        assert_eq!(hex.len(), 64, "BLAKE3 digest hex must be 64 chars");
-        // Pin actual value once computed; for now just ensure determinism.
-        let d2 = MeasurementDeltaDigest::compute_from_canonical(&delta).unwrap();
-        assert_eq!(hex, d2.to_hex(), "digest must be deterministic");
-        // Suppress unused warning.
-        let _ = MEASUREMENT_DELTA_V1_GOLDEN_HEX;
+        assert_eq!(
+            digest.to_hex(),
+            MEASUREMENT_DELTA_V1_GOLDEN_HEX,
+            "INV-T9 #70 Commit 3: measurement delta digest encoding değişti — golden'ı \
+             güncelleyin VE downstream consumer'ları (AuthorizationBasis v2 Commit 4) kontrol edin"
+        );
+    }
+
+    /// **Reviewer v5 P1-4:** Real pinned golden — v1 domain separator publication'dan
+    /// sonra encoding backward-compat yüzeyine dönüşür.
+    const MEASUREMENT_REQUEST_V1_GOLDEN_HEX: &str =
+        "bcc98fc016a150621c704660d0417277b2532f5bdfbf9a3465ce580e6448f739";
+
+    #[test]
+    fn measurement_request_digest_v1_golden() {
+        let req = sample_measurement_request();
+        let digest = MeasurementRequestDigest::compute(&req).unwrap();
+        assert_eq!(
+            digest.to_hex(),
+            MEASUREMENT_REQUEST_V1_GOLDEN_HEX,
+            "INV-T9 #70 Commit 3: measurement request digest encoding değişti — golden'ı \
+             güncelleyin VE downstream consumer'ları (AuthorizationBasis v2 Commit 4) kontrol edin"
+        );
     }
 
     // === MeasurementRequestDigest (P0-1) ===
