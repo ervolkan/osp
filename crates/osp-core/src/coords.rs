@@ -404,15 +404,8 @@ pub enum CoordinateMeasurementError {
 /// []                    → EmptySourceSet
 /// ```
 ///
-/// `pub(crate)` — Commit 3 `measure_task_delta` subject scope centroid aggregation için
-/// (Commit 2'de coords-layer test'leri çağırır).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "INV-T9 #70 Commit 3 measure_task_delta subject scope aggregation will consume"
-    )
-)]
+/// `pub(crate)` — INV-T9 #70 Commit 3 `measure_task_delta` subject scope centroid
+/// aggregation tarafından consume edilir (`engine.rs::measured_centroid_of`).
 pub(crate) fn aggregate_source(
     sources: impl IntoIterator<Item = MetricSource>,
 ) -> Result<MetricSource, CoordinateMeasurementError> {

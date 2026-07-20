@@ -910,7 +910,8 @@ impl SpaceDigest {
         nodes.sort_unstable_by_key(|n| n.id);
         encode_u64(&mut hasher, nodes.len() as u64, "space_node_count");
         for node in &nodes {
-            let canonical = canonicalize_node(node)?;
+            let canonical = canonicalize_node(node)
+                .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?;
             encode_canonical_node(&mut hasher, &canonical)?;
         }
 
@@ -950,21 +951,64 @@ impl SpaceDigest {
 }
 
 /// Domain `Node` → `CanonicalNode` dönüşümü (NodeKind → CanonicalNodeKind via TryFrom).
-/// Position hariç — engine-derived. `pub(crate)` — engine context üretimi kullanır.
+/// Position hariç — engine-derived.
+///
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** `CanonicalizationError` döner — shared
+/// `canonical_structural_delta_from_claim` producer ile uyumlu. Authorization caller'ı
+/// gerektiğinde `CanonicalDigestError::EncodingFailed` sarmalar.
 pub(crate) fn canonicalize_node(
     node: &crate::space::Node,
-) -> Result<CanonicalNode, AuthorizationBasisDigestError> {
+) -> Result<CanonicalNode, CanonicalizationError> {
     Ok(CanonicalNode {
         id: node.id,
-        kind: CanonicalNodeKind::try_from(&node.kind)
-            .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?,
+        kind: CanonicalNodeKind::try_from(&node.kind)?,
         mass: node.mass,
         cohesion: node.cohesion,
-        classification: CanonicalNodeClassification::try_from(&node.classification)
-            .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?,
-        role: CanonicalNodeRole::try_from(&node.role)
-            .map_err(|e| AuthorizationBasisDigestError::EncodingFailed(e.to_string()))?,
+        classification: CanonicalNodeClassification::try_from(&node.classification)?,
+        role: CanonicalNodeRole::try_from(&node.role)?,
     })
+}
+
+/// **INV-T9 #70 Commit 3 (P1-5 v3 / reviewer v4 P1-2):** Shared canonical structural
+/// delta producer — hem `AuthorizationBasis.structural_delta` hem `MeasurementDeltaDigest`
+/// aynı producer'ı kullanır. Single canonicalization truth: claim → CanonicalNode/Edge/
+/// Identity → `try_new` (sort + validate). Encoder AS-IS; digest öncesinde defensive
+/// `validate()` çağrılır (non-normalizing).
+///
+/// `Claim`'in `delta_nodes`/`delta_edges`/`removed_edges` field'larından `CanonicalStructuralDelta`
+/// üretir. Duplicate/cross-list/non-finite `try_new` validation'ı ile reddedilir.
+pub(crate) fn canonical_structural_delta_from_claim(
+    claim: &crate::witness::Claim,
+) -> Result<CanonicalStructuralDelta, CanonicalizationError> {
+    let new_nodes: Vec<CanonicalNode> = claim
+        .delta_nodes
+        .iter()
+        .map(canonicalize_node)
+        .collect::<Result<Vec<_>, _>>()?;
+    let new_edges: Vec<CanonicalEdge> = claim
+        .delta_edges
+        .iter()
+        .map(|e| {
+            Ok(CanonicalEdge {
+                from: e.from,
+                to: e.to,
+                kind: CanonicalEdgeKind::try_from(&e.kind)?,
+                is_type_only: e.is_type_only,
+            })
+        })
+        .collect::<Result<Vec<_>, CanonicalizationError>>()?;
+    let removed_edges: Vec<CanonicalEdgeIdentity> = claim
+        .removed_edges
+        .iter()
+        .map(|e| {
+            Ok(CanonicalEdgeIdentity::new(
+                e.from,
+                e.to,
+                CanonicalEdgeKind::try_from(&e.kind)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, CanonicalizationError>>()?;
+    CanonicalStructuralDelta::try_new(new_nodes, new_edges, removed_edges)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1784,7 +1828,7 @@ impl AuthorizationBasisDigest {
         hasher.update(basis.measurement_input_digest.as_bytes());
         hasher.update(basis.evaluation_context_digest.as_bytes());
         hasher.update(basis.base_space_view_revision.content_digest.as_bytes());
-        encode_space_view_id(&mut hasher, &basis.base_space_view_revision.view_id)?;
+        encode_space_view_id(&mut hasher, &basis.base_space_view_revision.view_id);
         encode_u64(
             &mut hasher,
             basis.base_space_view_revision.sequence,
@@ -1819,32 +1863,39 @@ impl AuthorizationBasisDigest {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Canonical binary encoding helpers (review P1-3)
+// Canonical binary encoding — domain-specific encoder'lar (review P1-3).
+//
+// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** Düşük seviyeli framing primitive'leri
+// (`encode_u64/u32/u8`, `encode_bytes`, `encode_f64`, `canonical_f64_bytes`,
+// `encode_optional_f64*`, `push_*`, `CanonicalTag` trait, `encode_tag`) artık
+// `crate::canonical_encoding` neutral modülünde. Authorization domain encoder'ları
+// (aşağıdaki) bu primitive'leri kullanır — `CanonicalEncodingError` → `CanonicalDigestError`
+// stable mapping.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn encode_u64(hasher: &mut blake3::Hasher, val: u64, _field: &str) {
-    hasher.update(&val.to_le_bytes());
-}
+#[cfg_attr(
+    not(test),
+    expect(
+        unused_imports,
+        reason = "test modülü canonical_f64_bytes_preimage çağırır"
+    )
+)]
+use crate::canonical_encoding::{
+    canonical_f64_bytes, encode_bytes, encode_f64, encode_optional_f64, encode_tag, encode_u32,
+    encode_u64, encode_u8, push_bytes, push_f64, push_tag, push_u64, push_u8,
+    CanonicalEncodingError, CanonicalTag,
+};
 
-fn encode_u32(hasher: &mut blake3::Hasher, val: u32, _field: &str) {
-    hasher.update(&val.to_le_bytes());
-}
-
-fn encode_u8(hasher: &mut blake3::Hasher, val: u8, _field: &str) {
-    hasher.update(&[val]);
-}
-
-/// Canonical numeric tag trait — newtype'ların `as_u8()` üzerinden encode edilmesi.
-///
-/// `encode_u8` ve `push_u8` generic hale gelir; newtype'lar otomatik desteklenir.
-/// Ham `u8` de desteklenir (scope_tag gibi plain numeric alanlar için).
-pub(crate) trait CanonicalTag {
-    fn tag_u8(&self) -> u8;
-}
-
-impl CanonicalTag for u8 {
-    fn tag_u8(&self) -> u8 {
-        *self
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** Neutral encoding error → authorization
+/// digest error stable mapping. Primitive error dış API'ye sızmaz.
+impl From<CanonicalEncodingError> for CanonicalDigestError {
+    fn from(err: CanonicalEncodingError) -> Self {
+        match err {
+            CanonicalEncodingError::NonFiniteRejected => CanonicalDigestError::NonFiniteRejected,
+            CanonicalEncodingError::LengthOverflow { field } => {
+                CanonicalDigestError::LengthOverflow { field }
+            }
+        }
     }
 }
 
@@ -1852,7 +1903,7 @@ impl CanonicalTag for u8 {
 macro_rules! impl_canonical_tag_for_newtype {
     ($($name:ident),* $(,)?) => {
         $(
-            impl $crate::authorization::CanonicalTag for $crate::canonical_tags::$name {
+            impl $crate::canonical_encoding::CanonicalTag for $crate::canonical_tags::$name {
                 fn tag_u8(&self) -> u8 {
                     self.as_u8()
                 }
@@ -1879,100 +1930,24 @@ impl CanonicalTag for crate::canonical_tags::WitnessIndependencePolicyTag {
     }
 }
 
-fn encode_tag<T: CanonicalTag>(hasher: &mut blake3::Hasher, val: T, field: &str) {
-    encode_u8(hasher, val.tag_u8(), field);
-}
-
-fn encode_bytes(
-    hasher: &mut blake3::Hasher,
-    bytes: &[u8],
-) -> Result<(), AuthorizationBasisDigestError> {
-    encode_u64(hasher, bytes.len() as u64, "len");
-    hasher.update(bytes);
-    Ok(())
-}
-
-/// **Step 6 P0:** Canonical f64 → 8 byte (tek primitive). Non-finite reject (NaN + ±Infinity),
-/// -0.0 → 0.0 normalize, little-endian to_bits.
-///
-/// `encode_f64` (hasher) + `push_f64` (buffer) + `encode_optional_f64` hep bu kaynağı
-/// kullanır — çift canonicalization yok. Preimage testleri doğrudan bu fonksiyonu çağırır.
-fn canonical_f64_bytes(val: f64) -> Result<[u8; 8], AuthorizationBasisDigestError> {
-    if !val.is_finite() {
-        return Err(AuthorizationBasisDigestError::NonFiniteRejected);
-    }
-    // -0.0 → 0.0 normalize (to_bits farklı: -0.0 = 0x8000000000000000, 0.0 = 0x0).
-    let normalized = if val == 0.0 { 0.0f64 } else { val };
-    Ok(normalized.to_bits().to_le_bytes())
-}
-
-/// f64 canonical encoding — non-finite reject (NaN + ±Infinity), -0.0 → 0.0, little-endian to_bits.
-///
-/// **reviewer P0-2a:** yalnız NaN değil, ±Infinity de reddedilir. Plan NaN+infinity
-/// rejection öngörüyordu; `is_nan()` kontrolü infinity'yi geçiriyordu.
-///
-/// **Step 6 P0:** `canonical_f64_bytes` üzerinden (tek kaynak).
-fn encode_f64(
-    hasher: &mut blake3::Hasher,
-    val: f64,
-    _field: &str,
-) -> Result<(), AuthorizationBasisDigestError> {
-    hasher.update(&canonical_f64_bytes(val)?);
-    Ok(())
-}
-
-/// **Step 6 P0:** Option\<f64\> → Vec\<u8\> (shared byte helper). Presence tag:
-/// `None → [0]`, `Some(v) → [1] || canonical_f64_bytes(v)`. Tag olmadan aynı byte dizisini
-/// üreten context çiftleri imkânsız (reviewer P0-1 encoding collision fix).
-/// Preimage testleri doğrudan bu fonksiyonu çağırır.
-fn encode_optional_f64_to_vec(
-    value: Option<f64>,
-) -> Result<Vec<u8>, AuthorizationBasisDigestError> {
-    let mut bytes = Vec::with_capacity(9);
-    match value {
-        None => push_u8(&mut bytes, 0),
-        Some(v) => {
-            push_u8(&mut bytes, 1);
-            bytes.extend_from_slice(&canonical_f64_bytes(v)?);
-        }
-    }
-    Ok(bytes)
-}
-
-/// Option\<f64\> canonical encoding — **reviewer P0-1 (encoding collision fix).**
-///
-/// Önceki yaklaşım `None → encode_u8(0)` ve `Some(v) → encode_f64(v)` kullanıyordu;
-/// bu `None` (1 byte) ile `Some(0.0)` (8 byte) dizilerini farklı uzunluklarda üretiyordu
-/// ama `None` + `Some(0.0)` kombinasyonları dokuz sıfır byte'a çakışabiliyordu.
-///
-/// Presence tag: `None → [0]`, `Some(v) → [1] || canonical_f64(v)`. Tag olmadan aynı
-/// byte dizisini üreten context çiftleri artık imkânsız.
-///
-/// **Step 6 P0:** `encode_optional_f64_to_vec` üzerinden (tek kaynak).
-fn encode_optional_f64(
-    hasher: &mut blake3::Hasher,
-    value: Option<f64>,
-    _field: &str,
-) -> Result<(), AuthorizationBasisDigestError> {
-    hasher.update(&encode_optional_f64_to_vec(value)?);
-    Ok(())
-}
-
 /// **reviewer P0-1:** Per-axis measurement encoder — value + source tag.
 fn encode_axis_measurement(
     hasher: &mut blake3::Hasher,
     m: &CanonicalAxisMeasurement,
     field: &str,
-) -> Result<(), AuthorizationBasisDigestError> {
+) -> Result<(), CanonicalDigestError> {
     encode_f64(hasher, m.value, field)?;
     encode_tag(hasher, m.source, field);
     Ok(())
 }
 
-fn encode_canonical_node(
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** `pub(crate)` — measurement
+/// `MeasurementDeltaDigest` shared producer ile aynı encoder'ı kullanır (tek canonical
+/// byte formatı — single encoding truth).
+pub(crate) fn encode_canonical_node(
     hasher: &mut blake3::Hasher,
     node: &CanonicalNode,
-) -> Result<(), AuthorizationBasisDigestError> {
+) -> Result<(), CanonicalEncodingError> {
     encode_u64(hasher, node.id, "node_id");
     encode_tag(hasher, node.kind, "node_kind");
     encode_f64(hasher, node.mass, "node_mass")?;
@@ -1984,7 +1959,10 @@ fn encode_canonical_node(
 
 /// **Step 6 P0:** CanonicalEdge → Vec\<u8\> (shared byte helper, 18 byte).
 /// from(8) + to(8) + kind(1) + is_type_only(1). Preimage testleri doğrudan çağırır.
-fn encode_canonical_edge_to_vec(edge: &CanonicalEdge) -> Vec<u8> {
+///
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** `pub(crate)` — measurement
+/// `MeasurementDeltaDigest` ile paylaşılır.
+pub(crate) fn encode_canonical_edge_to_vec(edge: &CanonicalEdge) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(18);
     push_u64(&mut bytes, edge.from);
     push_u64(&mut bytes, edge.to);
@@ -2020,7 +1998,7 @@ fn encode_vision_subject_to_vec(subject: CanonicalVisionSubject) -> Vec<u8> {
 fn encode_canonical_edge_vec(
     hasher: &mut blake3::Hasher,
     edges: &[CanonicalEdge],
-) -> Result<(), AuthorizationBasisDigestError> {
+) -> Result<(), CanonicalDigestError> {
     encode_u64(hasher, edges.len() as u64, "new_edge_count");
     for edge in edges {
         hasher.update(&encode_canonical_edge_to_vec(edge));
@@ -2033,7 +2011,7 @@ fn encode_canonical_edge_vec(
 fn encode_canonical_edge_identity_vec(
     hasher: &mut blake3::Hasher,
     edges: &[CanonicalEdgeIdentity],
-) -> Result<(), AuthorizationBasisDigestError> {
+) -> Result<(), CanonicalDigestError> {
     encode_u64(hasher, edges.len() as u64, "removed_edge_count");
     for edge in edges {
         hasher.update(&encode_canonical_edge_identity_to_vec(edge));
@@ -2045,7 +2023,10 @@ fn encode_canonical_edge_identity_vec(
 /// to(8) + kind(1)). `is_type_only` YOK. Encoding testleri tam preimage'i kontrol eder
 /// (hash sonucundan alan yokluğu kanıtlanamaz). `encode_canonical_edge_identity_vec`
 /// ve testler tarafından paylaşılır.
-fn encode_canonical_edge_identity_to_vec(edge: &CanonicalEdgeIdentity) -> Vec<u8> {
+///
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2):** `pub(crate)` — measurement
+/// `MeasurementDeltaDigest` ile paylaşılır.
+pub(crate) fn encode_canonical_edge_identity_to_vec(edge: &CanonicalEdgeIdentity) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(17);
     push_u64(&mut bytes, edge.from());
     push_u64(&mut bytes, edge.to());
@@ -2059,7 +2040,7 @@ fn encode_canonical_edge_identity_to_vec(edge: &CanonicalEdgeIdentity) -> Vec<u8
 /// seti farklı sıraya ve farklı digest'e gidebiliyordu.
 fn encode_effective_predicate_to_vec(
     pred: &EffectiveMetricPredicate,
-) -> Result<Vec<u8>, AuthorizationBasisDigestError> {
+) -> Result<Vec<u8>, CanonicalDigestError> {
     let mut buf: Vec<u8> = Vec::with_capacity(48);
     push_tag(&mut buf, pred.axis);
     push_tag(&mut buf, pred.operator);
@@ -2089,7 +2070,7 @@ fn push_effective_source(buf: &mut Vec<u8>, req: &EffectiveSourceRequirement) {
 fn encode_effective_predicate_set(
     hasher: &mut blake3::Hasher,
     predicates: &[EffectiveMetricPredicate],
-) -> Result<(), AuthorizationBasisDigestError> {
+) -> Result<(), CanonicalDigestError> {
     let mut encoded: Vec<Vec<u8>> = Vec::with_capacity(predicates.len());
     for pred in predicates {
         encoded.push(encode_effective_predicate_to_vec(pred)?);
@@ -2102,37 +2083,10 @@ fn encode_effective_predicate_set(
     Ok(())
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Vec\<u8\> canonical encoding helpers (predicate sort için)
-// ──────────────────────────────────────────────────────────────────────────────
-
-fn push_u8(buf: &mut Vec<u8>, val: u8) {
-    buf.push(val);
-}
-
-fn push_tag<T: CanonicalTag>(buf: &mut Vec<u8>, val: T) {
-    push_u8(buf, val.tag_u8());
-}
-
-fn push_u64(buf: &mut Vec<u8>, val: u64) {
-    buf.extend_from_slice(&val.to_le_bytes());
-}
-
-/// **Step 6 P0:** buffer'a canonical f64 yazar — `canonical_f64_bytes` üzerinden (tek kaynak).
-fn push_f64(buf: &mut Vec<u8>, val: f64) -> Result<(), AuthorizationBasisDigestError> {
-    buf.extend_from_slice(&canonical_f64_bytes(val)?);
-    Ok(())
-}
-
-fn push_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
-    push_u64(buf, bytes.len() as u64);
-    buf.extend_from_slice(bytes);
-}
-
-fn encode_space_view_id(
-    hasher: &mut blake3::Hasher,
-    view_id: &SpaceViewId,
-) -> Result<(), AuthorizationBasisDigestError> {
+/// **INV-T9 #70 Commit 3 (reviewer v4 P1-2 / P2-1):** `pub(crate)` + infallible.
+/// Space view identity encoding için tek kaynak — measurement `MeasurementRequestDigest`
+/// ile paylaşılır. İnfllible: varyantlar exhaustive, hata üretmez.
+pub(crate) fn encode_space_view_id(hasher: &mut blake3::Hasher, view_id: &SpaceViewId) {
     match view_id {
         SpaceViewId::Persisted(id) => {
             encode_u8(hasher, 1, "view_id_persisted");
@@ -2143,7 +2097,6 @@ fn encode_space_view_id(
             encode_u64(hasher, *id, "ephemeral_id");
         }
     }
-    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4215,6 +4168,7 @@ impl PendingAuthorizationStore for NullPendingAuthorizationStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::canonical_encoding::encode_optional_f64_to_vec;
     use crate::trajectory::{CommitLane, TaskId};
 
     fn sample_basis() -> AuthorizationBasis {

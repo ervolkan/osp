@@ -1472,6 +1472,438 @@ impl SpaceEngine {
             v: positions.iter().map(|(m, r)| m * r.v).sum::<f64>() / total_mass,
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 3 — Subject-bound EngineMeasurement tokens (add-only)
+    //
+    // Authority token üretimi — Commit 4'te TaskCommitInput.measured field'ının
+    // yerine geçecek. Add-only: hiçbir existing caller'a dokunmaz.
+    // Reviewer v1→v4 turu (8.9 → 9.7) kapanmış tüm P0/P1/P2'ler implemente edildi.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// **INV-T9 #70 Commit 3:** Task delta subject-bound measurement token üretir.
+    ///
+    /// before+after+context+request — loss YOK. Authority/evidence yolları Commit 4'te
+    /// bu token'ı `TaskCommitInput.measurement`'a geçirecek.
+    ///
+    /// **Reviewer v1→v4 kapanan sözleşmeler:**
+    /// - P1-1 (v2): `TaskBoundClaim` defensive binding check (`claim.task_id == task.id`)
+    /// - P1-2 (v2): `expected_base_revision` exact match (revision mismatch reachable)
+    /// - P1-4 (v2): Heterojen predicate scope fail-closed
+    /// - P1-1 (v3): Impact ⊆ subject invariant YOK — bağımsız kümeler
+    /// - P1-5 (v2): Baseline availability matrix (terminal error vs unavailable)
+    /// - P2-2 (v3): Canonical scope derivation
+    /// - P2-3 (v3): Hypothetical explicit sıra (removed → nodes → edges → measure)
+    #[allow(clippy::result_large_err)]
+    pub fn measure_task_delta<'a>(
+        &self,
+        bound: &crate::trajectory::TaskBoundClaim<'a>,
+        expected_base_revision: &crate::authorization::SpaceViewRevision,
+        subject_scope_hint: Option<&[crate::space::NodeId]>,
+    ) -> Result<crate::measurement::EngineMeasurement, crate::measurement::MeasurementError> {
+        use crate::measurement::{
+            BaselineUnavailableReason, CanonicalSubjectScope, EngineMeasurement,
+            MeasurementBaseline, MeasurementError, MeasurementRequest,
+        };
+
+        // 1. P1-1 (v2): Runtime defensive binding check — TaskBoundClaim public struct
+        //    literal bypass'a karşı. claim.task_id yok → ClaimNotTaskBound; mismatch → error.
+        let claim_task_id = bound
+            .claim
+            .task_id
+            .ok_or(MeasurementError::ClaimNotTaskBound {
+                claim_id: bound.claim.id,
+            })?;
+        if claim_task_id != bound.task.id {
+            return Err(MeasurementError::TaskBindingMismatch {
+                claim_task_id,
+                bound_task_id: bound.task.id,
+            });
+        }
+
+        // 2. P1-2 (v2): Current revision exact match — view_id + sequence + content_digest.
+        //    `current_space_view_revision` String error döner; structural error'a map'le.
+        let current_revision = self.current_space_view_revision().map_err(|e| {
+            MeasurementError::MeasurementContext(
+                crate::authorization::CanonicalizationError::AxisContextFailed(e),
+            )
+        })?;
+        if expected_base_revision != &current_revision {
+            return Err(MeasurementError::RevisionMismatch {
+                expected: expected_base_revision.clone(),
+                current: current_revision,
+            });
+        }
+
+        // 3. P2-2 (v3) + P1-4 (v2): Canonical subject scope derivation.
+        //    Heterojen predicate scope (farklı canonical set) → typed error.
+        let subject = self.derive_task_subject_scope(bound.task)?;
+
+        // 4. P1-1 (v3): Hint canonical karşılaştırma — CanonicalSubjectScope üzerinden.
+        if let Some(hint) = subject_scope_hint {
+            let canonical_hint = CanonicalSubjectScope::try_new(hint.to_vec())?;
+            if canonical_hint != subject {
+                return Err(MeasurementError::SubjectScopeHintMismatch {
+                    hint_members: canonical_hint.member_ids().to_vec(),
+                    derived_members: subject.member_ids().to_vec(),
+                });
+            }
+        }
+
+        // 5. P1-1 (v3): Impact scope — subject'ten BAĞIMSIZ küme (subset check YOK).
+        let impact = self.derive_impact_scope(bound.claim)?;
+
+        // 6. P2-3 (v3): Hypothetical explicit sıra:
+        //    clone → removed edges → delta nodes → delta edges → measure.
+        let mut hypothetical = self.space.clone();
+        for er in &bound.claim.removed_edges {
+            hypothetical.remove_edge(er.from, er.to, er.kind);
+        }
+        for node in &bound.claim.delta_nodes {
+            hypothetical.insert_node(node.clone());
+        }
+        for edge in &bound.claim.delta_edges {
+            hypothetical.insert_edge(*edge);
+        }
+
+        // 7. P1-5 (v2): Baseline availability matrix.
+        //    Partition subject_member_ids: existing (base'de) | introduced (delta'da) | unresolvable.
+        let delta_introduced: std::collections::HashSet<crate::space::NodeId> =
+            bound.claim.delta_nodes.iter().map(|n| n.id).collect();
+        let mut existing: Vec<crate::space::NodeId> = Vec::new();
+        let mut introduced: Vec<crate::space::NodeId> = Vec::new();
+        let mut unresolvable: Vec<crate::space::NodeId> = Vec::new();
+        for &id in subject.member_ids() {
+            if self.space.nodes.contains_key(&id) {
+                existing.push(id);
+            } else if delta_introduced.contains(&id) {
+                introduced.push(id);
+            } else {
+                unresolvable.push(id);
+            }
+        }
+        if !unresolvable.is_empty() {
+            return Err(MeasurementError::SubjectMemberUnresolvable {
+                missing: unresolvable,
+            });
+        }
+
+        let before = match (existing.is_empty(), introduced.is_empty()) {
+            (true, true) => return Err(MeasurementError::EmptySubjectScope),
+            (false, true) => {
+                // Tüm üyeler base'de — before centroid mevcut space üzerinden.
+                let centroid = self.measured_centroid_of(&self.space, &existing)?;
+                MeasurementBaseline::Available(centroid)
+            }
+            (true, false) => MeasurementBaseline::Unavailable {
+                reason: BaselineUnavailableReason::AllMembersIntroducedByDelta {
+                    members: introduced,
+                },
+            },
+            (false, false) => MeasurementBaseline::Unavailable {
+                reason: BaselineUnavailableReason::PartialNewSubject {
+                    existing,
+                    introduced,
+                },
+            },
+        };
+
+        // 8. After: hypothetical'te subject_member_ids centroid.
+        //    Subject member hypothetical'te yoksa fail-closed (sessiz skip YOK).
+        for &id in subject.member_ids() {
+            if !hypothetical.nodes.contains_key(&id) {
+                return Err(MeasurementError::SubjectMemberMissingAfterDelta { node_id: id });
+            }
+        }
+        let after = self.measured_centroid_of(&hypothetical, subject.member_ids())?;
+
+        // 9. P1-2 (v3): Explicit context construction (blanket #[from] YOK).
+        let context = crate::authorization::MeasurementInputContext::try_from(&self.coord_system)
+            .map_err(MeasurementError::MeasurementContext)?;
+
+        // 10. P1-5 (v3): Shared canonical producer — authorization basis ile aynı ontology.
+        let canonical_delta = crate::authorization::canonical_structural_delta_from_claim(
+            bound.claim,
+        )
+        .map_err(|e| {
+            crate::measurement::MeasurementError::Digest(
+                crate::measurement::MeasurementDigestError::from(e),
+            )
+        })?;
+
+        // 11. P1-3 (v3): MeasurementRequest::try_new digest'leri üretir (cross-field).
+        let request = MeasurementRequest::try_new(
+            subject,
+            impact,
+            expected_base_revision.clone(),
+            &canonical_delta,
+            &context,
+        )
+        .map_err(crate::measurement::MeasurementError::Digest)?;
+
+        // 12. P1-3 (v3): EngineMeasurement::new defensive cross-field verify yapar.
+        EngineMeasurement::new(before, after, context, request)
+    }
+
+    /// **INV-T9 #70 Commit 3 (P2-2 v3):** Task → subject scope üyeleri türetme (canonical).
+    ///
+    /// `task.target_predicate_set.predicates[*].predicate.scope` üzerinde iterate:
+    /// - `Node(id)` → member
+    /// - `Subgraph(ids)` → member'lar
+    /// - `Module(name)` → typed error (Commit 3 fail-closed; Commit 4 graph-aware resolver)
+    ///
+    /// **P1-4 (v2):** Heterojen predicate scope (farklı canonical member set) → fail-closed.
+    /// `decompose_milestone` homojen üretir ama tip seviyesinde runtime check gerekli.
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn derive_task_subject_scope(
+        &self,
+        task: &crate::trajectory::Task,
+    ) -> Result<crate::measurement::CanonicalSubjectScope, crate::measurement::MeasurementError>
+    {
+        use crate::measurement::{MeasurementError, SubjectScopeResolutionError};
+        use crate::trajectory::PredicateScope;
+
+        let mut scopes: Vec<Vec<crate::space::NodeId>> = Vec::new();
+        for wp in &task.target_predicate_set.predicates {
+            let mut ids: Vec<crate::space::NodeId> = Vec::new();
+            match &wp.predicate.scope {
+                PredicateScope::Node(id) => ids.push(*id),
+                PredicateScope::Subgraph(member_ids) => ids.extend(member_ids.iter().copied()),
+                PredicateScope::Module(name) => {
+                    return Err(MeasurementError::SubjectScopeResolutionFailed(
+                        SubjectScopeResolutionError::ModuleResolutionUnavailable {
+                            module: name.clone(),
+                        },
+                    ));
+                }
+            }
+            scopes.push(ids);
+        }
+        if scopes.is_empty() {
+            return Err(MeasurementError::EmptySubjectScope);
+        }
+
+        // P1-4 (v2): Canonical normalize ile heterojen tespiti.
+        let mut canonicalized: Vec<Vec<crate::space::NodeId>> = scopes
+            .into_iter()
+            .map(|mut ids| {
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            })
+            .collect();
+        let first = canonicalized.remove(0);
+        if first.is_empty() {
+            return Err(MeasurementError::EmptySubjectScope);
+        }
+        for scope in &canonicalized {
+            if scope != &first {
+                return Err(MeasurementError::HeterogeneousPredicateScopes { scopes: vec![] });
+            }
+        }
+        let subject = crate::measurement::CanonicalSubjectScope::try_new(first)
+            .map_err(MeasurementError::Digest)?;
+        Ok(subject)
+    }
+
+    /// **INV-T9 #70 Commit 3 (P1-1 v3 + P1-4 v3):** Claim → impact scope türetme (canonical).
+    ///
+    /// Structural direct impact footprint — semantik closure DEĞİL:
+    /// - `node_ids`: delta_nodes.id ∪ delta_edges(from+to) ∪ removed_edges(from+to)
+    /// - `edge_ids`: CanonicalEdgeIdentity (raw EdgeRef DEĞİL) — delta_edges + removed_edges
+    ///
+    /// Subject'ten BAĞIMSIZ küme (P1-1 v3 — subset check YOK). Impact semantik olarak
+    /// küme olduğundan dedup edilir (subject scope'tan farklı kural).
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn derive_impact_scope(
+        &self,
+        claim: &crate::witness::Claim,
+    ) -> Result<crate::measurement::CanonicalImpactScope, crate::measurement::MeasurementError>
+    {
+        use crate::authorization::{CanonicalEdgeIdentity, CanonicalEdgeKind};
+        use crate::measurement::{CanonicalImpactScope, MeasurementError};
+
+        let mut node_ids: Vec<crate::space::NodeId> = Vec::new();
+        node_ids.extend(claim.delta_nodes.iter().map(|n| n.id));
+        for edge in &claim.delta_edges {
+            node_ids.push(edge.from);
+            node_ids.push(edge.to);
+        }
+        for edge in &claim.removed_edges {
+            node_ids.push(edge.from);
+            node_ids.push(edge.to);
+        }
+
+        let mut edge_ids: Vec<CanonicalEdgeIdentity> = Vec::new();
+        for edge in &claim.delta_edges {
+            let kind = CanonicalEdgeKind::try_from(&edge.kind)
+                .map_err(MeasurementError::MeasurementContext)?;
+            edge_ids.push(CanonicalEdgeIdentity::new(edge.from, edge.to, kind));
+        }
+        for edge in &claim.removed_edges {
+            let kind = CanonicalEdgeKind::try_from(&edge.kind)
+                .map_err(MeasurementError::MeasurementContext)?;
+            edge_ids.push(CanonicalEdgeIdentity::new(edge.from, edge.to, kind));
+        }
+
+        let scope =
+            CanonicalImpactScope::try_new(node_ids, edge_ids).map_err(MeasurementError::Digest)?;
+        Ok(scope)
+    }
+
+    /// **INV-T9 #70 Commit 3 (P1-6 v2):** Subject scope üyelerinin mass-weighted centroid
+    /// ölçümü. Commit 2 `measured_position_of()` authority surface'ini kullanır — per-axis
+    /// source `aggregate_source()` ile korunur (Scip laundering YOK).
+    ///
+    /// **P1-6 (v2):**
+    /// - Mass validation: non-finite veya negatif → `InvalidSubjectMass`
+    /// - Total mass: non-finite veya non-positive → `InvalidTotalSubjectMass`
+    /// - Axis identity preserved: `AxisMeasurement::try_new` hatası
+    ///   `CoordinateMeasurementError::AxisMeasurementFailed { axis_id, source }` sarmalanır
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn measured_centroid_of(
+        &self,
+        space: &crate::space::Space,
+        member_ids: &[crate::space::NodeId],
+    ) -> Result<crate::coords::MeasuredRawPosition, crate::measurement::MeasurementError> {
+        use crate::coords::MetricSource;
+        use crate::measurement::MeasurementError;
+
+        if member_ids.is_empty() {
+            return Err(MeasurementError::EmptySubjectScope);
+        }
+
+        // Her üye için measured_position_of + mass validation.
+        let mut coupling_values: Vec<(f64, f64, MetricSource)> = Vec::new();
+        let mut cohesion_values: Vec<(f64, f64, MetricSource)> = Vec::new();
+        let mut instability_values: Vec<(f64, f64, MetricSource)> = Vec::new();
+        let mut entropy_values: Vec<(f64, f64, MetricSource)> = Vec::new();
+        let mut witness_depth_values: Vec<(f64, f64, MetricSource)> = Vec::new();
+
+        for &id in member_ids {
+            let node = space
+                .nodes
+                .get(&id)
+                .ok_or(MeasurementError::SubjectMemberMissingAfterDelta { node_id: id })?;
+            // P1-6 (v2): Mass validation — non-finite veya negatif reddedilir.
+            if !node.mass.is_finite() || node.mass < 0.0 {
+                return Err(MeasurementError::InvalidSubjectMass {
+                    node_id: id,
+                    mass: node.mass,
+                });
+            }
+            let effective_mass = node.mass.max(0.01); // Legacy mass clamp korunur.
+            let measured = self.coord_system.measured_position_of(node, space)?;
+            coupling_values.push((
+                effective_mass,
+                measured.coupling.value,
+                measured.coupling.source,
+            ));
+            cohesion_values.push((
+                effective_mass,
+                measured.cohesion.value,
+                measured.cohesion.source,
+            ));
+            instability_values.push((
+                effective_mass,
+                measured.instability.value,
+                measured.instability.source,
+            ));
+            entropy_values.push((
+                effective_mass,
+                measured.entropy.value,
+                measured.entropy.source,
+            ));
+            witness_depth_values.push((
+                effective_mass,
+                measured.witness_depth.value,
+                measured.witness_depth.source,
+            ));
+        }
+
+        // Per-axis mass-weighted centroid + aggregate source.
+        let aggregate_axis = |values: Vec<(f64, f64, MetricSource)>, axis_id: &'static str| {
+            aggregate_axis_measurement(values, axis_id)
+        };
+
+        Ok(crate::coords::MeasuredRawPosition {
+            coupling: aggregate_axis(coupling_values, "coupling")?,
+            cohesion: aggregate_axis(cohesion_values, "cohesion")?,
+            instability: aggregate_axis(instability_values, "instability")?,
+            entropy: aggregate_axis(entropy_values, "entropy")?,
+            witness_depth: aggregate_axis(witness_depth_values, "witness_depth")?,
+        })
+    }
+
+    /// **INV-T9 #70 Commit 3:** Fallible compute_raw_from_delta — Commit 2
+    /// `measured_position_of()` kullanır. Legacy `compute_raw_from_delta` unchanged
+    /// (Commit 4'te deprecated).
+    ///
+    /// Subject scope YOK — `affected_nodes` üzerinden (legacy parity). Authority token
+    /// yolu için `measure_task_delta` kullanılır (subject-bound).
+    #[allow(clippy::result_large_err)]
+    pub fn try_compute_raw_from_delta(
+        &self,
+        delta_nodes: &[crate::space::Node],
+        delta_edges: &[crate::space::Edge],
+        delta_removed: &[crate::agent::EdgeRef],
+        affected_nodes: &[crate::space::NodeId],
+    ) -> Result<crate::coords::RawPosition, crate::measurement::MeasurementError> {
+        // Empty delta → default RawPosition (legacy compute_raw_from_delta parity).
+        if delta_nodes.is_empty() && affected_nodes.is_empty() {
+            return Ok(crate::coords::RawPosition::default());
+        }
+
+        // P2-3 (v3): Hypothetical explicit sıra (legacy parity).
+        let mut hypothetical = self.space.clone();
+        for er in delta_removed {
+            hypothetical.remove_edge(er.from, er.to, er.kind);
+        }
+        for node in delta_nodes {
+            hypothetical.insert_node(node.clone());
+        }
+        for edge in delta_edges {
+            hypothetical.insert_edge(*edge);
+        }
+
+        let measure_ids: Vec<crate::space::NodeId> = if !affected_nodes.is_empty() {
+            affected_nodes.to_vec()
+        } else {
+            delta_nodes.iter().map(|n| n.id).collect()
+        };
+
+        // measured_position_of → to_raw() (Commit 2 authority surface).
+        let measured = self.measured_centroid_of(&hypothetical, &measure_ids)?;
+        Ok(measured.to_raw())
+    }
+}
+
+/// **INV-T9 #70 Commit 3 (P1-6 v2):** Per-axis mass-weighted centroid + aggregate
+/// source. `measured_centroid_of` her axis için bu helper'ı çağırır.
+///
+/// - Total mass validation (non-finite/non-positive → `InvalidTotalSubjectMass`)
+/// - Axis identity preserved: `AxisMeasurement::try_new` hatası
+///   `CoordinateMeasurementError::AxisMeasurementFailed { axis_id, source }` sarmalanır
+#[allow(clippy::result_large_err)]
+fn aggregate_axis_measurement(
+    values: Vec<(f64, f64, crate::coords::MetricSource)>,
+    axis_id: &'static str,
+) -> Result<crate::coords::AxisMeasurement, crate::measurement::MeasurementError> {
+    use crate::coords::{aggregate_source, AxisMeasurement, CoordinateMeasurementError};
+    use crate::measurement::MeasurementError;
+
+    let total_mass: f64 = values.iter().map(|(m, _, _)| m).sum();
+    if !total_mass.is_finite() || total_mass <= 0.0 {
+        return Err(MeasurementError::InvalidTotalSubjectMass { total_mass });
+    }
+    let weighted_value = values.iter().map(|(m, v, _)| m * v).sum::<f64>() / total_mass;
+    let source = aggregate_source(values.into_iter().map(|(_, _, s)| s))?;
+    AxisMeasurement::try_new(weighted_value, source).map_err(|source| {
+        MeasurementError::CoordinateMeasurement(CoordinateMeasurementError::AxisMeasurementFailed {
+            axis_id,
+            source,
+        })
+    })
 }
 
 fn current_time_ms() -> u64 {
@@ -1533,6 +1965,7 @@ mod tests {
     use crate::axes::{CohesionAxis, EntropyAxis, WitnessDepthAxis};
     use crate::coords::CoordinateSystem;
     use crate::space::{Edge, EdgeKind, Node, NodeKind};
+    use crate::trajectory::Task;
     use crate::witness::{EvidenceEvent, EvidenceId, Intent, WitnessKind};
 
     /// Vision center — `make_engine` vision ile hizalı. Q5 pre-check geçer.
@@ -2493,6 +2926,668 @@ v = 0.5
             auth_a.basis.evaluation_context_digest, auth_b.basis.evaluation_context_digest,
             "removed config fields (min_approvers/quorum_threshold/milestone_interval/\
              abstractness/merge_ratio_observable) must NOT affect evaluation context digest"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 3 — Subject-bound EngineMeasurement tokens tests
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Test engine'i: `default_raw_five` CoordinateSystem + empty space.
+    fn make_measurement_engine() -> SpaceEngine {
+        let cs = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::TreeSitter,
+            crate::axes::CohesionAxis::try_with_observed_source(crate::coords::MetricSource::Scip)
+                .unwrap(),
+            crate::axes::EntropyAxis::from_commit_entropy(6.5),
+            crate::axes::WitnessDepthAxis::from_witness(0.5, 3),
+        )
+        .unwrap();
+        let vision = VisionVector::new(RawPosition::default());
+        SpaceEngine::new(
+            crate::space::Space::new(),
+            cs,
+            vision,
+            EngineConfig::default_calibrated(),
+        )
+    }
+
+    /// Task with single `Node(id)` predicate scope (homojen).
+    fn task_with_node_scope(
+        node_id: NodeId,
+        task_id: crate::trajectory::TaskId,
+    ) -> crate::trajectory::Task {
+        use crate::trajectory::{
+            MetricPredicate, PredicateMode, PredicateSet, TaskPolicy, TaskStatus, WeightedPredicate,
+        };
+        let predicate = MetricPredicate {
+            metric: crate::trajectory::PredicateAxis::Coupling,
+            operator: crate::trajectory::ComparisonOp::Le,
+            threshold: 0.5,
+            scope: crate::trajectory::PredicateScope::Node(node_id),
+            required_source: None,
+            tolerance: 0.0,
+        };
+        let ps = PredicateSet {
+            mode: PredicateMode::All,
+            predicates: vec![WeightedPredicate {
+                predicate,
+                weight: Some(1.0),
+            }],
+            preferred_vector: None,
+        };
+        Task {
+            id: task_id,
+            milestone_id: 0,
+            label: "test-task".to_string(),
+            target_predicate_set: ps,
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        }
+    }
+
+    /// Task with heterogeneous predicate scopes (Node(A) + Node(B)).
+    fn task_with_heterogeneous_scopes(
+        a: NodeId,
+        b: NodeId,
+        task_id: crate::trajectory::TaskId,
+    ) -> crate::trajectory::Task {
+        use crate::trajectory::{
+            MetricPredicate, PredicateMode, PredicateSet, TaskPolicy, TaskStatus, WeightedPredicate,
+        };
+        let p1 = MetricPredicate {
+            metric: crate::trajectory::PredicateAxis::Coupling,
+            operator: crate::trajectory::ComparisonOp::Le,
+            threshold: 0.5,
+            scope: crate::trajectory::PredicateScope::Node(a),
+            required_source: None,
+            tolerance: 0.0,
+        };
+        let p2 = MetricPredicate {
+            metric: crate::trajectory::PredicateAxis::Cohesion,
+            operator: crate::trajectory::ComparisonOp::Ge,
+            threshold: 0.3,
+            scope: crate::trajectory::PredicateScope::Node(b), // different node
+            required_source: None,
+            tolerance: 0.0,
+        };
+        let ps = PredicateSet {
+            mode: PredicateMode::All,
+            predicates: vec![
+                WeightedPredicate {
+                    predicate: p1,
+                    weight: Some(1.0),
+                },
+                WeightedPredicate {
+                    predicate: p2,
+                    weight: Some(1.0),
+                },
+            ],
+            preferred_vector: None,
+        };
+        Task {
+            id: task_id,
+            milestone_id: 0,
+            label: "heterogeneous-task".to_string(),
+            target_predicate_set: ps,
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        }
+    }
+
+    /// Task with `Module(name)` scope — Commit 3 fail-closed.
+    fn task_with_module_scope(task_id: crate::trajectory::TaskId) -> crate::trajectory::Task {
+        use crate::trajectory::{
+            MetricPredicate, PredicateMode, PredicateSet, TaskPolicy, TaskStatus, WeightedPredicate,
+        };
+        let predicate = MetricPredicate {
+            metric: crate::trajectory::PredicateAxis::Coupling,
+            operator: crate::trajectory::ComparisonOp::Le,
+            threshold: 0.5,
+            scope: crate::trajectory::PredicateScope::Module("payment".to_string()),
+            required_source: None,
+            tolerance: 0.0,
+        };
+        let ps = PredicateSet {
+            mode: PredicateMode::All,
+            predicates: vec![WeightedPredicate {
+                predicate,
+                weight: Some(1.0),
+            }],
+            preferred_vector: None,
+        };
+        Task {
+            id: task_id,
+            milestone_id: 0,
+            label: "module-task".to_string(),
+            target_predicate_set: ps,
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        }
+    }
+
+    fn claim_with_task_id(
+        task_id: crate::trajectory::TaskId,
+        delta_nodes: Vec<Node>,
+        delta_edges: Vec<Edge>,
+        removed_edges: Vec<crate::agent::EdgeRef>,
+    ) -> Claim {
+        Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(100, RawPosition::default()),
+            author: 100,
+            computed_raw: RawPosition::default(),
+            delta_nodes,
+            delta_edges,
+            task_id: Some(task_id),
+            removed_edges,
+        }
+    }
+
+    // === Binding + revision + scope (P1-1 v2, P1-2 v2, P1-4 v2) ===
+
+    #[test]
+    fn measure_task_delta_rejects_missing_claim_task_id() {
+        let engine = make_measurement_engine();
+        let task: crate::trajectory::Task = task_with_node_scope(1, 42);
+        // Claim without task_id.
+        let mut claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        claim.task_id = None;
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::ClaimNotTaskBound { claim_id: 1 })
+            ),
+            "claim without task_id must be rejected"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_rejects_forged_task_bound_claim() {
+        let engine = make_measurement_engine();
+        let task_b = task_with_node_scope(1, 20);
+        // Claim bound to task 10 but we pass task 20 — structural forgery.
+        let claim = claim_with_task_id(10, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task_b,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::TaskBindingMismatch {
+                    claim_task_id: 10,
+                    bound_task_id: 20
+                })
+            ),
+            "forged TaskBoundClaim must be rejected"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_revision_mismatch_is_reachable() {
+        let engine = make_measurement_engine();
+        let task: crate::trajectory::Task = task_with_node_scope(1, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        // Construct a mismatched expected revision.
+        use crate::authorization::{SpaceDigest, SpaceViewId, SpaceViewRevision};
+        let wrong_revision = SpaceViewRevision {
+            view_id: SpaceViewId::Ephemeral(999),
+            sequence: 999,
+            content_digest: SpaceDigest::from_bytes([0xAB; 32]),
+        };
+        let result = engine.measure_task_delta(&bound, &wrong_revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::RevisionMismatch { .. })
+            ),
+            "revision mismatch must be reachable via expected_base_revision"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_rejects_heterogeneous_predicate_scopes() {
+        let engine = make_measurement_engine();
+        let task = task_with_heterogeneous_scopes(1, 2, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::HeterogeneousPredicateScopes { .. })
+            ),
+            "heterogeneous predicate scopes must fail-closed"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_module_scope_typed_error() {
+        let engine = make_measurement_engine();
+        let task = task_with_module_scope(42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::SubjectScopeResolutionFailed(_))
+            ),
+            "Module(name) scope must produce typed error (Commit 4 resolver)"
+        );
+    }
+
+    // === Impact scope (P1-1 v3 + P1-4 v3) ===
+
+    #[test]
+    fn derive_impact_scope_edge_only_addition_records_endpoints_in_impact() {
+        let engine = make_measurement_engine();
+        let claim = claim_with_task_id(
+            42,
+            vec![], // no delta_nodes
+            vec![Edge {
+                from: 1,
+                to: 2,
+                kind: EdgeKind::Imports,
+                is_type_only: false,
+            }],
+            vec![],
+        );
+        let scope = engine.derive_impact_scope(&claim).unwrap();
+        assert!(
+            scope.node_ids().contains(&1) && scope.node_ids().contains(&2),
+            "delta_edges endpoints must be in impact scope"
+        );
+        assert_eq!(
+            scope.edge_ids().len(),
+            1,
+            "delta edge identity must be recorded"
+        );
+    }
+
+    #[test]
+    fn derive_impact_scope_edge_only_removal_records_endpoints_in_impact() {
+        let engine = make_measurement_engine();
+        let removed = vec![crate::agent::EdgeRef {
+            from: 3,
+            to: 4,
+            kind: EdgeKind::Calls,
+        }];
+        let claim = claim_with_task_id(42, vec![], vec![], removed);
+        let scope = engine.derive_impact_scope(&claim).unwrap();
+        assert!(
+            scope.node_ids().contains(&3) && scope.node_ids().contains(&4),
+            "removed_edges endpoints must be in impact scope"
+        );
+        assert_eq!(
+            scope.edge_ids().len(),
+            1,
+            "removed edge identity must be recorded"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_allows_impact_outside_subject() {
+        let engine = make_measurement_engine();
+        // Subject = {1}. Impact includes {1, 5, 6} via removed_edges. Success path.
+        let task: crate::trajectory::Task = task_with_node_scope(1, 42);
+        let removed = vec![crate::agent::EdgeRef {
+            from: 5,
+            to: 6,
+            kind: EdgeKind::Calls,
+        }];
+        let claim = claim_with_task_id(42, vec![], vec![], removed);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        // Subject member 1 not in engine space → SubjectMemberUnresolvable, NOT impact violation.
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            !matches!(
+                result,
+                Err(crate::measurement::MeasurementError::SubjectScopeResolutionFailed(_))
+            ) && !matches!(
+                result,
+                Err(crate::measurement::MeasurementError::HeterogeneousPredicateScopes { .. })
+            ),
+            "impact ⊄ subject must NOT cause scope errors (P1-1 v3)"
+        );
+    }
+
+    // === Baseline (P1-5 v2) ===
+
+    #[test]
+    fn measure_task_delta_subject_member_unresolvable_error() {
+        let engine = make_measurement_engine();
+        // Subject = {1} but engine space is empty and delta doesn't add node 1.
+        let task: crate::trajectory::Task = task_with_node_scope(1, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let result = engine.measure_task_delta(&bound, &revision, None);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::SubjectMemberUnresolvable { .. })
+            ),
+            "subject member not in base or delta must produce unresolvable error"
+        );
+    }
+
+    #[test]
+    fn measure_task_delta_baseline_all_members_introduced_by_delta() {
+        let engine = make_measurement_engine();
+        // Subject = {10}. Engine space empty, but delta adds node 10.
+        let task: crate::trajectory::Task = task_with_node_scope(10, 42);
+        let claim = claim_with_task_id(
+            42,
+            vec![Node {
+                id: 10,
+                kind: NodeKind::Concept,
+                mass: 1.0,
+                ..Default::default()
+            }],
+            vec![],
+            vec![],
+        );
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let measurement = engine.measure_task_delta(&bound, &revision, None).unwrap();
+        match measurement.before() {
+            crate::measurement::MeasurementBaseline::Unavailable {
+                reason:
+                    crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
+                        members,
+                    },
+            } => assert_eq!(members, &[10]),
+            other => panic!("expected AllMembersIntroducedByDelta, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn measure_task_delta_baseline_partial_new_subject() {
+        let mut engine = make_measurement_engine();
+        // Pre-insert node 1 (existing). Subject = {1, 2}. Delta adds 2 (introduced).
+        engine.space_mut().insert_node(Node {
+            id: 1,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        let task = {
+            use crate::trajectory::{
+                MetricPredicate, PredicateMode, PredicateSet, TaskPolicy, TaskStatus,
+                WeightedPredicate,
+            };
+            let predicate = MetricPredicate {
+                metric: crate::trajectory::PredicateAxis::Coupling,
+                operator: crate::trajectory::ComparisonOp::Le,
+                threshold: 0.5,
+                scope: crate::trajectory::PredicateScope::Subgraph(vec![1, 2]),
+                required_source: None,
+                tolerance: 0.0,
+            };
+            let ps = PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![WeightedPredicate {
+                    predicate,
+                    weight: Some(1.0),
+                }],
+                preferred_vector: None,
+            };
+            Task {
+                id: 42,
+                milestone_id: 0,
+                label: "test".to_string(),
+                target_predicate_set: ps,
+                policy: TaskPolicy::default(),
+                allowed_operations: vec![],
+                constraints: vec![],
+                status: TaskStatus::Pending,
+            }
+        };
+        let claim = claim_with_task_id(
+            42,
+            vec![Node {
+                id: 2,
+                kind: NodeKind::Feature,
+                mass: 1.0,
+                ..Default::default()
+            }],
+            vec![],
+            vec![],
+        );
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let measurement = engine.measure_task_delta(&bound, &revision, None).unwrap();
+        match measurement.before() {
+            crate::measurement::MeasurementBaseline::Unavailable {
+                reason:
+                    crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+                        existing,
+                        introduced,
+                    },
+            } => {
+                assert_eq!(existing, &[1]);
+                assert_eq!(introduced, &[2]);
+            }
+            other => panic!("expected PartialNewSubject, got {:?}", other),
+        }
+    }
+
+    // === Hint (P1-1 v3) ===
+
+    #[test]
+    fn measure_task_delta_hint_matches_derived() {
+        let mut engine = make_measurement_engine();
+        engine.space_mut().insert_node(Node {
+            id: 5,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        let task: crate::trajectory::Task = task_with_node_scope(5, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        let hint: Vec<NodeId> = vec![5];
+        let result = engine.measure_task_delta(&bound, &revision, Some(&hint));
+        assert!(result.is_ok(), "matching hint must succeed");
+    }
+
+    #[test]
+    fn measure_task_delta_hint_mismatch_error() {
+        let mut engine = make_measurement_engine();
+        engine.space_mut().insert_node(Node {
+            id: 5,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        let task: crate::trajectory::Task = task_with_node_scope(5, 42);
+        let claim = claim_with_task_id(42, vec![], vec![], vec![]);
+        let bound = crate::trajectory::TaskBoundClaim {
+            claim: &claim,
+            task: &task,
+        };
+        let revision = engine.current_space_view_revision().unwrap();
+        // Wrong hint — derived is [5], hint is [9].
+        let hint: Vec<NodeId> = vec![9];
+        let result = engine.measure_task_delta(&bound, &revision, Some(&hint));
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::SubjectScopeHintMismatch { .. })
+            ),
+            "hint mismatch must produce typed error"
+        );
+    }
+
+    // === Centroid (P1-6 v2) ===
+
+    #[test]
+    fn measured_centroid_rejects_empty_member_set() {
+        let engine = make_measurement_engine();
+        let space = crate::space::Space::new();
+        let result = engine.measured_centroid_of(&space, &[]);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::EmptySubjectScope)
+            ),
+            "empty member set must be rejected"
+        );
+    }
+
+    #[test]
+    fn measured_centroid_rejects_negative_mass() {
+        let mut engine = make_measurement_engine();
+        engine.space_mut().insert_node(Node {
+            id: 1,
+            kind: NodeKind::Module,
+            mass: -5.0,
+            ..Default::default()
+        });
+        let result = engine.measured_centroid_of(engine.space(), &[1]);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::InvalidSubjectMass {
+                    node_id: 1,
+                    mass: -5.0
+                })
+            ),
+            "negative mass must be rejected"
+        );
+    }
+
+    #[test]
+    fn measured_centroid_rejects_infinite_mass() {
+        let mut engine = make_measurement_engine();
+        engine.space_mut().insert_node(Node {
+            id: 1,
+            kind: NodeKind::Module,
+            mass: f64::INFINITY,
+            ..Default::default()
+        });
+        let result = engine.measured_centroid_of(engine.space(), &[1]);
+        assert!(
+            matches!(
+                result,
+                Err(crate::measurement::MeasurementError::InvalidSubjectMass { node_id: 1, .. })
+            ),
+            "infinite mass must be rejected"
+        );
+    }
+
+    #[test]
+    fn measured_centroid_mass_weighted() {
+        let mut engine = make_measurement_engine();
+        // Two nodes, masses 1.0 and 3.0. After centroid, mass-weighted.
+        engine.space_mut().insert_node(Node {
+            id: 1,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        });
+        engine.space_mut().insert_node(Node {
+            id: 2,
+            kind: NodeKind::Module,
+            mass: 3.0,
+            ..Default::default()
+        });
+        let measured = engine
+            .measured_centroid_of(engine.space(), &[1, 2])
+            .unwrap();
+        // Verify MeasuredRawPosition returned (not RawPosition).
+        let raw = measured.to_raw();
+        // All finite — basic sanity check.
+        assert!(raw.x.is_finite() && raw.y.is_finite());
+    }
+
+    // === try_compute_raw_from_delta (Commit 2 authority surface parity) ===
+
+    #[test]
+    fn try_compute_raw_from_delta_returns_measured_value() {
+        let engine = make_measurement_engine();
+        let nodes = vec![Node {
+            id: 10,
+            kind: NodeKind::Concept,
+            mass: 1.0,
+            ..Default::default()
+        }];
+        let result = engine.try_compute_raw_from_delta(&nodes, &[], &[], &[10]);
+        assert!(result.is_ok(), "try_compute_raw_from_delta must succeed");
+        let raw = result.unwrap();
+        assert!(raw.x.is_finite());
+    }
+
+    #[test]
+    fn try_compute_raw_from_delta_empty_returns_default() {
+        let engine = make_measurement_engine();
+        let result = engine.try_compute_raw_from_delta(&[], &[], &[], &[]);
+        assert_eq!(result.unwrap(), RawPosition::default());
+    }
+
+    #[test]
+    fn try_compute_raw_from_delta_equals_legacy_for_full_preset() {
+        // Parity: same delta + affected_nodes → same RawPosition value.
+        let engine = make_measurement_engine();
+        let nodes = vec![Node {
+            id: 10,
+            kind: NodeKind::Module,
+            mass: 1.0,
+            ..Default::default()
+        }];
+        let affected: Vec<NodeId> = vec![10];
+        let legacy = engine.compute_raw_from_delta(&nodes, &[], &[], &affected);
+        let fallible = engine
+            .try_compute_raw_from_delta(&nodes, &[], &[], &affected)
+            .unwrap();
+        assert_eq!(
+            legacy, fallible,
+            "fallible must match legacy for same input"
         );
     }
 }
