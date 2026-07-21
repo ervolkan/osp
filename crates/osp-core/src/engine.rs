@@ -1211,6 +1211,18 @@ impl SpaceEngine {
             task,
         };
 
+        // **Phase 0b+ (INV-T9 #70 Commit 4b Faz 3 — reviewer v2 karar 2, tag 7):**
+        // Task declaration validation. TaskBoundClaim yalnız `claim.task_id ↔ task.id`
+        // identity binding'i kanıtlar (semantic contract) — task'ın commit için geçerli
+        // olduğunu ima ETMEZ. Declaration validity `validate_for_commit()` ile ayrıca
+        // kontrol edilir: empty predicate set, non-finite threshold/tolerance, Mixed
+        // source requirement, geçersiz policy.
+        //
+        // Guard order: Q4 syntax → task bind → **validate_for_commit** → Q5 vision →
+        // (Faz 8: verify_measurement_binding) → Q5.b gate → Q6 rule → witness.
+        // Terminal — maneuver budget tüketmez, witness'a ulaşmaz, authorization üretmez.
+        bound.task.validate_for_commit()?;
+
         // Phase 0c: Q5 Vision (θ bound — negatif-uzay safety).
         // **Step 4b:** Captured `EffectiveVisionGateContext` — bir kez üretilir, Q5 +
         // build_authorization_context + digest paylaşır (4a rule_context pattern).

@@ -710,7 +710,6 @@ impl Task {
     ///
     /// **NOT (reviewer v3 P0):** `preferred_vector = None` geçerli — bu metod reddetmez.
     /// NoPreferredVector durumunda typed loss evidence gate içinde karar verir.
-    #[allow(dead_code)] // Faz 3: commit_task_claim guard — reviewer v2 karar 2
     pub(crate) fn validate_for_commit(&self) -> Result<(), TaskValidationError> {
         let task_id = self.id;
         let policy = &self.policy;

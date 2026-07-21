@@ -1794,6 +1794,231 @@ mod tests {
         );
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b Faz 3 — commit_task_claim validate_for_commit guard (tag 7)
+    //
+    // **Reviewer v2 karar 2 + v6 P2-4:** Task declaration validation Q5 öncesinde.
+    // Guard order: Q4 syntax → task bind → **validate_for_commit** → Q5 vision → ...
+    // TaskBoundClaim semantic: identity binding only (task geçerliliği ayrı).
+    // Terminal — maneuver budget tüketmez, witness'a ulaşmaz, authorization üretmez.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// Helper: task with empty predicate set (invalid declaration — tag 7).
+    fn invalid_task_empty_predicate_set(id: TaskId) -> Task {
+        Task {
+            id,
+            milestone_id: 1,
+            label: "invalid-empty-predicates".to_string(),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![], // empty → EmptyPredicateSet error
+                preferred_vector: None,
+            },
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        }
+    }
+
+    /// Helper: build TaskCommitInput for a task + claim pair.
+    fn build_commit_input<'a>(
+        claim: &'a Claim,
+        resolver: &'a dyn TaskResolver,
+        omega: &'a crate::witness::WitnessSet,
+        measured: ProvenancedRawPosition,
+    ) -> TaskCommitInput<'a> {
+        TaskCommitInput {
+            claim,
+            omega,
+            task_resolver: resolver,
+            target: RawPosition::default(),
+            loss_before: 1.0,
+            measured,
+        }
+    }
+
+    #[test]
+    fn commit_task_claim_rejects_invalid_task_declaration_tag_7() {
+        // Reviewer v2 karar 2 (tag 7): empty predicate set → TaskValidation error.
+        let mut engine = make_real_engine();
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        use crate::engine::EngineCommitError;
+        use crate::trajectory::TaskValidationError;
+        assert!(
+            matches!(
+                result,
+                Err(EngineCommitError::TaskValidation(
+                    TaskValidationError::EmptyPredicateSet { .. }
+                ))
+            ),
+            "empty predicate set must produce TaskValidation(EmptyPredicateSet) — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_task_declaration_skips_q5_vision() {
+        // Guard order: validate_for_commit Q5'ten ÖNCE. Invalid task → Q5 çalışmaz.
+        // Claim θ > bound olsa bile TaskValidation döner (VisionViolation DEĞİL).
+        let mut engine = make_real_engine();
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        // computed_raw çok yüksek (θ bound aşar) — ama validate_for_commit önce çalışır.
+        let claim = test_claim_with_task(1, Some(1), 0.95);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        use crate::engine::EngineCommitError;
+        assert!(
+            matches!(result, Err(EngineCommitError::TaskValidation(_))),
+            "TaskValidation must fire before Q5 vision — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_task_declaration_skips_predicate_gate() {
+        // Invalid task → PredicateGate (Q5.b) çalışmaz.
+        let mut engine = make_real_engine();
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        // TaskValidation → Err (gate hiç çalışmadı, Evaluated dönmez).
+        assert!(
+            result.is_err(),
+            "invalid task must not reach PredicateGate (gate needs valid predicates)"
+        );
+    }
+
+    #[test]
+    fn invalid_task_declaration_skips_q6_rules() {
+        // Invalid task → Q6 rule check çalışmaz.
+        let mut engine = make_real_engine();
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        assert!(result.is_err(), "invalid task must not reach Q6 rules");
+    }
+
+    #[test]
+    fn invalid_task_declaration_no_witness_evaluation() {
+        // Invalid task → witness (Q1-Q3) çağrılmaz.
+        let mut engine = make_real_engine();
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        // HarnessAutoApprove witness — ama witness hiç çağrılmamalı.
+        let omega = crate::witness::WitnessSet::new(Vec::new()).with_quorum(0, 0.0);
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        assert!(
+            result.is_err(),
+            "invalid task must not reach witness evaluation"
+        );
+    }
+
+    #[test]
+    fn invalid_task_declaration_no_state_mutation() {
+        // Reviewer P3: invalid task → engine state değişmez.
+        let mut engine = make_real_engine();
+        let t_c_before = engine.t_c();
+        let space_nodes_before = engine.space().nodes.len();
+        let space_edges_before = engine.space().edges.len();
+
+        let task = invalid_task_empty_predicate_set(1);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new());
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let _ = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+
+        assert_eq!(
+            engine.t_c(),
+            t_c_before,
+            "t_c must not change on invalid task"
+        );
+        assert_eq!(
+            engine.space().nodes.len(),
+            space_nodes_before,
+            "space nodes must not change"
+        );
+        assert_eq!(
+            engine.space().edges.len(),
+            space_edges_before,
+            "space edges must not change"
+        );
+    }
+
+    #[test]
+    fn valid_task_declaration_preserves_existing_behavior() {
+        // Valid task → mevcut commit davranışı değişmez (guard transparent for valid).
+        let mut engine = make_real_engine();
+        let policy = TaskPolicy::default();
+        let task = coupling_task(1, 0.55, policy);
+        let mut resolver = InMemoryTaskRegistry::new();
+        resolver.insert(task);
+        let claim = test_claim_with_task(1, Some(1), 0.40);
+        let omega = crate::witness::WitnessSet::new(Vec::new()).with_quorum(0, 0.0);
+        let measured = provenanced_from_raw(claim.computed_raw, MetricSource::Scip);
+        let result = engine.commit_task_claim(build_commit_input(
+            &claim,
+            &resolver as &dyn TaskResolver,
+            &omega,
+            measured,
+        ));
+        // Valid task → TaskValidation geçer, normal pipeline devam (Err DEĞİL).
+        assert!(
+            result.is_ok(),
+            "valid task must pass validate_for_commit and proceed: {result:?}"
+        );
+    }
+
     // 8. navigator_delta_edges_affect_coupling
     #[test]
     fn navigator_delta_edges_affect_coupling() {
