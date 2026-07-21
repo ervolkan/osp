@@ -2355,6 +2355,10 @@ fn validate_evidence_semantics(
 
 fn gate_decision_tag(gd: crate::trajectory::GateDecision) -> u8 {
     use crate::trajectory::GateDecision::*;
+    // **INV-T9 #70 Commit 4b (reviewer v4 P1-4 — append-only canonical tag):**
+    // Mevcut tag'ler (0-6) ASLA değişmez (exact pin — golden vector lock). Yeni
+    // varyantlar sıradaki unused tag'leri alır. `gate_decision_v2_tags_are_unique_and_append_only`
+    // testi bu invariant'ı korur.
     match gd {
         Unknown => 0,
         PassedAll => 1,
@@ -2363,6 +2367,9 @@ fn gate_decision_tag(gd: crate::trajectory::GateDecision) -> u8 {
         RejectedByRule => 4,
         RejectedByTaskBinding => 5,
         BlockedByManeuverLimit => 6,
+        // Commit 4b — append-only yeni tag'ler.
+        RejectedByTaskValidation => 7,
+        RejectedByMeasurementBinding => 8,
     }
 }
 

@@ -572,6 +572,221 @@ pub enum PredicateFailurePolicy {
     OperatorApproval,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TaskValidationError (INV-T9 #70 Commit 4b — typed commit-time task declaration guard)
+//
+// Reviewer v1 karar 2 + v4 P2 exact matris. `Task::validate_for_commit()` commit
+// pipeline'ında task bind sonrası, Q5 öncesi çağrılır. Geçersiz task declaration'ı
+// PredicateGate'e ulaşmadan terminal reject eder — progress checkpoint / witness /
+// authorization üretilmez.
+//
+// **ÖNEMLİ (reviewer v3 P0):** `MissingPreferredVectorForImprovement` YOK.
+// `preferred_vector = None` geçerli bir task durumudur — typed loss evidence gate
+// içinde karar verir (AcceptImprovement + NotCompleted + NoPreferredVector → Reject).
+// Bu enum yalnızca gerçekten geçersiz declaration'ları reddeder.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **INV-T9 #70 Commit 4b (reviewer v4 P2):** Typed commit-time task declaration
+/// validation error. Exact matris:
+/// - MetricPredicate: threshold finite, tolerance finite + >= 0, required_source != Mixed
+/// - WeightedPredicate: weight varsa finite + > 0
+/// - PredicateSet: predicate list non-empty, preferred_vector varsa beş alan finite
+/// - TaskPolicy: min_improvement_delta finite + >= 0, max_axis_regression finite + >= 0,
+///   maneuver_limit > 0
+///
+/// Guard sırası (commit_task_claim): structural syntax → task bind → **validate_for_commit**
+/// → verify_measurement_binding → verified measurement value validation → Q5 → gate →
+/// Q6 → witness.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum TaskValidationError {
+    /// Predicate threshold non-finite (NaN/±Infinity).
+    #[error(
+        "task {task_id} predicate[{predicate_index}] has non-finite threshold: {threshold}"
+    )]
+    NonFiniteThreshold {
+        task_id: TaskId,
+        predicate_index: usize,
+        threshold: f64,
+    },
+
+    /// Predicate tolerance non-finite veya negatif.
+    #[error(
+        "task {task_id} predicate[{predicate_index}] has invalid tolerance: {tolerance} (must be finite and >= 0)"
+    )]
+    InvalidTolerance {
+        task_id: TaskId,
+        predicate_index: usize,
+        tolerance: f64,
+    },
+
+    /// `required_source = Mixed` epistemik bir talep değildir — yalnız heterojen
+    /// aggregation çıktısıdır. Runtime `SourceInsufficient` korunur (defense-in-depth),
+    /// commit-time guard terminal reject.
+    #[error(
+        "task {task_id} predicate[{predicate_index}] has invalid required metric source: {required_source:?}"
+    )]
+    InvalidRequiredMetricSource {
+        task_id: TaskId,
+        predicate_index: usize,
+        required_source: MetricSource,
+    },
+
+    /// WeightedPredicate weight'i non-finite veya <= 0 (Weighted mode'da loss katkısı).
+    #[error(
+        "task {task_id} predicate[{predicate_index}] has invalid weight: {weight} (must be finite and > 0)"
+    )]
+    InvalidWeight {
+        task_id: TaskId,
+        predicate_index: usize,
+        weight: f64,
+    },
+
+    /// PredicateSet boş — hiçbir predicate tanımlı değil.
+    #[error("task {task_id} has empty predicate set")]
+    EmptyPredicateSet { task_id: TaskId },
+
+    /// preferred_vector var ama en az bir alan non-finite.
+    #[error(
+        "task {task_id} preferred_vector has non-finite field: x={x}, y={y}, z={z}, w={w}, v={v}"
+    )]
+    NonFinitePreferredVector {
+        task_id: TaskId,
+        x: f64,
+        y: f64,
+        z: f64,
+        w: f64,
+        v: f64,
+    },
+
+    /// TaskPolicy.min_improvement_delta non-finite veya negatif.
+    #[error(
+        "task {task_id} policy has invalid min_improvement_delta: {value} (must be finite and >= 0)"
+    )]
+    InvalidMinImprovementDelta { task_id: TaskId, value: f64 },
+
+    /// TaskPolicy.max_axis_regression non-finite veya negatif.
+    #[error(
+        "task {task_id} policy has invalid max_axis_regression: {value} (must be finite and >= 0)"
+    )]
+    InvalidMaxAxisRegression { task_id: TaskId, value: f64 },
+
+    /// TaskPolicy.maneuver_limit sıfır (INV-T7 — ardışık reject limiti en az 1 olmalı).
+    #[error(
+        "task {task_id} policy has invalid maneuver_limit: {value} (must be > 0)"
+    )]
+    InvalidManeuverLimit { task_id: TaskId, value: u32 },
+}
+
+impl Task {
+    /// **INV-T9 #70 Commit 4b (reviewer v2 karar 2 + v4 P2):** Commit-time task
+    /// declaration validation. `commit_task_claim` pipeline'ında task bind sonrası,
+    /// Q5/PredicateGate öncesi çağrılır. Geçersiz task terminal reject — progress
+    /// checkpoint / witness / authorization üretmez, maneuver budget tüketmez.
+    ///
+    /// **Exact matris (reviewer v4 P2):**
+    /// - MetricPredicate: threshold finite, tolerance finite + >= 0, required_source != Mixed
+    /// - WeightedPredicate: weight varsa finite + > 0
+    /// - PredicateSet: predicate list non-empty, preferred_vector varsa beş alan finite
+    /// - TaskPolicy: min_improvement_delta finite + >= 0, max_axis_regression finite + >= 0,
+    ///   maneuver_limit > 0
+    ///
+    /// **NOT (reviewer v3 P0):** `preferred_vector = None` geçerli — bu metod reddetmez.
+    /// NoPreferredVector durumunda typed loss evidence gate içinde karar verir.
+    #[allow(dead_code)] // Faz 3: commit_task_claim guard — reviewer v2 karar 2
+    pub(crate) fn validate_for_commit(&self) -> Result<(), TaskValidationError> {
+        let task_id = self.id;
+        let policy = &self.policy;
+        let pset = &self.target_predicate_set;
+
+        // PredicateSet non-empty.
+        if pset.predicates.is_empty() {
+            return Err(TaskValidationError::EmptyPredicateSet { task_id });
+        }
+
+        // Her WeightedPredicate için MetricPredicate + weight validation.
+        for (predicate_index, wp) in pset.predicates.iter().enumerate() {
+            let pred = &wp.predicate;
+            // threshold finite.
+            if !pred.threshold.is_finite() {
+                return Err(TaskValidationError::NonFiniteThreshold {
+                    task_id,
+                    predicate_index,
+                    threshold: pred.threshold,
+                });
+            }
+            // tolerance finite + >= 0.
+            if !pred.tolerance.is_finite() || pred.tolerance < 0.0 {
+                return Err(TaskValidationError::InvalidTolerance {
+                    task_id,
+                    predicate_index,
+                    tolerance: pred.tolerance,
+                });
+            }
+            // required_source != Mixed (epistemik talep değil).
+            if pred.required_source == Some(MetricSource::Mixed) {
+                return Err(TaskValidationError::InvalidRequiredMetricSource {
+                    task_id,
+                    predicate_index,
+                    required_source: MetricSource::Mixed,
+                });
+            }
+            // weight (Weighted mode veya Some ise) finite + > 0.
+            if let Some(weight) = wp.weight {
+                if !weight.is_finite() || weight <= 0.0 {
+                    return Err(TaskValidationError::InvalidWeight {
+                        task_id,
+                        predicate_index,
+                        weight,
+                    });
+                }
+            }
+        }
+
+        // preferred_vector varsa beş alan finite.
+        if let Some(pv) = pset.preferred_vector {
+            if !pv.x.is_finite()
+                || !pv.y.is_finite()
+                || !pv.z.is_finite()
+                || !pv.w.is_finite()
+                || !pv.v.is_finite()
+            {
+                return Err(TaskValidationError::NonFinitePreferredVector {
+                    task_id,
+                    x: pv.x,
+                    y: pv.y,
+                    z: pv.z,
+                    w: pv.w,
+                    v: pv.v,
+                });
+            }
+        }
+
+        // TaskPolicy: min_improvement_delta finite + >= 0.
+        if !policy.min_improvement_delta.is_finite() || policy.min_improvement_delta < 0.0 {
+            return Err(TaskValidationError::InvalidMinImprovementDelta {
+                task_id,
+                value: policy.min_improvement_delta,
+            });
+        }
+        // TaskPolicy: max_axis_regression finite + >= 0.
+        if !policy.max_axis_regression.is_finite() || policy.max_axis_regression < 0.0 {
+            return Err(TaskValidationError::InvalidMaxAxisRegression {
+                task_id,
+                value: policy.max_axis_regression,
+            });
+        }
+        // TaskPolicy: maneuver_limit > 0.
+        if policy.maneuver_limit == 0 {
+            return Err(TaskValidationError::InvalidManeuverLimit {
+                task_id,
+                value: policy.maneuver_limit,
+            });
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TaskStatus {
     Pending,
@@ -646,6 +861,18 @@ pub struct AttemptOutcome {
 /// **G2c-1b:** `Unknown` (serde backward-compat default) + `RejectedByTaskBinding`
 /// (Q5.b binding hatası) eklendi. navigator reject-evidence için her attempt hangi
 /// gate'te kaldığını kaydeder (arkadaş review 6 #1, #2).
+///
+/// **INV-T9 #70 Commit 4b (reviewer v4 P1-4 — append-only canonical tag):**
+/// `RejectedByTaskValidation` + `RejectedByMeasurementBinding` eklendi. Mevcut tag'ler
+/// (0-6) ASLA değişmez (exact pin — `gate_decision_tag` authorization.rs:2356). Yeni
+/// varyantlar sıradaki unused tag'leri alır:
+/// - `RejectedByTaskValidation` → tag 7 (task declaration validation fail — Mixed source,
+///   non-finite threshold/tolerance, geçersiz policy parametresi)
+/// - `RejectedByMeasurementBinding` → tag 8 (presented EngineMeasurement token'ı
+///   claim/task/subject/impact/delta/revision/context ile uyuşmuyor)
+///
+/// `gate_decision_v2_tags_are_unique_and_append_only` testi (Commit 4b) eski tag'lerin
+/// exact pin + yeni tag'lerin unique + eski alan reuse olmadığını kanıtlar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum GateDecision {
     /// Bilinmeyen / serde default (eski JSON backward-compat). Navigator hiçbir zaman
@@ -662,6 +889,18 @@ pub enum GateDecision {
     RejectedByTaskBinding,
     /// INV-T7 — ardışık N reject.
     BlockedByManeuverLimit,
+    /// **INV-T9 #70 Commit 4b:** Task declaration validation fail (reviewer v2 karar 2).
+    /// `Task::validate_for_commit` terminal reject — geçersiz task declaration
+    /// (Mixed source requirement, non-finite threshold/tolerance, geçersiz policy).
+    /// `EngineCommitError::TaskValidation` ile eşleşir. Maneuver budget tüketmez,
+    /// witness'a ulaşmaz. Agent retry değil — task config düzeltilmeli.
+    RejectedByTaskValidation,
+    /// **INV-T9 #70 Commit 4b:** Measurement binding fail (reviewer v2 karar 4 + v4 P1-3).
+    /// Presented `EngineMeasurement` token'ı claim/task/subject/impact/delta/revision/context
+    /// ile uyuşmuyor. `EngineCommitError::MeasurementBindingMismatch` ile eşleşir.
+    /// Disposition: `RegenerateMeasurement` (stale — Revision/CurrentContext) veya
+    /// `RejectPresentedAuthority` (replayed/tampered — Task/Subject/Impact/StructuralDelta/ContextDigest).
+    RejectedByMeasurementBinding,
 }
 
 /// Soft gate Q5.b — predicate completion (mutation kararından ayrı).
