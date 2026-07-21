@@ -1189,6 +1189,30 @@ pub enum TrajectoryLossUnavailableReason {
 /// gelir (preferred_vector=None → loss/target anlamsız). **Loss computation failure
 /// (canonicalization, non-finite) `Unavailable`'a dönüştürülmez** — terminal derivation
 /// error (`MeasurementBindingDerivationError` veya `EngineCommitError::Internal`).
+///
+/// **INV-T9 #70 Commit 4b Faz 3 contract (Faz 5 için not — reviewer v6):** Bu enum
+/// Faz 3'te DEĞİŞTİRİLMEZ. `NotRequired` varyantı Faz 5'te completion-first PredicateGate
+/// refactor ile ATOMİK olarak eklenir (producer + consumer + owned eşlenik + gate
+/// refactor + authorization wiring aynı commit). Şu anki 2-varyantlı yapı (`Available`
+/// + `Unavailable`) mevcut PredicateGate scalar `trajectory_loss` hesabıyla uyumlu —
+/// `NotRequired`'ın consumer'ı olmadan eklenmesi dead-code yaratır.
+///
+/// **Faz 5 completion-first karar matrisi (plan pinli):**
+///
+/// | Predicate | Policy | preferred_vector | Loss evidence | Decision |
+/// |---|---|---|---|---|
+/// | Completed | any | Some/None | NotRequired(PredicateCompleted) | AcceptAsCompleted |
+/// | NotCompleted | StrictReject | Some/None | NotRequired(StrictRejectPolicy) | Reject |
+/// | NotCompleted | AcceptImprovement + target | Available | Available | loss/regression |
+/// | NotCompleted | AcceptImprovement + None | Unavailable(PreferredVectorMissing) | Progress reject |
+///
+/// Faz 5'te eklenecekler (atomik):
+/// - `TrajectoryLossEvidence::NotRequired { reason: LossNotRequiredReason }`
+/// - `LossNotRequiredReason { PredicateCompleted, StrictRejectPolicy }`
+/// - `OwnedTrajectoryLossEvidence` eşleniği senkron
+/// - canonical loss derivation (tek truth source)
+/// - PredicateGate scalar `trajectory_loss` iç hesabı → canonical evidence consume
+/// - AuthorizationContextV2 aynı evidence consume (drift risk kapalı)
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrajectoryLossEvidence<'a> {
     /// Loss hesaplanabilir — preferred_vector mevcut, after ölçüldü.
@@ -1198,6 +1222,10 @@ pub enum TrajectoryLossEvidence<'a> {
     },
     /// Loss unavailable — yalnız `NoPreferredVector` (preferred_vector None).
     /// Computation failure ayrı terminal error — bu varyanta gömülmez.
+    ///
+    /// **Faz 5:** `NotRequired` varyantı eklenecek (completion-first). Bu varyant
+    /// yalnız "loss gerekliydi ama üretilemedi" anlamında kalır — "loss gerekmedi"
+    /// (`PredicateCompleted`/`StrictRejectPolicy`) ayrı varyant.
     Unavailable {
         reason: TrajectoryLossUnavailableReason,
     },

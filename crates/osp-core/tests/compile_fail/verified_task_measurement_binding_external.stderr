@@ -1,0 +1,11 @@
+error[E0603]: struct `VerifiedTaskMeasurementBinding` is private
+  --> tests/compile_fail/verified_task_measurement_binding_external.rs:15:35
+   |
+15 |     let _proof: osp_core::engine::VerifiedTaskMeasurementBinding = unimplemented!();
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ private struct
+   |
+note: the struct `VerifiedTaskMeasurementBinding` is defined here
+  --> src/engine.rs
+   |
+   | pub(crate) struct VerifiedTaskMeasurementBinding {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
