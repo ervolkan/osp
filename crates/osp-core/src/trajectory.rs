@@ -600,9 +600,7 @@ pub enum PredicateFailurePolicy {
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum TaskValidationError {
     /// Predicate threshold non-finite (NaN/±Infinity).
-    #[error(
-        "task {task_id} predicate[{predicate_index}] has non-finite threshold: {threshold}"
-    )]
+    #[error("task {task_id} predicate[{predicate_index}] has non-finite threshold: {threshold}")]
     NonFiniteThreshold {
         task_id: TaskId,
         predicate_index: usize,
@@ -693,9 +691,7 @@ pub enum TaskValidationError {
     InvalidMaxAxisRegression { task_id: TaskId, value: f64 },
 
     /// TaskPolicy.maneuver_limit sıfır (INV-T7 — ardışık reject limiti en az 1 olmalı).
-    #[error(
-        "task {task_id} policy has invalid maneuver_limit: {value} (must be > 0)"
-    )]
+    #[error("task {task_id} policy has invalid maneuver_limit: {value} (must be > 0)")]
     InvalidManeuverLimit { task_id: TaskId, value: u32 },
 }
 
@@ -2966,8 +2962,9 @@ mod tests {
     #[test]
     fn validate_for_commit_rejects_mixed_required_source() {
         let mut task = valid_task_for_validation();
-        task.target_predicate_set.predicates[0].predicate.required_source =
-            Some(MetricSource::Mixed);
+        task.target_predicate_set.predicates[0]
+            .predicate
+            .required_source = Some(MetricSource::Mixed);
         let err = task.validate_for_commit().unwrap_err();
         assert!(matches!(
             err,

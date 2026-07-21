@@ -133,6 +133,44 @@ pub(crate) fn encode_tag<T: CanonicalTag>(hasher: &mut blake3::Hasher, val: T, f
     encode_u8(hasher, val.tag_u8(), field);
 }
 
+/// **INV-T9 #70 Commit 4b Faz 3 (reviewer v4 P2-1):** Neutral per-axis measurement encoder.
+///
+/// `value` (canonical float) + `source_tag` (stable `CanonicalMetricSourceTag`) + `axis_discrim`
+/// (axis discriminator byte) encode eder. Auth-layer tiplerini (`CanonicalAxisMeasurement`)
+/// tanımaz — üst katmanlar kendi tiplerini bu bileşenlere dönüştürür. Bu sayede cycle:
+/// `authorization → canonical_encoding` VE `measurement → canonical_encoding` korunur,
+/// tersine bağımlılık yok.
+///
+/// **Axis discriminator (reviewer v4 P2-1):** axis sırası structural olarak sabittir
+/// (coupling→cohesion→instability→entropy→witness_depth), ama explicit discriminator
+/// defense-in-depth olarak encoding'e eklenir. Mapping stable ve pinlidir:
+/// `coupling=0, cohesion=1, instability=2, entropy=3, witness_depth=4`.
+///
+/// **Source tag (reviewer v4 P2-2):** `CanonicalMetricSourceTag` stable mapping kullanır
+/// (`canonical_tag_newtype!` macro — enum discriminant DEĞİL). Varyant sırası değişse bile
+/// tag byte'ı sabit kalır.
+///
+/// **Kullanım:** `MeasurementDigest` (Faz 3 yeni commitment) bu primitifi kullanır.
+/// Mevcut `AuthorizationBasisDigest` v1 byte contract'ı korunur — ayrı encoding.
+pub(crate) fn encode_axis_components(
+    hasher: &mut blake3::Hasher,
+    value: f64,
+    source_tag: crate::canonical_tags::CanonicalMetricSourceTag,
+    axis_discrim: u8,
+) -> Result<(), CanonicalEncodingError> {
+    encode_u8(hasher, axis_discrim, "axis_discrim");
+    encode_f64(hasher, value, "axis_value")?;
+    encode_tag(hasher, source_tag, "axis_source");
+    Ok(())
+}
+
+/// Stable axis discriminator bytes (reviewer v4 P2-1 — pinli mapping).
+pub(crate) const AXIS_DISCRIM_COUPLING: u8 = 0;
+pub(crate) const AXIS_DISCRIM_COHESION: u8 = 1;
+pub(crate) const AXIS_DISCRIM_INSTABILITY: u8 = 2;
+pub(crate) const AXIS_DISCRIM_ENTROPY: u8 = 3;
+pub(crate) const AXIS_DISCRIM_WITNESS_DEPTH: u8 = 4;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Vec\<u8\> canonical encoding helpers (predicate sort için)
 // ──────────────────────────────────────────────────────────────────────────────

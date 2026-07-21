@@ -1660,9 +1660,7 @@ pub struct ProvenancedMeasuredResult {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CanonicalTrajectoryEvidenceBaseline {
     /// Before-state measured — subject üyelerinin tamamı base snapshot'ta mevcut.
-    Available {
-        before: ProvenancedMeasuredResult,
-    },
+    Available { before: ProvenancedMeasuredResult },
     /// Before-state unavailable — subject üyeleri tamamen/kısmen delta-introduced.
     Unavailable {
         reason: CanonicalBaselineUnavailableReason,
@@ -1677,9 +1675,7 @@ pub enum CanonicalTrajectoryEvidenceBaseline {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CanonicalBaselineUnavailableReason {
     /// Tüm subject üyeleri delta ile eklenen node'lar — base'de hiçbiri yok.
-    AllMembersIntroducedByDelta {
-        members: Vec<crate::space::NodeId>,
-    },
+    AllMembersIntroducedByDelta { members: Vec<crate::space::NodeId> },
     /// Bazı üyeler base'de var, kalanların tümü delta ile ekleniyor.
     PartialNewSubject {
         existing: Vec<crate::space::NodeId>,
@@ -1694,9 +1690,7 @@ pub enum CanonicalBaselineValidationError {
     #[error("AllMembersIntroducedByDelta members contain duplicates: {members:?}")]
     AllMembersDuplicate { members: Vec<crate::space::NodeId> },
 
-    #[error(
-        "AllMembersIntroducedByDelta members {members:?} != request subject {subject:?}"
-    )]
+    #[error("AllMembersIntroducedByDelta members {members:?} != request subject {subject:?}")]
     AllMembersSubjectMismatch {
         members: Vec<crate::space::NodeId>,
         subject: Vec<crate::space::NodeId>,
@@ -1706,7 +1700,9 @@ pub enum CanonicalBaselineValidationError {
     PartialExistingDuplicate { existing: Vec<crate::space::NodeId> },
 
     #[error("PartialNewSubject introduced list contains duplicates: {introduced:?}")]
-    PartialIntroducedDuplicate { introduced: Vec<crate::space::NodeId> },
+    PartialIntroducedDuplicate {
+        introduced: Vec<crate::space::NodeId>,
+    },
 
     #[error("PartialNewSubject requires non-empty existing and introduced")]
     PartialEmptyList,
@@ -1714,9 +1710,7 @@ pub enum CanonicalBaselineValidationError {
     #[error("node {node_id} in both existing and introduced (not disjoint)")]
     PartialNotDisjoint { node_id: crate::space::NodeId },
 
-    #[error(
-        "PartialNewSubject union {union:?} != request subject {subject:?}"
-    )]
+    #[error("PartialNewSubject union {union:?} != request subject {subject:?}")]
     PartialUnionSubjectMismatch {
         union: Vec<crate::space::NodeId>,
         subject: Vec<crate::space::NodeId>,
@@ -1782,9 +1776,11 @@ impl CanonicalBaselineUnavailableReason {
                 let mut introduced_dedup = introduced_sorted.clone();
                 introduced_dedup.dedup();
                 if introduced_dedup.len() != introduced_sorted.len() {
-                    return Err(CanonicalBaselineValidationError::PartialIntroducedDuplicate {
-                        introduced: introduced.clone(),
-                    });
+                    return Err(
+                        CanonicalBaselineValidationError::PartialIntroducedDuplicate {
+                            introduced: introduced.clone(),
+                        },
+                    );
                 }
                 // Disjoint check.
                 for id in &existing_dedup {
@@ -1974,19 +1970,12 @@ impl AuthorizationBasisDigest {
         encode_u32(&mut hasher, ip.semantics_version, "improvement_semver");
 
         // Measured result — 5 eksen value + source (INV-T4 per-axis provenance).
-        encode_axis_measurement(&mut hasher, &basis.measured_result.coupling, "coupling")?;
-        encode_axis_measurement(&mut hasher, &basis.measured_result.cohesion, "cohesion")?;
-        encode_axis_measurement(
-            &mut hasher,
-            &basis.measured_result.instability,
-            "instability",
-        )?;
-        encode_axis_measurement(&mut hasher, &basis.measured_result.entropy, "entropy")?;
-        encode_axis_measurement(
-            &mut hasher,
-            &basis.measured_result.witness_depth,
-            "witness_depth",
-        )?;
+        // **Faz 3:** axis sırası structural (sabit çağrı sırası). Byte format v1 ile uyumlu.
+        encode_axis_measurement(&mut hasher, &basis.measured_result.coupling)?;
+        encode_axis_measurement(&mut hasher, &basis.measured_result.cohesion)?;
+        encode_axis_measurement(&mut hasher, &basis.measured_result.instability)?;
+        encode_axis_measurement(&mut hasher, &basis.measured_result.entropy)?;
+        encode_axis_measurement(&mut hasher, &basis.measured_result.witness_depth)?;
 
         // Outcome tags.
         encode_u8(
@@ -2139,13 +2128,18 @@ impl CanonicalTag for crate::canonical_tags::WitnessIndependencePolicyTag {
 }
 
 /// **reviewer P0-1:** Per-axis measurement encoder — value + source tag.
+///
+/// **INV-T9 #70 Commit 4b Faz 3:** `field` parametresi kaldırıldı (axis sırası
+/// caller'ın sabit çağrı sırasıyla structural guarantee — coupling→cohesion→
+/// instability→entropy→witness_depth). Byte format DEĞİŞMEDİ — v1 golden korunur.
+/// Nötr encoder (`encode_axis_components` axis discriminator ile) yalnız yeni
+/// `MeasurementDigest` tarafından kullanılır (Faz 3 yeni commitment, ayrı byte contract).
 fn encode_axis_measurement(
     hasher: &mut blake3::Hasher,
     m: &CanonicalAxisMeasurement,
-    field: &str,
 ) -> Result<(), CanonicalDigestError> {
-    encode_f64(hasher, m.value, field)?;
-    encode_tag(hasher, m.source, field);
+    encode_f64(hasher, m.value, "axis_value")?;
+    encode_tag(hasher, m.source, "axis_source");
     Ok(())
 }
 
@@ -9542,7 +9536,8 @@ v = 0.5
         let reason = crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
             members: vec![1, 1, 2], // duplicate 1
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::AllMembersDuplicate { .. }
@@ -9555,7 +9550,8 @@ v = 0.5
         let reason = crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
             members: vec![1, 3], // 3 not in subject
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::AllMembersSubjectMismatch { .. }
@@ -9569,7 +9565,8 @@ v = 0.5
             existing: vec![1, 1], // duplicate
             introduced: vec![2, 3],
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::PartialExistingDuplicate { .. }
@@ -9583,7 +9580,8 @@ v = 0.5
             existing: vec![1],
             introduced: vec![2, 2, 3], // duplicate
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::PartialIntroducedDuplicate { .. }
@@ -9597,7 +9595,8 @@ v = 0.5
             existing: vec![], // empty
             introduced: vec![1, 2],
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::PartialEmptyList
@@ -9611,7 +9610,8 @@ v = 0.5
             existing: vec![1, 2],
             introduced: vec![2], // 2 in both — not disjoint
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::PartialNotDisjoint { node_id: 2 }
@@ -9625,7 +9625,8 @@ v = 0.5
             existing: vec![1, 4], // 4 not in subject
             introduced: vec![2],
         };
-        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        let err =
+            CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
         assert!(matches!(
             err,
             CanonicalBaselineValidationError::PartialUnionSubjectMismatch { .. }
@@ -9658,7 +9659,10 @@ v = 0.5
         let canonical = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject)
             .expect("valid partial must succeed (ordering canonicalized)");
         match canonical {
-            CanonicalBaselineUnavailableReason::PartialNewSubject { existing, introduced } => {
+            CanonicalBaselineUnavailableReason::PartialNewSubject {
+                existing,
+                introduced,
+            } => {
                 assert_eq!(existing, vec![1, 2], "existing sorted canonical order");
                 assert_eq!(introduced, vec![3], "introduced sorted canonical order");
             }
