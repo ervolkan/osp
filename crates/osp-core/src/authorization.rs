@@ -1653,9 +1653,10 @@ pub struct ProvenancedMeasuredResult {
 /// before mevcut olsa bile loss hesaplanamaz. validate_v2 loss_before'u `trajectory_loss_canonical`
 /// ile recompute eder.
 ///
-/// `CanonicalBaselineUnavailableReason` member listeleri sorted+unique+disjoint+union ==
-/// request subject (reviewer scoped P1-2 — sessiz dedup YOK, `try_new` request subject
-/// alır).
+/// `CanonicalBaselineUnavailableReason` member listeleri: **sessiz dedup YOK** (duplicate
+/// input fail-closed typed error); **ordering canonicalize edilir** (unsorted input →
+/// sorted canonical sıraya normalize — bu meşru canonicalization, data kaybı DEĞİL).
+/// + disjoint + union == request subject (reviewer scoped P1-2 + Faz 2 scoped P2-1).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CanonicalTrajectoryEvidenceBaseline {
     /// Before-state measured — subject üyelerinin tamamı base snapshot'ta mevcut.
@@ -1668,10 +1669,11 @@ pub enum CanonicalTrajectoryEvidenceBaseline {
     },
 }
 
-/// **INV-T9 #70 Commit 4b:** Canonical baseline unavailable reason. Member listeleri
-/// sorted + unique + disjoint + union == request subject (scoped P1-2). `try_from_reason`
-/// raw enum + request subject alır — **sessiz dedup/normalize YOK** (reviewer Faz 2
-/// scoped P1-1: duplicate normalizasyondan ÖNCE typed error).
+/// **INV-T9 #70 Commit 4b:** Canonical baseline unavailable reason. Member listeleri:
+/// **sessiz dedup YOK** (duplicate fail-closed typed error); **ordering canonicalize
+/// edilir** (unsorted → sorted — meşru canonicalization). + disjoint + union == request
+/// subject (scoped P1-2 + Faz 2 scoped P2-1). `try_from_reason` raw enum + request
+/// subject alır — duplicate normalizasyondan ÖNCE typed error (reviewer Faz 2 scoped P1-1).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum CanonicalBaselineUnavailableReason {
     /// Tüm subject üyeleri delta ile eklenen node'lar — base'de hiçbiri yok.
@@ -9412,6 +9414,68 @@ v = 0.5
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b — GateDecision v1 frozen encoder (reviewer Faz 2 scoped P1)
+    //
+    // **Fiziksel ayrım:** v1 frozen encoder yalnız 0..=6 tag'lerini üretir — v2-only
+    // kararlarını (RejectedByTaskValidation, RejectedByMeasurementBinding) temsil EDİLEMEZ.
+    // `GateDecisionV1Frozen` enum'u v2 varyantlarını içermez → compile-time guarantee.
+    // v1 golden re-producibility (Faz 4) bu frozen encoder'ı kullanır; production v2
+    // encoder (`gate_decision_tag_v2`) ayrıdır.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// V1 frozen GateDecision model — Commit 4b öncesi 7 varyant (0..=6).
+    /// v2-only varyantlar (RejectedByTaskValidation, RejectedByMeasurementBinding) YOK.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum GateDecisionV1Frozen {
+        Unknown,
+        PassedAll,
+        RejectedBySyntax,
+        RejectedByVision,
+        RejectedByRule,
+        RejectedByTaskBinding,
+        BlockedByManeuverLimit,
+    }
+
+    /// V1 frozen encoder — yalnız 0..=6 tag'leri. v2 varyantlarını temsil edemez
+    /// (compile-time: enum'da yok). v1 golden re-producibility (Faz 4) bunu kullanır.
+    fn gate_decision_tag_v1_frozen(decision: GateDecisionV1Frozen) -> u8 {
+        match decision {
+            GateDecisionV1Frozen::Unknown => 0,
+            GateDecisionV1Frozen::PassedAll => 1,
+            GateDecisionV1Frozen::RejectedBySyntax => 2,
+            GateDecisionV1Frozen::RejectedByVision => 3,
+            GateDecisionV1Frozen::RejectedByRule => 4,
+            GateDecisionV1Frozen::RejectedByTaskBinding => 5,
+            GateDecisionV1Frozen::BlockedByManeuverLimit => 6,
+        }
+    }
+
+    #[test]
+    fn gate_decision_v1_frozen_encoder_excludes_v2_variants() {
+        // Reviewer Faz 2 scoped P1: v1 frozen encoder fiziksel olarak v2 helper'dan ayrı.
+        // Yalnız 0..=6 — v2 kararlarını (7, 8) temsil edemez.
+        let v1_tags: Vec<u8> = [
+            GateDecisionV1Frozen::Unknown,
+            GateDecisionV1Frozen::PassedAll,
+            GateDecisionV1Frozen::RejectedBySyntax,
+            GateDecisionV1Frozen::RejectedByVision,
+            GateDecisionV1Frozen::RejectedByRule,
+            GateDecisionV1Frozen::RejectedByTaskBinding,
+            GateDecisionV1Frozen::BlockedByManeuverLimit,
+        ]
+        .iter()
+        .map(|gd| gate_decision_tag_v1_frozen(*gd))
+        .collect();
+        // Exact pin 0..=6.
+        assert_eq!(v1_tags, vec![0, 1, 2, 3, 4, 5, 6]);
+        // Range: hiçbir tag 6'nın üstüne çıkmaz (v2 kararları YOK).
+        assert!(
+            v1_tags.iter().all(|&t| t <= 6),
+            "v1 frozen encoder must only produce tags 0..=6"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
     // INV-T9 #70 Commit 4b — GateDecision v2 append-only tag mapping test
     // (reviewer Faz 2 scoped P1-2: gerçek tag mapping'i doğrudan çağırır)
     // ═══════════════════════════════════════════════════════════════════════════════
@@ -9461,5 +9525,144 @@ v = 0.5
             all_tags.iter().all(|&t| t <= 8),
             "Commit 4b GateDecision tags must be in range 0..=8"
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b — CanonicalBaselineUnavailableReason validation matrisi
+    // (reviewer Faz 2 scoped P2-2: duplicate/subject-mismatch/empty/not-disjoint/union)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    fn subject_scope(members: Vec<u64>) -> crate::measurement::CanonicalSubjectScope {
+        crate::measurement::CanonicalSubjectScope::try_new(members).unwrap()
+    }
+
+    #[test]
+    fn canonical_baseline_all_members_duplicate_rejected() {
+        let subject = subject_scope(vec![1, 2]);
+        let reason = crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
+            members: vec![1, 1, 2], // duplicate 1
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::AllMembersDuplicate { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_all_members_subject_mismatch_rejected() {
+        let subject = subject_scope(vec![1, 2]);
+        let reason = crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
+            members: vec![1, 3], // 3 not in subject
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::AllMembersSubjectMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_partial_existing_duplicate_rejected() {
+        let subject = subject_scope(vec![1, 2, 3]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![1, 1], // duplicate
+            introduced: vec![2, 3],
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::PartialExistingDuplicate { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_partial_introduced_duplicate_rejected() {
+        let subject = subject_scope(vec![1, 2, 3]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![1],
+            introduced: vec![2, 2, 3], // duplicate
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::PartialIntroducedDuplicate { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_partial_empty_list_rejected() {
+        let subject = subject_scope(vec![1, 2]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![], // empty
+            introduced: vec![1, 2],
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::PartialEmptyList
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_partial_not_disjoint_rejected() {
+        let subject = subject_scope(vec![1, 2]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![1, 2],
+            introduced: vec![2], // 2 in both — not disjoint
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::PartialNotDisjoint { node_id: 2 }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_partial_union_subject_mismatch_rejected() {
+        let subject = subject_scope(vec![1, 2, 3]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![1, 4], // 4 not in subject
+            introduced: vec![2],
+        };
+        let err = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject).unwrap_err();
+        assert!(matches!(
+            err,
+            CanonicalBaselineValidationError::PartialUnionSubjectMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn canonical_baseline_valid_all_members_succeeds() {
+        let subject = subject_scope(vec![2, 1, 3]); // unsorted input
+        let reason = crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
+            members: vec![3, 1, 2], // unsorted — ordering canonicalize edilir
+        };
+        let canonical = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject)
+            .expect("valid all-members must succeed (ordering canonicalized)");
+        match canonical {
+            CanonicalBaselineUnavailableReason::AllMembersIntroducedByDelta { members } => {
+                assert_eq!(members, vec![1, 2, 3], "members sorted canonical order");
+            }
+            other => panic!("expected AllMembersIntroducedByDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn canonical_baseline_valid_partial_succeeds() {
+        let subject = subject_scope(vec![1, 2, 3]);
+        let reason = crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+            existing: vec![2, 1], // unsorted
+            introduced: vec![3],
+        };
+        let canonical = CanonicalBaselineUnavailableReason::try_from_reason(&reason, &subject)
+            .expect("valid partial must succeed (ordering canonicalized)");
+        match canonical {
+            CanonicalBaselineUnavailableReason::PartialNewSubject { existing, introduced } => {
+                assert_eq!(existing, vec![1, 2], "existing sorted canonical order");
+                assert_eq!(introduced, vec![3], "introduced sorted canonical order");
+            }
+            other => panic!("expected PartialNewSubject, got {other:?}"),
+        }
     }
 }

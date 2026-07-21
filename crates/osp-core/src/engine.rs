@@ -321,10 +321,19 @@ impl From<crate::measurement::MeasurementBindingVerificationError> for EngineCom
 // External tanılama gerekirse ayrı DTO kullanılmalı.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// **INV-T9 #70 Commit 4b (reviewer v2 karar 4 + Faz 2 scoped P1-3):** `verify_measurement_binding`
-/// (Faz 3) tarafından üretilen doğrulanmış binding capability. **Construction yalnız
-/// `verify_measurement_binding()` içinde** — modül-private `new()` (engine.rs), external
-/// crate/test bypass tip seviyesinde kapalı. Basis builder consume eder — re-derivation yok.
+/// **INV-T9 #70 Commit 4b (reviewer v2 karar 4 + Faz 2 scoped P1-3 + P2-4):** `verify_measurement_binding`
+/// (Faz 3) tarafından üretilen doğrulanmış binding capability. **Production non-test
+/// code'da construction yalnız `verify_measurement_binding()` ile** — modül-private `new()`
+/// (engine.rs). Basis builder consume eder — re-derivation yok.
+///
+/// **Dürüst invariant (reviewer Faz 2 scoped P2-4):** Rust'ta `engine.rs` içindeki diğer
+/// fonksiyonlar ve `engine.rs`'in child `mod tests` modülü private constructor/field'lara
+/// erişebilir. Dolayısıyla "external crate/test bypass tip seviyesinde kapalı" ifadesi
+/// tam doğru DEĞİL — test modülü hala çağırabilir. Doğru invariant: **production non-test
+/// code'da `VerifiedMeasurementBinding` yalnız `verify_measurement_binding` tarafından
+/// construct edilir.** Bu Faz 9 AST/source-contract kontrolü ile enforce edilir:
+/// `non-test AST içinde VerifiedMeasurementBinding::new call count == 1` ve çağıran
+/// `verify_measurement_binding` olmalı.
 #[derive(Debug, Clone)]
 pub(crate) struct VerifiedMeasurementBinding {
     subject: crate::measurement::CanonicalSubjectScope,
@@ -4295,6 +4304,65 @@ v = 0.5
                 );
             }
             other => panic!("expected SyntaxViolation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_vision_raw_with_context_uses_provided_raw_not_claim_computed_raw() {
+        // Reviewer Faz 2 scoped P2-3: claim.computed_raw Q5'i geçiyor ama provided raw
+        // (measurement.after) ihlal ediyor → VisionViolation oluşmalı + raw field == provided.
+        // Bağımsız-raw semantiği: helper claim.computed_raw'a değil verilen raw'a bakar.
+        let space = crate::space::Space::new();
+        let engine = SpaceEngine::new(
+            space,
+            CoordinateSystem::empty(),
+            // Vision center — claim.computed_raw ile aynı (theta=0, Q5 geçer).
+            VisionVector::new(CENTER),
+            EngineConfig::default_calibrated(),
+        );
+        // Claim — computed_raw vision center'a yakın (Q5 geçer).
+        let claim = crate::witness::Claim {
+            id: 1,
+            intent: crate::witness::Intent::new(100, CENTER),
+            author: 100,
+            computed_raw: CENTER, // theta=0 → Q5 geçer
+            delta_nodes: vec![mod_node(1)],
+            delta_edges: vec![],
+            task_id: None,
+            removed_edges: vec![],
+        };
+        let vision_context = engine
+            .effective_vision_gate_context(&claim)
+            .expect("vision context for CENTER claim");
+
+        // claim.computed_raw (CENTER) ile Q5 geçer.
+        engine
+            .check_vision_raw_with_context(claim.id, &claim.computed_raw, &vision_context)
+            .expect("CENTER computed_raw must pass Q5 (theta=0)");
+
+        // Provided raw — vision center'dan uzak (theta > bound → Q5 ihlal).
+        let provided_raw_far = RawPosition {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+            v: 0.0,
+        };
+        let err = engine
+            .check_vision_raw_with_context(claim.id, &provided_raw_far, &vision_context)
+            .expect_err("provided far raw must violate Q5");
+        match err {
+            EngineCommitError::VisionViolation { violation, .. } => {
+                assert_eq!(violation.claim_id, claim.id);
+                // **Reviewer Faz 2 scoped P2-3:** raw field provided raw olmalı
+                // (claim.computed_raw DEĞIL — authority-tied evidence).
+                assert_eq!(
+                    violation.raw, provided_raw_far,
+                    "VisionViolation.raw must be the provided raw (measurement.after), \
+                     not claim.computed_raw"
+                );
+            }
+            other => panic!("expected VisionViolation, got {other:?}"),
         }
     }
 }
