@@ -456,6 +456,13 @@ pub(crate) struct VerifiedTaskMeasurementBinding {
     task_claim_digest: crate::measurement::TaskClaimDigest,
     measurement_digest: crate::measurement::MeasurementDigest,
     binding: VerifiedMeasurementBinding,
+    // INV-T9 #70 Commit 4b Faz 4 (plan md:123-126) — 3 yeni field:
+    /// Task goal commitment — task_id + predicate body + preferred_vector.
+    task_goal_digest: crate::measurement::TaskGoalDigest,
+    /// Tam artifact commitment — request + baseline + after + context.
+    engine_measurement_digest: crate::measurement::EngineMeasurementDigest,
+    /// Trusted task'tan snapshot — preferred_vector (Some/None).
+    preferred_vector_snapshot: Option<crate::coords::RawPosition>,
 }
 
 impl VerifiedTaskMeasurementBinding {
@@ -465,12 +472,19 @@ impl VerifiedTaskMeasurementBinding {
         task_claim_digest: crate::measurement::TaskClaimDigest,
         measurement_digest: crate::measurement::MeasurementDigest,
         binding: VerifiedMeasurementBinding,
+        // INV-T9 #70 Commit 4b Faz 4 — 3 yeni field (plan md:123-126):
+        task_goal_digest: crate::measurement::TaskGoalDigest,
+        engine_measurement_digest: crate::measurement::EngineMeasurementDigest,
+        preferred_vector_snapshot: Option<crate::coords::RawPosition>,
     ) -> Self {
         Self {
             task_id,
             task_claim_digest,
             measurement_digest,
             binding,
+            task_goal_digest,
+            engine_measurement_digest,
+            preferred_vector_snapshot,
         }
     }
 
@@ -499,9 +513,31 @@ impl VerifiedTaskMeasurementBinding {
         &self.binding
     }
 
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:124):** Task goal commitment accessor.
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn task_goal_digest(&self) -> &crate::measurement::TaskGoalDigest {
+        &self.task_goal_digest
+    }
+
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:125):** Tam artifact commitment accessor.
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn engine_measurement_digest(&self) -> &crate::measurement::EngineMeasurementDigest {
+        &self.engine_measurement_digest
+    }
+
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:126):** Preferred vector snapshot accessor.
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn preferred_vector_snapshot(&self) -> Option<crate::coords::RawPosition> {
+        self.preferred_vector_snapshot
+    }
+
     /// **Consuming projection (reviewer v6 P1-2):** Faz 4 basis builder move-only
     /// consume. Clone YOK — outer proof iki defa kullanılamaz. Same-context replay
     /// Faz 8 commit-ledger sorumluluğu.
+    ///
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:128):** 5-tuple — task_id, task_claim_digest,
+    /// measurement_digest, binding, ve Faz 4 extension (task_goal_digest,
+    /// engine_measurement_digest, preferred_vector_snapshot) ayrı tuple olarak.
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn into_parts(
         self,
@@ -510,12 +546,23 @@ impl VerifiedTaskMeasurementBinding {
         crate::measurement::TaskClaimDigest,
         crate::measurement::MeasurementDigest,
         VerifiedMeasurementBinding,
+        // Faz 4 extension — 3 yeni field ayrı tuple (5-tuple: 4 mevcut + 1 extension).
+        (
+            crate::measurement::TaskGoalDigest,
+            crate::measurement::EngineMeasurementDigest,
+            Option<crate::coords::RawPosition>,
+        ),
     ) {
         (
             self.task_id,
             self.task_claim_digest,
             self.measurement_digest,
             self.binding,
+            (
+                self.task_goal_digest,
+                self.engine_measurement_digest,
+                self.preferred_vector_snapshot,
+            ),
         )
     }
 }
@@ -927,12 +974,40 @@ impl SpaceEngine {
             request_digest,
         );
 
-        // Outer proof — task/claim/measured-result identity (cross-context substitution protection).
+        // ── INV-T9 #70 Commit 4b Faz 4 (plan md:121-128) — 3 yeni commitment ──────
+        // TaskGoalDigest: task_id + predicate body + preferred_vector. Trusted task'tan
+        // tek okuma → snapshot + digest (TOCTOU yok — task zaten verify sırasında okundu).
+        // **Reviewer v7 P2-1:** TaskGoalDigestComputationFailed — structural DEĞİL,
+        // task goal commitment hatası (semantic ayrım telemetry için korunur).
+        let task_goal_digest = crate::measurement::TaskGoalDigest::compute(task).map_err(|e| {
+            DerivErr::TaskGoalDigestComputationFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // EngineMeasurementDigest: tam artifact commitment (request + baseline + after + context).
+        // **Reviewer v7 P2-1:** EngineMeasurementDigestComputationFailed — structural DEĞİL,
+        // artifact commitment hatası.
+        let engine_measurement_digest = measurement.compute_digest().map_err(|e| {
+            DerivErr::EngineMeasurementDigestComputationFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // Preferred vector snapshot — trusted task'tan alınır (INV-T1: agent view'a sızmaz).
+        let preferred_vector_snapshot = task.target_predicate_set.preferred_vector;
+
+        // Outer proof — task/claim/measured-result identity + Faz 4 extension
+        // (task_goal_digest + engine_measurement_digest + preferred_vector_snapshot).
+        // Cross-context substitution protection + tam artifact commitment.
         Ok(VerifiedTaskMeasurementBinding::new(
             task.id,
             task_claim_digest,
             measurement_digest,
             binding,
+            task_goal_digest,
+            engine_measurement_digest,
+            preferred_vector_snapshot,
         ))
     }
 }
@@ -5476,4 +5551,117 @@ v = 0.5
     // - MeasurementResultDigestComputationFailed: corrupted measured result (NaN/∞ —
     //   MeasuredRawPosition smart constructor yok, struct literal).
     // - Full state-integrity: space equality / coordinate generation / event-audit state.
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b Faz 4 — VerifiedTaskMeasurementBinding extension testleri
+    // (plan md:121-128)
+    //
+    // 3 yeni field populated + into_parts 5-tuple + preferred_vector snapshot.
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn faz4_verified_binding_populates_task_goal_digest() {
+        // verify_measurement_binding producer — task_goal_digest populated (trusted task'tan).
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let measurement = produce_valid_measurement(&engine, &task, &claim);
+        let binding = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .expect("valid binding");
+        // task_goal_digest populated — accessor çalışır.
+        let goal_digest = binding.task_goal_digest();
+        assert_eq!(
+            goal_digest.to_hex().len(),
+            64,
+            "task goal digest hex wire 64"
+        );
+    }
+
+    #[test]
+    fn faz4_verified_binding_populates_engine_measurement_digest() {
+        // verify_measurement_binding producer — engine_measurement_digest populated.
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let measurement = produce_valid_measurement(&engine, &task, &claim);
+        let binding = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .expect("valid binding");
+        let engine_digest = binding.engine_measurement_digest();
+        assert_eq!(
+            engine_digest.to_hex().len(),
+            64,
+            "engine measurement digest hex wire 64"
+        );
+        // Consistency: binding.engine_measurement_digest() == measurement.compute_digest().
+        let recomputed = measurement.compute_digest().expect("recompute");
+        assert_eq!(
+            engine_digest.as_bytes(),
+            recomputed.as_bytes(),
+            "binding engine_measurement_digest == measurement.compute_digest()"
+        );
+    }
+
+    #[test]
+    fn faz4_verified_binding_populates_preferred_vector_snapshot_none() {
+        // task_with_node_scope preferred_vector: None → snapshot None.
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let measurement = produce_valid_measurement(&engine, &task, &claim);
+        let binding = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .expect("valid binding");
+        assert_eq!(
+            binding.preferred_vector_snapshot(),
+            None,
+            "task_with_node_scope preferred_vector None → snapshot None"
+        );
+    }
+
+    #[test]
+    fn faz4_verified_binding_into_parts_returns_5_tuple() {
+        // into_parts — 5-tuple (4 mevcut + 1 extension tuple).
+        // Move-only consuming projection (Clone YOK).
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let measurement = produce_valid_measurement(&engine, &task, &claim);
+        let binding = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .expect("valid binding");
+        let (task_id, task_claim_digest, measurement_digest, inner_binding, extension) =
+            binding.into_parts();
+        // Mevcut 4 field.
+        assert_eq!(task_id, 42);
+        assert_eq!(task_claim_digest.to_hex().len(), 64);
+        assert_eq!(measurement_digest.to_hex().len(), 64);
+        let _ = inner_binding; // VerifiedMeasurementBinding (6 field)
+                               // Faz 4 extension — 3 yeni field tuple.
+        let (task_goal_digest, engine_measurement_digest, preferred_vector_snapshot) = extension;
+        assert_eq!(task_goal_digest.to_hex().len(), 64);
+        assert_eq!(engine_measurement_digest.to_hex().len(), 64);
+        assert_eq!(preferred_vector_snapshot, None);
+    }
+
+    #[test]
+    fn faz4_verified_binding_task_goal_digest_deterministic() {
+        // Aynı task + claim + measurement → aynı task_goal_digest.
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let measurement = produce_valid_measurement(&engine, &task, &claim);
+        let binding1 = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .unwrap();
+        let binding2 = engine
+            .verify_measurement_binding(&claim, &task, &measurement)
+            .unwrap();
+        assert_eq!(
+            binding1.task_goal_digest().as_bytes(),
+            binding2.task_goal_digest().as_bytes(),
+            "same task → same task_goal_digest"
+        );
+    }
 }

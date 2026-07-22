@@ -651,6 +651,570 @@ pub enum MeasurementBaseline {
     Unavailable { reason: BaselineUnavailableReason },
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 #70 Commit 4b Faz 4 — Tam artifact commitment digest'leri (plan md:54-59, 82-87)
+//
+// **Reviewer v5 P0 (plan md:82-87):** `MeasurementDigest` yalnız `after`'ı bağlıyor —
+// `before`/`request`/`context` açık DEĞİL. Aynı request + same after + farklı before
+// karışımı mümkün. `EngineMeasurementDigest` çözüm: tam artifact commitment.
+//
+// **Domain separator convention (plan md:56):** Faz 4 V2 digest'leri `OSP/<SCREAMING>/V1`
+// convention'ı kullanır (mevcut `osp.<kebab>.vN\0`'den farklı — compile-time ayrım).
+//
+// **Non-blocking notu (plan md:207):** `MeasurementBaseline::compute_digest()` ve
+// `CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest()` aynı
+// internal shared encoder'ı (`write_measurement_baseline_commitment`) çağırır — drift
+// risk kapalı. Test: Available/Unavailable raw digest == canonical evidence digest.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **INV-T9 #70 Commit 4b Faz 4 (plan md:82-87):** Tam EngineMeasurement artifact
+/// commitment. Preimage: `OSP/ENGINE-MEASUREMENT/V1 || request_digest ||
+/// baseline_digest || MeasurementDigest(after) || context_digest`.
+///
+/// `MeasurementDigest` yalnız `after`'ı bağlar — `before`/`request`/`context` açık DEĞİL.
+/// Aynı request + same after + farklı before karışımı `EngineMeasurementDigest` ile
+/// engellenir (reviewer v5 P0). Tek producer: `EngineMeasurement::compute_digest()` +
+/// `EngineMeasurementDigest::compute_from_commitments()` shared canonical encoder.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub(crate) struct EngineMeasurementDigest([u8; 32]);
+
+impl EngineMeasurementDigest {
+    /// Faz 4 V2 convention domain separator (compile-time ayrım — mevcut
+    /// `osp.<kebab>.vN\0` convention'ından farklı).
+    const DOMAIN_SEPARATOR: &'static [u8] = b"OSP/ENGINE-MEASUREMENT/V1";
+
+    /// **Tek producer path 1 (plan md:85):** `EngineMeasurement` üzerinden — tüm 4
+    /// commitment'ı (request + baseline + after + context) birleştirir.
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute_from_measurement(
+        measurement: &EngineMeasurement,
+    ) -> Result<Self, EngineMeasurementDigestError> {
+        let request_digest = measurement.request_digest()?;
+        let baseline_digest = measurement.before().compute_digest()?;
+        let after_digest = MeasurementDigest::compute(measurement.after())?;
+        let context_digest = MeasurementContextDigest::compute(measurement.context())?;
+        Self::compute_from_commitments(
+            &request_digest,
+            &baseline_digest,
+            &after_digest,
+            &context_digest,
+        )
+    }
+
+    /// **Tek producer path 2 (plan md:85):** Commitment'lar üzerinden — builder (Commit 2)
+    /// bu path'i kullanır. Preimage: domain separator || 4 × 32 raw byte (sıra sabit:
+    /// request → baseline → after → context). Salt konkatenasyon YOK — her commitment
+    /// ayrı `encode_bytes` ile length-prefix + raw bytes.
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute_from_commitments(
+        request_digest: &MeasurementRequestDigest,
+        baseline_digest: &MeasurementBaselineDigest,
+        after_digest: &MeasurementDigest,
+        context_digest: &MeasurementContextDigest,
+    ) -> Result<Self, EngineMeasurementDigestError> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(Self::DOMAIN_SEPARATOR);
+        encode_u64(&mut hasher, 32, "em_request_digest_len");
+        hasher.update(request_digest.as_bytes());
+        encode_u64(&mut hasher, 32, "em_baseline_digest_len");
+        hasher.update(baseline_digest.as_bytes());
+        encode_u64(&mut hasher, 32, "em_after_digest_len");
+        hasher.update(after_digest.as_bytes());
+        encode_u64(&mut hasher, 32, "em_context_digest_len");
+        hasher.update(context_digest.as_bytes());
+        Ok(Self(hasher.finalize().into()))
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+/// **INV-T9 #70 Commit 4b Faz 4 (plan md:143):** `MeasurementBaseline` commitment
+/// (before-state). `MeasurementBaseline::compute_digest()` ve
+/// `CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest()` aynı
+/// shared encoder'ı (`write_measurement_baseline_commitment`) çağırır — drift risk kapalı.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub(crate) struct MeasurementBaselineDigest([u8; 32]);
+
+impl MeasurementBaselineDigest {
+    /// Faz 4 V2 convention domain separator.
+    const DOMAIN_SEPARATOR: &'static [u8] = b"OSP/MEASUREMENT-BASELINE/V1";
+
+    /// **Faz 4 shared encoder (plan md:207):** Domain separator'a crate-içi erişim —
+    /// `CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest`
+    /// aynı domain separator'u kullanır (drift risk kapalı).
+    #[allow(
+        dead_code,
+        reason = "Faz 4 CanonicalTrajectoryEvidenceBaseline shared encoder"
+    )]
+    pub(crate) fn domain_separator() -> &'static [u8] {
+        Self::DOMAIN_SEPARATOR
+    }
+
+    /// **Faz 4 shared encoder (plan md:207):** Finalized hash bytes'tan digest inşa —
+    /// `CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest` aynı
+    /// byte format'ı üretir (tek canonical truth source). `pub(crate)` — dışarıdan
+    /// direct construct edilemez.
+    #[allow(
+        dead_code,
+        reason = "Faz 4 CanonicalTrajectoryEvidenceBaseline shared encoder"
+    )]
+    pub(crate) fn from_hasher_finalized(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Shared canonical encoder — hem `MeasurementBaseline::compute_digest()` hem
+    /// `CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest()`
+    /// çağırır (non-blocking notu plan md:207 — drift risk kapalı).
+    fn write_commitment(
+        hasher: &mut blake3::Hasher,
+        baseline: &MeasurementBaseline,
+    ) -> Result<(), EngineMeasurementDigestError> {
+        use crate::canonical_encoding::encode_axis_components;
+        use crate::canonical_encoding::{
+            encode_u8, AXIS_DISCRIM_COHESION, AXIS_DISCRIM_COUPLING, AXIS_DISCRIM_ENTROPY,
+            AXIS_DISCRIM_INSTABILITY, AXIS_DISCRIM_WITNESS_DEPTH,
+        };
+        use crate::canonical_tags::CanonicalMetricSourceTag;
+        match baseline {
+            MeasurementBaseline::Available(measured) => {
+                encode_u8(hasher, 0, "baseline_available_tag");
+                encode_axis_components(
+                    hasher,
+                    measured.coupling.value,
+                    CanonicalMetricSourceTag::try_from(&measured.coupling.source).map_err(|e| {
+                        EngineMeasurementDigestError::StructuralCanonicalization {
+                            detail: e.to_string(),
+                        }
+                    })?,
+                    AXIS_DISCRIM_COUPLING,
+                )?;
+                encode_axis_components(
+                    hasher,
+                    measured.cohesion.value,
+                    CanonicalMetricSourceTag::try_from(&measured.cohesion.source).map_err(|e| {
+                        EngineMeasurementDigestError::StructuralCanonicalization {
+                            detail: e.to_string(),
+                        }
+                    })?,
+                    AXIS_DISCRIM_COHESION,
+                )?;
+                encode_axis_components(
+                    hasher,
+                    measured.instability.value,
+                    CanonicalMetricSourceTag::try_from(&measured.instability.source).map_err(
+                        |e| EngineMeasurementDigestError::StructuralCanonicalization {
+                            detail: e.to_string(),
+                        },
+                    )?,
+                    AXIS_DISCRIM_INSTABILITY,
+                )?;
+                encode_axis_components(
+                    hasher,
+                    measured.entropy.value,
+                    CanonicalMetricSourceTag::try_from(&measured.entropy.source).map_err(|e| {
+                        EngineMeasurementDigestError::StructuralCanonicalization {
+                            detail: e.to_string(),
+                        }
+                    })?,
+                    AXIS_DISCRIM_ENTROPY,
+                )?;
+                encode_axis_components(
+                    hasher,
+                    measured.witness_depth.value,
+                    CanonicalMetricSourceTag::try_from(&measured.witness_depth.source).map_err(
+                        |e| EngineMeasurementDigestError::StructuralCanonicalization {
+                            detail: e.to_string(),
+                        },
+                    )?,
+                    AXIS_DISCRIM_WITNESS_DEPTH,
+                )?;
+            }
+            MeasurementBaseline::Unavailable { reason } => {
+                encode_u8(hasher, 1, "baseline_unavailable_tag");
+                // reason canonicalization — member listeleri sorted + unique (CanonicalBaselineUnavailableReason
+                // zaten canonicalize eder; burada raw reason'ı encode ediyoruz çünkü
+                // MeasurementBaseline Unavailable reason'ı raw BaselineUnavailableReason).
+                match reason {
+                    BaselineUnavailableReason::AllMembersIntroducedByDelta { members } => {
+                        encode_u8(hasher, 0, "baseline_reason_all_introduced_tag");
+                        encode_u64(
+                            hasher,
+                            members.len() as u64,
+                            "baseline_reason_members_count",
+                        );
+                        for id in members {
+                            encode_u64(hasher, *id, "baseline_reason_member_id");
+                        }
+                    }
+                    BaselineUnavailableReason::PartialNewSubject {
+                        existing,
+                        introduced,
+                    } => {
+                        encode_u8(hasher, 1, "baseline_reason_partial_tag");
+                        encode_u64(
+                            hasher,
+                            existing.len() as u64,
+                            "baseline_reason_existing_count",
+                        );
+                        for id in existing {
+                            encode_u64(hasher, *id, "baseline_reason_existing_id");
+                        }
+                        encode_u64(
+                            hasher,
+                            introduced.len() as u64,
+                            "baseline_reason_introduced_count",
+                        );
+                        for id in introduced {
+                            encode_u64(hasher, *id, "baseline_reason_introduced_id");
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+impl MeasurementBaseline {
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:143):** `MeasurementBaseline` commitment.
+    /// Shared encoder kullanır (`MeasurementBaselineDigest::write_commitment`) — drift
+    /// risk kapalı (non-blocking notu plan md:207).
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute_digest(
+        &self,
+    ) -> Result<MeasurementBaselineDigest, EngineMeasurementDigestError> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(MeasurementBaselineDigest::DOMAIN_SEPARATOR);
+        MeasurementBaselineDigest::write_commitment(&mut hasher, self)?;
+        Ok(MeasurementBaselineDigest(hasher.finalize().into()))
+    }
+}
+
+/// **INV-T9 #70 Commit 4b Faz 4 (plan md:143):** `MeasurementInputContext` commitment
+/// (V2 ayrı newtype). Mevcut `MeasurementInputDigest` (`osp.measurement-input.v1\0`)
+/// FROZEN — V2 ayrı domain separator (`OSP/MEASUREMENT-CONTEXT/V1`). `MeasurementInputDigest`
+/// V1 korur, wire'dan restore için `from_hex` public kalır.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub(crate) struct MeasurementContextDigest([u8; 32]);
+
+impl MeasurementContextDigest {
+    /// Faz 4 V2 convention domain separator.
+    const DOMAIN_SEPARATOR: &'static [u8] = b"OSP/MEASUREMENT-CONTEXT/V1";
+
+    /// `MeasurementInputContext` canonical byte commitment. V1 `MeasurementInputDigest`
+    /// ile AYRI domain separator — byte format aynı canonical encoding kullanır (axis
+    /// descriptors sorted + length-prefix + raw bytes).
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute(
+        context: &crate::authorization::MeasurementInputContext,
+    ) -> Result<Self, EngineMeasurementDigestError> {
+        use crate::canonical_encoding::{encode_bytes, encode_u32, encode_u64};
+        context
+            .validate()
+            .map_err(|e| EngineMeasurementDigestError::ContextValidation {
+                detail: e.to_string(),
+            })?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(Self::DOMAIN_SEPARATOR);
+        encode_u32(&mut hasher, context.schema_version(), "mc_schema");
+        encode_u32(
+            &mut hasher,
+            context.measurement_semantics_version(),
+            "mc_semver",
+        );
+        let mut sorted = context.axis_descriptors().to_vec();
+        sorted.sort_unstable_by(|a, b| a.axis_id().cmp(b.axis_id()));
+        let count = u64::try_from(sorted.len()).map_err(|_| {
+            EngineMeasurementDigestError::LengthOverflow {
+                field: "mc_axis_count",
+            }
+        })?;
+        encode_u64(&mut hasher, count, "mc_axis_count");
+        for d in &sorted {
+            encode_bytes(&mut hasher, d.axis_id().as_bytes())?;
+            encode_u32(&mut hasher, d.semantics_version(), "mc_axis_semver");
+            encode_bytes(&mut hasher, d.canonical_parameters())?;
+        }
+        Ok(Self(hasher.finalize().into()))
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
+/// **INV-T9 #70 Commit 4b Faz 4 (plan md:164):** EngineMeasurementDigest hesaplama
+/// hatası. Canonical encoding + structural canonicalization + context validation.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum EngineMeasurementDigestError {
+    #[error("non-finite canonical float rejected")]
+    NonFiniteRejected,
+    #[error("canonical length overflow in {field}")]
+    LengthOverflow { field: &'static str },
+    #[error("structural canonicalization failed: {detail}")]
+    StructuralCanonicalization { detail: String },
+    #[error("measurement input context validation failed: {detail}")]
+    ContextValidation { detail: String },
+    #[error("measurement request digest computation failed: {detail}")]
+    MeasurementRequestDigest { detail: String },
+}
+
+impl From<CanonicalEncodingError> for EngineMeasurementDigestError {
+    fn from(err: CanonicalEncodingError) -> Self {
+        match err {
+            CanonicalEncodingError::NonFiniteRejected => Self::NonFiniteRejected,
+            CanonicalEncodingError::LengthOverflow { field } => Self::LengthOverflow { field },
+        }
+    }
+}
+
+impl From<MeasurementDigestError> for EngineMeasurementDigestError {
+    fn from(err: MeasurementDigestError) -> Self {
+        match err {
+            MeasurementDigestError::NonFiniteRejected => Self::NonFiniteRejected,
+            MeasurementDigestError::LengthOverflow { field } => Self::LengthOverflow { field },
+            MeasurementDigestError::StructuralCanonicalization { detail } => {
+                Self::StructuralCanonicalization { detail }
+            }
+            MeasurementDigestError::MeasurementInputDigest { detail } => {
+                Self::ContextValidation { detail }
+            }
+            // Hex/length errors bu digest için geçerli değil (compute-only, wire restore yok).
+            MeasurementDigestError::HexDecodeFailed { detail, .. } => {
+                Self::MeasurementRequestDigest { detail }
+            }
+            MeasurementDigestError::InvalidDigestLength { actual, .. } => {
+                Self::MeasurementRequestDigest {
+                    detail: format!("invalid digest length: {}", actual),
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 #70 Commit 4b Faz 4 — TaskGoalDigest (plan md:89-94)
+//
+// **Reviewer v4 P2-1 (plan md:89-90):** preferred_vector proof identity'ye bağlı —
+// `task_claim_digest` preimage'ında yok. `TaskGoalDigest` task goal commitment'ı
+// sağlar: task_id + predicate body (preferred_vector HARİÇ) + preferred_vector tek
+// canonical temsil.
+//
+// **Tek canonical temsil (plan md:92):** preferred_vector iki kez encode YOK —
+// `PredicateSet` preferred_vector içerir ama predicate body (mode + weighted
+// predicates) ayrı, preferred_vector ayrı encode edilir.
+//
+// **Verifier (plan md:93):** task tek okuma → snapshot + digest (TOCTOU yok —
+// `verify_measurement_binding` zaten task'ı okur).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **INV-T9 #70 Commit 4b Faz 4 (plan md:89-94):** Task goal commitment — task_id +
+/// predicate body (preferred_vector HARİÇ) + preferred_vector tek canonical temsil.
+///
+/// Preimage: `OSP/TASK-GOAL/V1 || task_id || canonical predicate mode || canonical
+/// weighted predicates (preferred_vector HARİÇ) || preferred_vector option tag ||
+/// preferred_vector canonical value`.
+///
+/// `task_claim_digest` preferred_vector içermez — preferred_vector proof identity'ye
+/// bağlı değildir (reviewer v4 P2-1). Bu digest task goal'ı preferred_vector dahil
+/// bağlar.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+pub(crate) struct TaskGoalDigest([u8; 32]);
+
+impl TaskGoalDigest {
+    /// Faz 4 V2 convention domain separator.
+    const DOMAIN_SEPARATOR: &'static [u8] = b"OSP/TASK-GOAL/V1";
+
+    /// **Tek producer (plan md:91-93):** `Task` üzerinden — task_id + predicate mode +
+    /// weighted predicates (preferred_vector HARİÇ) + preferred_vector. Task tek okuma
+    /// → snapshot + digest (TOCTOU yok — `verify_measurement_binding` zaten task'ı okur).
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute(
+        task: &crate::trajectory::Task,
+    ) -> Result<Self, EngineMeasurementDigestError> {
+        use crate::canonical_encoding::{encode_bytes, encode_f64, encode_u64, encode_u8};
+        use crate::canonical_tags::PredicateModeTag;
+
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(Self::DOMAIN_SEPARATOR);
+
+        // task_id (TaskId = u64).
+        encode_u64(&mut hasher, task.id, "task_id");
+
+        // canonical predicate mode.
+        let mode_tag =
+            PredicateModeTag::try_from(&task.target_predicate_set.mode).map_err(|e| {
+                EngineMeasurementDigestError::StructuralCanonicalization {
+                    detail: e.to_string(),
+                }
+            })?;
+        encode_u8(&mut hasher, mode_tag.as_u8(), "predicate_mode");
+
+        // canonical weighted predicates (preferred_vector HARİÇ). Sort edilir — sıra
+        // bağımsız canonical temsil. Her predicate byte dizisine çevrilip sort + length-prefix.
+        let mut encoded_preds: Vec<Vec<u8>> =
+            Vec::with_capacity(task.target_predicate_set.predicates.len());
+        for wp in &task.target_predicate_set.predicates {
+            encoded_preds.push(Self::encode_weighted_predicate_to_vec(wp)?);
+        }
+        encoded_preds.sort_unstable();
+        encode_u64(&mut hasher, encoded_preds.len() as u64, "predicate_count");
+        for buf in &encoded_preds {
+            encode_bytes(&mut hasher, buf)?;
+        }
+
+        // preferred_vector option tag + canonical value (ayrı — predicate body'de YOK).
+        // Tek canonical temsil: preferred_vector iki kez encode edilmez.
+        match &task.target_predicate_set.preferred_vector {
+            None => {
+                encode_u8(&mut hasher, 0, "preferred_vector_none_tag");
+            }
+            Some(pos) => {
+                encode_u8(&mut hasher, 1, "preferred_vector_some_tag");
+                encode_f64(&mut hasher, pos.x, "preferred_vector_x")?;
+                encode_f64(&mut hasher, pos.y, "preferred_vector_y")?;
+                encode_f64(&mut hasher, pos.z, "preferred_vector_z")?;
+                encode_f64(&mut hasher, pos.w, "preferred_vector_w")?;
+                encode_f64(&mut hasher, pos.v, "preferred_vector_v")?;
+            }
+        }
+
+        Ok(Self(hasher.finalize().into()))
+    }
+
+    /// `WeightedPredicate` → canonical byte dizisi (preferred_vector HARİÇ — preferred_vector
+    /// PredicateSet seviyesinde encode edilir, predicate body'de YOK).
+    ///
+    /// Encoding: axis tag + op tag + threshold (canonical f64) + scope encode +
+    /// required_source tag + weight option + tolerance (canonical f64).
+    fn encode_weighted_predicate_to_vec(
+        wp: &crate::trajectory::WeightedPredicate,
+    ) -> Result<Vec<u8>, EngineMeasurementDigestError> {
+        use crate::canonical_encoding::{push_f64, push_tag, push_u8};
+        use crate::canonical_tags::{CanonicalMetricSourceTag, ComparisonOpTag, PredicateAxisTag};
+
+        let p = &wp.predicate;
+        let mut buf: Vec<u8> = Vec::with_capacity(48);
+
+        // axis tag
+        let axis_tag = PredicateAxisTag::try_from(&p.metric).map_err(|e| {
+            EngineMeasurementDigestError::StructuralCanonicalization {
+                detail: e.to_string(),
+            }
+        })?;
+        push_tag(&mut buf, axis_tag);
+
+        // operator tag
+        let op_tag = ComparisonOpTag::try_from(&p.operator).map_err(|e| {
+            EngineMeasurementDigestError::StructuralCanonicalization {
+                detail: e.to_string(),
+            }
+        })?;
+        push_tag(&mut buf, op_tag);
+
+        // threshold (canonical f64 — NaN reject, -0.0 normalize)
+        push_f64(&mut buf, p.threshold)?;
+
+        // scope encode (Node/Module/Subgraph)
+        Self::push_predicate_scope(&mut buf, &p.scope)?;
+
+        // required_source option (Any/Exact — None → Any)
+        match &p.required_source {
+            None => {
+                push_u8(&mut buf, 0);
+            }
+            Some(src) => {
+                push_u8(&mut buf, 1);
+                let src_tag = CanonicalMetricSourceTag::try_from(src).map_err(|e| {
+                    EngineMeasurementDigestError::StructuralCanonicalization {
+                        detail: e.to_string(),
+                    }
+                })?;
+                push_tag(&mut buf, src_tag);
+            }
+        }
+
+        // weight option (None=All/Any, Some=Weighted)
+        match &wp.weight {
+            None => {
+                push_u8(&mut buf, 0);
+            }
+            Some(w) => {
+                push_u8(&mut buf, 1);
+                push_f64(&mut buf, *w)?;
+            }
+        }
+
+        // tolerance (canonical f64)
+        push_f64(&mut buf, p.tolerance)?;
+
+        Ok(buf)
+    }
+
+    /// `PredicateScope` → canonical byte (Node/Module/Subgraph varyant tag + identity).
+    fn push_predicate_scope(
+        buf: &mut Vec<u8>,
+        scope: &crate::trajectory::PredicateScope,
+    ) -> Result<(), EngineMeasurementDigestError> {
+        use crate::canonical_encoding::{push_bytes, push_u64, push_u8};
+        match scope {
+            crate::trajectory::PredicateScope::Node(id) => {
+                push_u8(buf, 0);
+                push_u64(buf, *id);
+            }
+            crate::trajectory::PredicateScope::Module(name) => {
+                push_u8(buf, 1);
+                push_bytes(buf, name.as_bytes());
+            }
+            crate::trajectory::PredicateScope::Subgraph(ids) => {
+                push_u8(buf, 2);
+                // Subgraph: sorted + length-prefix + per-id. Canonical sıra garantisi.
+                let mut sorted = ids.clone();
+                sorted.sort_unstable();
+                push_u64(buf, sorted.len() as u64);
+                for id in &sorted {
+                    push_u64(buf, *id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
+    pub(crate) fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
 /// Baseline unavailability sebebi. Subject member'ların base/delta dağılımını taşır.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BaselineUnavailableReason {
@@ -721,6 +1285,18 @@ impl EngineMeasurement {
     /// Request digest — authorization zinciri için (Commit 4).
     pub fn request_digest(&self) -> Result<MeasurementRequestDigest, MeasurementDigestError> {
         MeasurementRequestDigest::compute(&self.request)
+    }
+
+    /// **INV-T9 #70 Commit 4b Faz 4 (plan md:84-87):** Tam EngineMeasurement artifact
+    /// commitment. `MeasurementDigest` yalnız `after`'ı bağlar; bu digest `before` +
+    /// `request` + `context`'i de açar (reviewer v5 P0). Tek producer —
+    /// `EngineMeasurementDigest::compute_from_measurement` shared canonical encoder.
+    /// Faz 4 basis builder (Commit 2) bu digest'i consume eder.
+    #[allow(dead_code, reason = "Faz 4 basis builder / Commit 2 consumer")]
+    pub(crate) fn compute_digest(
+        &self,
+    ) -> Result<EngineMeasurementDigest, EngineMeasurementDigestError> {
+        EngineMeasurementDigest::compute_from_measurement(self)
     }
 
     /// **Reviewer v8 P1-1d:** Test-only corrupt constructor — ContextDigestMismatch
@@ -946,6 +1522,20 @@ pub enum MeasurementBindingDerivationError {
     /// Err döndü.
     #[error("measurement verification epoch revision recheck failed: {detail}")]
     RevisionRecheckFailed { detail: String },
+
+    /// **INV-T9 #70 Commit 4b Faz 4 (reviewer v7 P2-1):** Task goal commitment
+    /// computation failure — `TaskGoalDigest::compute` hatası. Semantic ayrım: structural
+    /// canonicalization DEĞİL, task goal (task_id + predicate body + preferred_vector)
+    /// commitment başarısız. Telemetry bu ayrımı korur.
+    #[error("task goal digest computation failed: {detail}")]
+    TaskGoalDigestComputationFailed { detail: String },
+
+    /// **INV-T9 #70 Commit 4b Faz 4 (reviewer v7 P2-1):** Engine measurement artifact
+    /// commitment failure — `EngineMeasurement::compute_digest` hatası. Semantic ayrım:
+    /// structural canonicalization DEĞİL, tam artifact (request + baseline + after +
+    /// context) commitment başarısız.
+    #[error("engine measurement digest computation failed: {detail}")]
+    EngineMeasurementDigestComputationFailed { detail: String },
 }
 
 /// **INV-T9 #70 Commit 4b Faz 3 (reviewer v4 P2-4, v6 P1-2):** Verification epoch
@@ -1161,7 +1751,7 @@ mod hex {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     // === CanonicalSubjectScope (P1-1 v3) ===
@@ -1466,7 +2056,7 @@ mod tests {
 
     /// `MeasurementInputContext` — gerçek `default_raw_five` CoordinateSystem'den üretilir
     /// (Commit 1 pattern — axis implementation identity'i bağlar).
-    fn sample_measurement_input_context() -> MeasurementInputContext {
+    pub(crate) fn sample_measurement_input_context() -> MeasurementInputContext {
         let coords = crate::coords::CoordinateSystem::default_raw_five(
             crate::coords::MetricSource::TreeSitter,
             crate::axes::CohesionAxis::try_with_observed_source(crate::coords::MetricSource::Scip)
@@ -1635,7 +2225,7 @@ mod tests {
 
     // === MeasurementRequestDigest (P0-1) ===
 
-    fn sample_measurement_request() -> MeasurementRequest {
+    pub(crate) fn sample_measurement_request() -> MeasurementRequest {
         let subject = CanonicalSubjectScope::try_new(vec![1, 2]).unwrap();
         use crate::authorization::{CanonicalEdgeIdentity, CanonicalEdgeKind};
         let impact = CanonicalImpactScope::try_new(
@@ -2003,7 +2593,11 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════════════════════
 
     /// Helper: minimal valid claim for digest tests.
-    fn test_claim_for_digest(claim_id: u64, task_id: u64, author: u64) -> crate::witness::Claim {
+    pub(crate) fn test_claim_for_digest(
+        claim_id: u64,
+        task_id: u64,
+        author: u64,
+    ) -> crate::witness::Claim {
         use crate::coords::RawPosition;
         crate::witness::Claim {
             id: claim_id.into(),
@@ -2094,7 +2688,7 @@ mod tests {
     }
 
     /// Helper: minimal MeasuredRawPosition for digest tests.
-    fn test_measured(value: f64) -> crate::coords::MeasuredRawPosition {
+    pub(crate) fn test_measured(value: f64) -> crate::coords::MeasuredRawPosition {
         use crate::coords::{AxisMeasurement, MeasuredRawPosition, MetricSource};
         let axis = AxisMeasurement {
             value,
@@ -2202,11 +2796,299 @@ mod tests {
         // derive eklense bu test yine geçer. "Serialize-only kanıtı" iddiası KALDIRILDI.
         //
         // Deserialize absent kanıtı: gerçek compile-fail test gerekir ama tipler
-        // `pub(crate)` olduğundan external trybuild fixture onu adlandıramaz. Crate içi
+        // `pub(crate)` olduğundan external trybuild fixture onu adandıramaz. Crate içi
         // compile-fail veya derive AST guard Faz 10'da. Şimdilik sadece Serialize
         // impl varlığı (downstream persistence için gerekli minimum).
         fn assert_serializable<T: serde::Serialize>() {}
         assert_serializable::<TaskClaimDigest>();
         assert_serializable::<MeasurementDigest>();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b Faz 4 — EngineMeasurementDigest + MeasurementBaselineDigest
+    // + MeasurementContextDigest + TaskGoalDigest testleri (plan md:166-195)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    use super::{
+        EngineMeasurementDigest, EngineMeasurementDigestError, MeasurementContextDigest,
+        TaskGoalDigest,
+    };
+
+    /// Faz 4 EngineMeasurement fixture — uniform measured values + Available baseline.
+    fn faz4_engine_measurement(value: f64) -> EngineMeasurement {
+        let req = sample_measurement_request();
+        let measured = test_measured(value);
+        let baseline = MeasurementBaseline::Available(measured.clone());
+        let context = sample_measurement_input_context();
+        EngineMeasurement::new(baseline, measured, context, req).expect("context matches request")
+    }
+
+    #[test]
+    fn faz4_engine_measurement_digest_is_deterministic() {
+        // Aynı EngineMeasurement → aynı digest (deterministic BLAKE3).
+        let m1 = faz4_engine_measurement(0.5);
+        let m2 = faz4_engine_measurement(0.5);
+        let d1 = m1.compute_digest().expect("digest compute");
+        let d2 = m2.compute_digest().expect("digest compute");
+        assert_eq!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "same measurement → same digest"
+        );
+        assert_eq!(d1.to_hex().len(), 64, "hex wire format 64 lowercase");
+        assert_eq!(d1.to_hex(), d1.to_hex().to_lowercase(), "lowercase hex");
+    }
+
+    #[test]
+    fn faz4_engine_measurement_digest_mutates_on_after() {
+        // Farklı after → farklı digest (MeasurementDigest(after) commitment).
+        let m1 = faz4_engine_measurement(0.5);
+        let m2 = faz4_engine_measurement(0.6);
+        let d1 = m1.compute_digest().expect("digest compute");
+        let d2 = m2.compute_digest().expect("digest compute");
+        assert_ne!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "different after → different digest"
+        );
+    }
+
+    #[test]
+    fn faz4_engine_measurement_digest_mutates_on_baseline() {
+        // Farklı baseline → farklı digest (MeasurementBaselineDigest(before) commitment).
+        // Reviewer v5 P0: MeasurementDigest yalnız after'ı bağlar — engine digest before'u da açar.
+        let req = sample_measurement_request();
+        let context = sample_measurement_input_context();
+        let after = test_measured(0.5);
+        let baseline_a = MeasurementBaseline::Available(test_measured(0.3));
+        let baseline_b = MeasurementBaseline::Available(test_measured(0.4));
+        let m1 = EngineMeasurement::new(baseline_a, after.clone(), context.clone(), req.clone())
+            .expect("context matches");
+        let m2 = EngineMeasurement::new(baseline_b, after, context, req).expect("context matches");
+        let d1 = m1.compute_digest().expect("digest compute");
+        let d2 = m2.compute_digest().expect("digest compute");
+        assert_ne!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "different baseline → different digest"
+        );
+    }
+
+    #[test]
+    fn faz4_engine_measurement_digest_compute_from_commitments_matches() {
+        // compute_from_measurement == compute_from_commitments (shared canonical encoder).
+        let m = faz4_engine_measurement(0.5);
+        let via_measurement = m.compute_digest().expect("digest compute");
+        let request_digest = m.request_digest().expect("request digest");
+        let baseline_digest = m.before().compute_digest().expect("baseline digest");
+        let after_digest = super::MeasurementDigest::compute(m.after()).expect("after digest");
+        let context_digest =
+            MeasurementContextDigest::compute(m.context()).expect("context digest");
+        let via_commitments = EngineMeasurementDigest::compute_from_commitments(
+            &request_digest,
+            &baseline_digest,
+            &after_digest,
+            &context_digest,
+        )
+        .expect("digest compute from commitments");
+        assert_eq!(
+            via_measurement.as_bytes(),
+            via_commitments.as_bytes(),
+            "compute_from_measurement == compute_from_commitments (shared encoder)"
+        );
+    }
+
+    #[test]
+    fn faz4_measurement_baseline_digest_available_deterministic() {
+        // Available baseline → deterministic digest (shared encoder).
+        let measured = test_measured(0.5);
+        let baseline = MeasurementBaseline::Available(measured);
+        let d1 = baseline.compute_digest().expect("baseline digest");
+        let d2 = baseline.compute_digest().expect("baseline digest");
+        assert_eq!(d1.as_bytes(), d2.as_bytes(), "same baseline → same digest");
+    }
+
+    #[test]
+    fn faz4_measurement_baseline_digest_unavailable_deterministic() {
+        // Unavailable baseline → deterministic digest (reason canonical encoding).
+        let baseline = MeasurementBaseline::Unavailable {
+            reason: BaselineUnavailableReason::AllMembersIntroducedByDelta {
+                members: vec![1, 2, 3],
+            },
+        };
+        let d1 = baseline.compute_digest().expect("baseline digest");
+        let d2 = baseline.compute_digest().expect("baseline digest");
+        assert_eq!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "same unavailable baseline → same digest"
+        );
+    }
+
+    #[test]
+    fn faz4_measurement_baseline_digest_available_vs_unavailable_differ() {
+        // Available vs Unavailable → farklı digest (varyant tag commitment).
+        let available = MeasurementBaseline::Available(test_measured(0.5));
+        let unavailable = MeasurementBaseline::Unavailable {
+            reason: BaselineUnavailableReason::AllMembersIntroducedByDelta {
+                members: vec![1, 2, 3],
+            },
+        };
+        let d1 = available.compute_digest().expect("baseline digest");
+        let d2 = unavailable.compute_digest().expect("baseline digest");
+        assert_ne!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "available vs unavailable → different digest"
+        );
+    }
+
+    #[test]
+    fn faz4_shared_baseline_encoder_raw_matches_canonical_evidence() {
+        // **Non-blocking notu (plan md:207):** MeasurementBaseline::compute_digest() ile
+        // CanonicalTrajectoryEvidenceBaseline::compute_measurement_baseline_digest() aynı
+        // byte format üretir (shared encoder — drift risk kapalı).
+        use crate::authorization::{
+            CanonicalAxisMeasurement, CanonicalTrajectoryEvidenceBaseline,
+            ProvenancedMeasuredResult,
+        };
+        use crate::canonical_tags::CanonicalMetricSourceTag;
+        use crate::coords::MetricSource;
+
+        let measured = test_measured(0.5);
+        let raw_baseline = MeasurementBaseline::Available(measured.clone());
+        let raw_digest = raw_baseline.compute_digest().expect("raw baseline digest");
+
+        // Aynı measured değerleri ile CanonicalTrajectoryEvidenceBaseline::Available kur.
+        let scip = CanonicalMetricSourceTag::try_from(&MetricSource::Scip).unwrap();
+        let mk = |v: f64| CanonicalAxisMeasurement {
+            value: v,
+            source: scip,
+        };
+        let before = ProvenancedMeasuredResult {
+            coupling: mk(measured.coupling.value),
+            cohesion: mk(measured.cohesion.value),
+            instability: mk(measured.instability.value),
+            entropy: mk(measured.entropy.value),
+            witness_depth: mk(measured.witness_depth.value),
+        };
+        let canonical_baseline = CanonicalTrajectoryEvidenceBaseline::Available { before };
+        let canonical_digest = canonical_baseline
+            .compute_measurement_baseline_digest()
+            .expect("canonical baseline digest");
+
+        assert_eq!(
+            raw_digest.as_bytes(),
+            canonical_digest.as_bytes(),
+            "shared encoder: raw MeasurementBaseline digest == canonical evidence baseline digest"
+        );
+    }
+
+    #[test]
+    fn faz4_measurement_context_digest_deterministic() {
+        // Aynı context → aynı digest (canonical axis descriptor encoding).
+        let ctx = sample_measurement_input_context();
+        let d1 = MeasurementContextDigest::compute(&ctx).expect("context digest");
+        let d2 = MeasurementContextDigest::compute(&ctx).expect("context digest");
+        assert_eq!(d1.as_bytes(), d2.as_bytes(), "same context → same digest");
+    }
+
+    #[test]
+    fn faz4_task_goal_digest_deterministic() {
+        // Aynı task → aynı digest (task_id + predicate body + preferred_vector).
+        use crate::trajectory::{PredicateMode, PredicateSet, Task, TaskPolicy, TaskStatus};
+        let task = Task {
+            id: 42,
+            milestone_id: 0,
+            label: "test".to_string(),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![],
+                preferred_vector: None,
+            },
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        let d1 = TaskGoalDigest::compute(&task).expect("task goal digest");
+        let d2 = TaskGoalDigest::compute(&task).expect("task goal digest");
+        assert_eq!(d1.as_bytes(), d2.as_bytes(), "same task → same digest");
+    }
+
+    #[test]
+    fn faz4_task_goal_digest_mutates_on_task_id() {
+        // Farklı task_id → farklı digest.
+        use crate::trajectory::{PredicateMode, PredicateSet, Task, TaskPolicy, TaskStatus};
+        let mk_task = |id: u64| Task {
+            id,
+            milestone_id: 0,
+            label: "test".to_string(),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![],
+                preferred_vector: None,
+            },
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        let d1 = TaskGoalDigest::compute(&mk_task(42)).expect("digest");
+        let d2 = TaskGoalDigest::compute(&mk_task(43)).expect("digest");
+        assert_ne!(
+            d1.as_bytes(),
+            d2.as_bytes(),
+            "different task_id → different digest"
+        );
+    }
+
+    #[test]
+    fn faz4_task_goal_digest_mutates_on_preferred_vector() {
+        // Farklı preferred_vector → farklı digest (predicate body aynıyken).
+        // Plan md:91: preferred_vector ayrı encode edilir (predicate body'de YOK).
+        use crate::coords::RawPosition;
+        use crate::trajectory::{PredicateMode, PredicateSet, Task, TaskPolicy, TaskStatus};
+        let mk_task = |preferred_vector: Option<RawPosition>| Task {
+            id: 42,
+            milestone_id: 0,
+            label: "test".to_string(),
+            target_predicate_set: PredicateSet {
+                mode: PredicateMode::All,
+                predicates: vec![],
+                preferred_vector,
+            },
+            policy: TaskPolicy::default(),
+            allowed_operations: vec![],
+            constraints: vec![],
+            status: TaskStatus::Pending,
+        };
+        let d_none = TaskGoalDigest::compute(&mk_task(None)).expect("digest");
+        let d_some =
+            TaskGoalDigest::compute(&mk_task(Some(RawPosition::default()))).expect("digest");
+        let d_some2 = TaskGoalDigest::compute(&mk_task(Some(RawPosition {
+            x: 0.1,
+            ..RawPosition::default()
+        })))
+        .expect("digest");
+        assert_ne!(
+            d_none.as_bytes(),
+            d_some.as_bytes(),
+            "None vs Some → different digest"
+        );
+        assert_ne!(
+            d_some.as_bytes(),
+            d_some2.as_bytes(),
+            "different preferred_vector → different digest"
+        );
+    }
+
+    #[test]
+    fn faz4_engine_measurement_digest_error_is_constructable() {
+        // Error tipi buerror::Error impl — display çalışır.
+        let err = EngineMeasurementDigestError::NonFiniteRejected;
+        assert_eq!(err.to_string(), "non-finite canonical float rejected");
+        let err = EngineMeasurementDigestError::LengthOverflow { field: "test" };
+        assert!(err.to_string().contains("test"));
     }
 }
