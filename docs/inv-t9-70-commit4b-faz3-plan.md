@@ -1,214 +1,164 @@
-# INV-T9 #70 Commit 4b Faz 3 — Engine Binding & Derivation Plan
+# INV-T9 #70 Commit 4b Faz 3 — Engine Binding & Derivation Plan (v5 APPROVED)
 
-**Tarih:** 2026-07-21
-**WIP branch:** `wip/inv-t9-70-commit4b` (head: `e4c6756`)
+**Tarih:** 2026-07-21 (ilk), 2026-07-22 (v5 closure sync)
+**WIP branch:** `wip/inv-t9-70-commit4b` (head: `813a3e2`)
 **Base:** `baa90a8` (Commit 4a APPROVED 9.9/10)
 **Draft PR:** #81 (review-only, non-mergeable)
 **Önceki:** Faz 1+2 TAMAM (scoped review #1→#4, 1067 osp-core test green)
 
 ---
 
-## Faz 3 sözleşmesi
+## ⚠️ Truth-surface güncellemesi (reviewer v7 P1-3)
 
-Faz 3, Commit 4b'nin kalbidir — presented `EngineMeasurement` token'ını claim/task/subject/impact/delta/revision/context karşısında doğrulayan binding implementation'ı + engine-owned target/loss derivation + `commit_task_claim` refactor.
+**Bu belge v5 APPROVED planını yansıtır.** Önceki sürüm (v5 öncesi) şunları içeriyordu ama
+**gerçekleşmedi** (Faz 3 scope'undan çıkarıldı, sonraki fazlara taşındı):
 
-**Reviewer v2 karar 4 (full binding) + v3 P1-4 (Mismatch vs Derivation ayrımı) + v4 P1-2 (somut Rust error tipi) + v4 P1-3 (disposition sınıflandırma):**
+- ~~engine-owned target/loss derivation~~ → Faz 5 (completion-first PredicateGate refactor)
+- ~~`commit_task_claim` measurement wiring~~ → Faz 8 (caller migration + smart constructor)
+- ~~`build_authorization_context_v2`~~ → Faz 4 (AuthorizationContextV2 consumer)
+- ~~`TaskCommitInput` içine `measurement` alanı~~ → Faz 8
+- ~~`Result<VerifiedMeasurementBinding, ...>`~~ → **gerçek dönüş outer proof**
+  `Result<VerifiedTaskMeasurementBinding, ...>`
 
-- `verify_measurement_binding` → `Result<VerifiedMeasurementBinding, MeasurementBindingVerificationError>`
-- 8 binding check (task/subject/impact/structural_delta/revision/context_digest/current_context/request_digest)
-- `VerifiedMeasurementBinding` basis builder consume eder (re-derivation yok)
-- Mismatch (disposition: Regenerate vs Reject) vs Derivation (system failure) ayrı EngineCommitError
-- `BoundMeasurementSession` current context verify + `verify_unchanged()` binding sonunda
-
----
-
-## Zemin (Faz 1+2'den hazır tipler)
-
-Faz 1+2'de tanımlanan tipler (Faz 3 bunları consume eder):
-
-| Tip | Konum | Faz 3 kullanımı |
-|---|---|---|
-| `TaskValidationError` + `Task::validate_for_commit()` | trajectory.rs | commit_task_claim guard |
-| `MeasurementBindingMismatch` (7 varyant + disposition) | measurement.rs | verify_measurement_binding dönüş |
-| `MeasurementBindingDerivationError` (7 varyant) | measurement.rs | verify_measurement_binding dönüş |
-| `MeasurementBindingVerificationError` (Mismatch \| Derivation) | measurement.rs | verify_measurement_binding dönüş tipi |
-| `MeasurementBindingDisposition` | measurement.rs | navigator retry/reject (Faz 8) |
-| `VerifiedMeasurementBinding` | engine.rs | verify_measurement_binding üretir, basis builder consume |
-| `EngineCommitError::TaskValidation` | engine.rs | `?` yayılım |
-| `EngineCommitError::MeasurementBindingMismatch` | engine.rs | `?` yayılım |
-| `EngineCommitError::MeasurementBindingFailed` | engine.rs | `?` yayılım |
-| `impl From<MeasurementBindingVerificationError> for EngineCommitError` | engine.rs | `?` yayılım |
-| `MeasurementRequest::canonical_evidence()` | measurement.rs | basis builder request snapshot |
-| `TrajectoryLossEvidence<'a>` / `OwnedTrajectoryLossEvidence` | trajectory.rs | gate input + downstream |
-| `TrajectoryEvidenceBaseline<'a>` | trajectory.rs | gate input |
-| `CanonicalTrajectoryEvidenceBaseline` + `try_from_reason` | authorization.rs | basis v2 (Faz 4) |
-| `CanonicalTrajectoryLossEvidence` | authorization.rs | basis v2 (Faz 4) |
-| `check_claim_structure` / `check_raw_position_finite` / `check_vision_raw_with_context` | engine.rs | Q4/Q5 task-bound |
+**Gerçek Faz 3 kapsamı:** standalone `verify_measurement_binding` primitive + drift-detected
+verification epoch + outer opaque proof + digest commitments + task declaration guard +
+type/source regression evidence. Production commit-path enforcement Faz 8'e bırakıldı.
 
 ---
 
-## Implementation (alt-parçalar — her biri WIP commit)
+## Faz 3 sözleşmesi (v5 APPROVED — reviewer turu #6)
 
-### Alt-parça 1: `verify_measurement_binding` helper
+Faz 3, Commit 4b'nin binding primitive çekirdeğidir — presented `EngineMeasurement` token'ını
+claim/task/subject/impact/delta/revision/context karşısında doğrulayan **standalone verifier**.
 
-**Konum:** engine.rs (VerifiedMeasurementBinding ile aynı modül — constructor private)
+**Reviewer v2/v4/v6 kararları (tümü uygulandı):**
 
-**İmza:**
-```rust
-fn verify_measurement_binding(
-    &self,
-    claim: &crate::witness::Claim,
-    task: &crate::trajectory::Task,
-    measurement: &crate::measurement::EngineMeasurement,
-) -> Result<VerifiedMeasurementBinding, crate::measurement::MeasurementBindingVerificationError>
-```
-
-**8 check (reviewer v2 karar 4):**
-
-1. **TaskMismatch:** `claim.task_id == Some(task.id)` — değilse `MeasurementBindingMismatch::TaskMismatch`
-2. **SubjectMismatch:** `derive_task_subject_scope(task)` → `measurement.request().subject()` karşılaştır. Derivation hatası → `SubjectDerivationFailed`; mismatch → `SubjectMismatch { expected, presented }`
-3. **ImpactMismatch:** `derive_impact_scope(claim)` → `measurement.request().impact()`. Derivation → `ImpactDerivationFailed`; mismatch → `ImpactMismatch { expected, presented }`
-4. **StructuralDeltaMismatch:** `canonical_structural_delta_from_claim(claim).digest()` → `measurement.request().structural_delta_digest()`. Derivation → `StructuralCanonicalizationFailed`; mismatch → `StructuralDeltaMismatch { expected, presented }`
-5. **RevisionMismatch:** `self.current_space_view_revision()` → `measurement.request().base_revision()`. Derivation → `RevisionComputationFailed`; mismatch → `RevisionMismatch { expected, presented }`
-6. **ContextDigestMismatch:** `MeasurementInputDigest::compute(measurement.context())` → `measurement.request().measurement_input_digest()`. Derivation → `ContextConstructionFailed`; mismatch → `ContextDigestMismatch { expected, presented }`
-7. **CurrentContextMismatch:** `BoundMeasurementSession::begin(&self.coord_system)` → `MeasurementInputContext::try_new(session.axis_descriptors())` → `measurement.context()` karşılaştır. Derivation → `CurrentContextCaptureFailed`/`ContextConstructionFailed`; mismatch → `CurrentContextMismatch { expected, presented }`. **Önemli:** session sonunda `session.verify_unchanged()` çağrılmalı (reviewer v2 P2-3).
-8. **RequestDigest (commitment derivation):** `MeasurementRequestDigest::compute(measurement.request())` → `VerifiedMeasurementBinding.request_digest`. Bu bir "check" değil, commitment derivation — basis v2'ye taşınır (reviewer scoped P1-5).
-
-**Return:** `VerifiedMeasurementBinding::new(subject, impact, canonical_delta, current_revision, current_context, request_digest)` — modül-private constructor (engine.rs aynı modül).
-
-**Test'ler (Faz 3 içinde):**
-- `verify_measurement_binding_rejects_task_mismatch` (claim.task_id ≠ task.id)
-- `verify_measurement_binding_rejects_subject_mismatch` (re-derived subject ≠ token subject)
-- `verify_measurement_binding_rejects_revision_mismatch` (stale token)
-- `verify_measurement_binding_rejects_current_context_mismatch` (axis drift)
-- `verify_measurement_binding_succeeds_for_valid_token` (exact match)
-- `verify_measurement_binding_no_side_effect_on_failure` (space değişmedi, witness çağrılmadı)
-
-### Alt-parça 2: `TrajectoryLossEvidence` derivation
-
-**Konum:** engine.rs (commit_task_claim içinde)
-
-Engine-owned loss derivation (reviewer v3 P0 — caller target/loss_before veremez):
-
-```rust
-// preferred_vector task'tan derive (None geçerli — reviewer v3 P0)
-let preferred_vector = task.target_predicate_set.preferred_vector;
-
-let (loss_evidence, baseline) = match &measurement.before {
-    crate::measurement::MeasurementBaseline::Available(before_measured) => {
-        match preferred_vector {
-            Some(target) => {
-                let raw_before = before_measured.to_raw(); // MeasuredRawPosition → RawPosition
-                let raw_after = measurement.after().to_raw();
-                let loss_before = trajectory_loss_measured(before_measured, &target);
-                let loss_after = trajectory_loss_measured(measurement.after(), &target);
-                (
-                    TrajectoryLossEvidence::Available { target: &target, loss_after },
-                    TrajectoryEvidenceBaseline::Available { measured_before: before_measured },
-                )
-            }
-            None => (
-                TrajectoryLossEvidence::Unavailable { reason: TrajectoryLossUnavailableReason::NoPreferredVector },
-                TrajectoryEvidenceBaseline::Available { measured_before: before_measured },
-            )
-        }
-    }
-    crate::measurement::MeasurementBaseline::Unavailable { reason } => {
-        // baseline unavailable — loss evidence target olsa bile before yok
-        match preferred_vector {
-            Some(target) => (
-                TrajectoryLossEvidence::Available { target: &target, loss_after: trajectory_loss_measured(measurement.after(), &target) },
-                TrajectoryEvidenceBaseline::Unavailable { reason },
-            ),
-            None => (
-                TrajectoryLossEvidence::Unavailable { reason: TrajectoryLossUnavailableReason::NoPreferredVector },
-                TrajectoryEvidenceBaseline::Unavailable { reason },
-            ),
-        }
-    }
-};
-```
-
-**Önemli:** `trajectory_loss` şu an `ProvenancedRawPosition` (= `MeasuredRawPosition`) alıyor — imza uyumlu. `trajectory_loss_measured` helper veya direkt `trajectory_loss` kullan.
-
-### Alt-parça 3: `commit_task_claim` refactor
-
-**Konum:** engine.rs:529-672 (mevcut)
-
-**Yeni guard sırası (reviewer v2 karar 2 + v4 P2-2):**
-```
-1. Q4 structural syntax: check_claim_structure(input.claim)  ← claim.computed_raw'a dokunmaz
-2. Task bind: TaskBoundClaim kurulumu (claim.task_id yok → PermissionDenied)
-3. Task declaration validation: bound.task.validate_for_commit()?  ← TaskValidation (tag 7)
-4. Measurement binding: verify_measurement_binding(claim, task, &measurement)?  ← MeasurementBindingMismatch/Failed (tag 8)
-5. Verified measurement value validation: check_raw_position_finite(claim.id, "measurement.after", &measurement.after().to_raw())?  ← binding sonrası (scoped P2-2)
-6. Q5 vision: check_vision_raw_with_context(claim.id, &measurement.after().to_raw(), &vision_context)?  ← raw_after (P0-2)
-7. PredicateGate: evaluate(measured_after + TrajectoryEvidenceBaseline + TrajectoryLossEvidence + target)  ← completion-first (Faz 5 refactor öncesi mevcut gate)
-8. Q6 rule check
-9. build_authorization_context_v2(measurement, verified_binding, baseline, loss_evidence)  ← re-derivation yok
-10. witness
-```
-
-**ÖNEMLİ — TaskCommitInput henüz değişmiyor (Faz 8):** Mevcut `TaskCommitInput { claim, omega, task_resolver, target, loss_before, measured }` korundu (Faz 1'de TODO eklendi). Faz 3'te commit_task_claim bu field'ları kullanmaya DEVAM EDER — ama `target`/`loss_before`'u caller'dan değil engine-owned derivation'dan alacak şekilde refactor edilir. `measured` field'ı ise `EngineMeasurement`'a dönüşür — ama bu Faz 8'de (caller migration ile).
-
-**Faz 3 geçici yaklaşımı:** commit_task_claim içine `measurement` parametresi EKLEME — bunun yerine mevcut `input.measured`'ı kullanıp, engine-owned target/loss derivation'ı uygula. verify_measurement_binding için geçici olarak `input`'tan TaskBoundClaim + dummy EngineMeasurement kurmak gerekebilir. **Bu Faz 3'ün en karmaşık noktası** — TaskCommitInput smart constructor Faz 8'e kadar beklerse, verify_measurement_binding çağrılamaz (EngineMeasurement yok).
-
-**Çözüm seçenekleri:**
-- **Seçenek A (önerilen):** Faz 3'te TaskCommitInput'a `measurement: EngineMeasurement` field'ı EKLE (target/loss_before/measured korunsun — backward-compat). commit_task_claim measurement field'ını kullanır. Faz 8'de target/loss_before/measured kaldırılır. Bu Faz 3'ü mümkün kılar.
-- **Seçenek B:** Faz 3'ü erteleyip önce Faz 8 (caller migration + smart constructor) yap. Ama plan sırasını bozar.
-
-**Seçenek A'yı uygula** — TaskCommitInput'a `measurement` field'ı ekle (Option veya zorunlu). commit_task_claim measurement kullanır.
-
-### Alt-parça 4: `build_authorization_context_v2`
-
-**Konum:** engine.rs:669-822 (mevcut build_authorization_context refactor)
-
-**Değişiklikler:**
-- Parametre: `verified_binding: &VerifiedMeasurementBinding` (re-derivation yok)
-- `measured_result` (line 765-770) → `measurement.after()`'dan (token authority)
-- `MeasurementInputContext::try_from(&coord_system)` (line 779-780) → `verified_binding.current_context()` (drift kapatma — reviewer v3)
-- `measurement_input_digest` → `verified_binding.current_context()`'ten compute veya `measurement.request().measurement_input_digest()`
-- Basis v2 field'ları (Faz 4'te struct değişir ama Faz 3 wiring hazırlar)
-
-**Dikkat:** build_authorization_context_v2 henüz v2 struct KULLANMAZ (Faz 4 v2 struct'ı tanımlar). Faz 3 mevcut v1 AuthorizationBasis'i doldurur ama verified_binding'den alarak — drift kapatma.
+- `verify_measurement_binding` → `Result<VerifiedTaskMeasurementBinding, MeasurementBindingVerificationError>`
+  (outer opaque proof — task/claim/measured-result kimliği taşır)
+- `VerificationEpoch::with_epoch` — all-path drift-detected finalization (session başladıktan
+  sonraki tüm yollar coord finalization + revision re-verify'dan geçer)
+- `VerifiedTaskMeasurementBinding` — `Clone` YOK (cross-context substitution protection;
+  same-context replay Faz 8 commit-ledger)
+- Drift ≠ Derivation ayrımı — `MeasurementBindingDriftError` ayrı typed family
+- `EngineMeasurement` origin invariant (Faz 1: Deserialize absent + `pub(crate)` new) +
+  Faz 3 AST source-structure regression guard
+- `commit_task_claim` task declaration guard Q5 öncesi (tag 7)
 
 ---
 
-## CI doğrulaması (her alt-parça sonrası)
+## Faz 3 implementation (3 WIP commit — `a3fdeb1..813a3e2`)
+
+### Commit 1: `wip(4b-faz3-verifier)` (96ca02c)
+
+**`verify_measurement_binding` standalone primitive:**
+
+- **Encoder nötr primitif** (`canonical_encoding.rs`): `encode_axis_components` — auth tipi
+  tanımaz, cycle kapalı. v1 `AuthorizationBasisDigest` byte contract korunur.
+- **TaskClaimDigest + MeasurementDigest** (`measurement.rs`): `Serialize`-only (Deserialize
+  absent). Stable canonical source tag, length-prefixed author (AgentId u64), normalized float.
+- **Drift error ayrımı** (`measurement.rs`): `MeasurementBindingDriftError` (3 varyant:
+  CoordinateContextChanged / SpaceRevisionChanged / BothChanged) +
+  `MeasurementBindingDerivationError::RevisionRecheckFailed`.
+- **EngineCommitError mapping** (reviewer v6 #1): tek kapsayıcı
+  `MeasurementBindingVerification(#[from])` + üç alt `From`. Legacy varyantlar `#[from]` kaldırıldı.
+- **VerificationEpoch** (`engine.rs`): `with_epoch` all-path finalization. Capture failure →
+  Derivation; gözlenen değişim → Drift. Precedence: coord > revision recheck failed > revision
+  changed > ordinary.
+- **VerifiedTaskMeasurementBinding** (`engine.rs`): `Clone` YOK, `into_parts(self)` consuming
+  projection (Faz 4 basis builder).
+- **verify_measurement_binding** (`engine.rs`): 7 validation check (Task/Subject/Impact/
+  StructuralDelta/Revision/ContextDigest/CurrentContext) + commitment derivation.
+- **Single-producer AST guard** (`tests/engine_measurement_single_producer.rs`): syn source
+  regression guard. **Reviewer v7 hardening:** exact cfg(test) ayrımı (substring false-positive
+  kapandı), fail-closed scan (read/parse error → test fail), struct literal bypass detection
+  (production `EngineMeasurement { ... }` count == 0).
+
+### Commit 2: `wip(4b-faz3-guard)` (be14875)
+
+**`commit_task_claim` declaration guard (tag 7):**
+
+- `bound.task.validate_for_commit()?` — task bind sonrası, Q5 vision öncesi.
+- `validate_for_commit` `#[allow(dead_code)]` kaldırıldı (artık wired).
+- TaskBoundClaim semantic contract doc-comment: identity binding only, declaration validity ayrı.
+
+### Commit 3: `wip(4b-faz3-contract)` (813a3e2)
+
+**Faz 5 contract + non-forgeability + workspace closure:**
+
+- TrajectoryLossEvidence Faz 5 completion-first contract notu (`trajectory.rs` doc-comment).
+- `tests/measurement_binding_typelevel.rs` — trybuild harness. External crate
+  VerifiedTaskMeasurementBinding tipini göremez (`pub(crate)`).
+- Workspace closure: osp-core + downstream crates green (osp-desktop pre-existing breakage
+  INV-T9 #80 — Faz 11 kapsamında).
+
+---
+
+## Test matrisi (reviewer v7 P1-1 closure)
+
+**osp-core lib: 1067 → 1094 (+27 test) + integration harness'lar:**
+
+- 1 pozitif (`succeeds_for_valid_token`)
+- 6 mismatch check-order-aware (Task/Subject/Impact/StructuralDelta/Revision + no-state-mutation)
+- SubjectDerivationFailed gerçek verify_measurement_binding çağrısı ile (module-scope predicate)
+- 3 drift finalize_verification ile (CoordinateContextChanged / SpaceRevisionChanged / BothChanged)
+- Derivation mapping pattern kanıtı (Subject test single-source-of-truth)
+- ContextDigestMismatch / CurrentContextMismatch — constructor defensive verify yüzünden
+  unreachable (doc-level assertion; Faz 12 test infra)
+- ABA pinleme rename: `space_view_revision_changes_when_sequence_increments`
+- 12 digest coverage (task_claim/measurement mutasyon + stable source tag + -0.0 + non-finite)
+- 5 single-producer AST guard (production call + struct literal + exact cfg test + red-kanıt)
+- 1 trybuild non-forgeability
+
+---
+
+## CI doğrulaması (yerel — remote GitHub CI görünmüyor)
 
 ```bash
-cargo fmt --all -- --check
-RUSTFLAGS="-D warnings" cargo build -p osp-core --lib
-RUSTFLAGS="-D warnings" cargo test -p osp-core --lib  # 1067 → ~1075+
+cargo fmt --all -- --check  # clean
+RUSTFLAGS="-D warnings" cargo test -p osp-core --lib  # 1094 passed
+RUSTFLAGS="-D warnings" cargo test -p osp-core --test engine_measurement_single_producer  # 5 passed
+RUSTFLAGS="-D warnings" cargo test -p osp-core --test measurement_binding_typelevel  # 1 passed
+# Workspace: osp-mcp/osp-cli/osp-analyzer/osp-llm-runtime/osp-spike check green
+# osp-desktop: PRE-EXISTING breakage (INV-T9 #80, Faz 11)
 ```
 
-Workspace build her WIP commit'te doğrulanmaz (Faz 8 caller migration öncesi MCP/CLI kırılabilir). Sadece osp-core lib + test.
+---
+
+## Faz 3 closure iddiası (reviewer v6/v7 nihai metin)
+
+Measurement-binding verifier, coordinate context'i ve monotonik space revision'ını
+optimistic consistency validation altında gözlemleyen drift-detected verification epoch ile
+oluşturuldu. Session başladıktan sonraki bütün yollar coordinate finalization'dan geçirildi;
+revision baseline'ı başarıyla capture edilen yollar verification sonunda yeniden ölçülerek
+karşılaştırıldı. Capture failure, derivation; gözlenen değişim, drift olarak modellendi. Mevcut
+Faz-1 `VerifiedMeasurementBinding` modeli korunurken task, claim ve measured-result kimlikleri
+clone edilemeyen outer opaque proof içinde bağlandı. Outer proof cross-context substitution'ı
+engeller; same-context replay ve idempotency Faz 8 commit-ledger sorumluluğudur.
+`EngineMeasurement` deserialize edilemez ve crate-private producer yüzeyi AST tabanlı
+source-regression guard ile `measure_task_delta` call-site'ına pinlenmiştir. Commitment encoding
+stable canonical tag'ler, length-prefixed author identity ve normalized float encoding kullanır.
+Task declaration guard Q5 öncesine bağlanmış; ordering ve no-mutation yolları doğrulanmıştır.
+Production enforcement Faz 8'e bırakılmıştır.
 
 ---
 
-## Risk & notlar
+## Sonraki fazlar (Faz 3 sonrası — net sınırlar)
 
-- **TaskCommitInput smart constructor Faz 8:** Faz 3 `measurement` field'ı ekler (Seçenek A), target/loss_before/measured Faz 8'de kaldırılır.
-- **PredicateGate completion-first Faz 5:** Faz 3 mevcut gate kullanır (loss_before/loss_after skalar). Faz 5 typed TrajectoryLossEvidence gate input'a refactor. Faz 3 wiring hazırlar.
-- **AuthorizationBasis v2 struct Faz 4:** Faz 3 v1 struct'ı doldurur (verified_binding'den), Faz 4 v2 struct + custom Deserialize + validate_v2.
-- **BoundMeasurementSession verify_unchanged:** binding check 7 sonrası çağrılmalı (reviewer v2 P2-3) — current context capture + verify.
-- **WIP bazlı:** her alt-parça WIP commit + push. draft PR #81 incremental review. Final tüm fazlar bitince squash.
-
----
-
-## Sonraki fazlar (Faz 3 sonrası)
-
-- Faz 4: AuthorizationBasis v1→v2 (struct + validate_v2 + custom Deserialize + DOMAIN_SEPARATOR split + v1 frozen fixture + v2 golden)
-- Faz 5: PredicateGate completion-first refactor (TrajectoryLossEvidence gate input)
-- Faz 6: Navigator state migration (current_loss Option + typed progression)
-- Faz 7: Downstream typed loss (TaskCommitResult.evaluation, TrajectoryEvidence typed baseline, MCP JSON)
-- Faz 8: Caller migration + TaskCommitInput smart constructor (target/loss_before/measured kaldır)
-- Faz 9: Deprecation + module-wide syn AST + legacy_projection modülü
-- Faz 10: trybuild compile-fail guards
-- Faz 11: #80 osp-desktop fix
-- Faz 12: Tests (tüm matrisler + red-test'ler)
-- Faz 13: CI + truth-surface sync + squash to atomic commit + push
+- **Faz 4:** `AuthorizationContextV2` + `build_authorization_context_v2` (outer proof
+  `into_parts` consume) + custom Deserialize (untrusted → verify) + projection accessor'lar
+- **Faz 5:** `TrajectoryLossEvidence::NotRequired` + completion-first PredicateGate refactor
+  (atomik — producer + consumer + owned eşlenik + gate refactor + authorization wiring)
+- **Faz 8:** Caller migration (navigator/MCP `measure_task_delta` infra) + `TaskCommitInput`
+  smart constructor + `commit_task_claim` `verify_measurement_binding` production wiring +
+  commit-ledger (idempotency/replay)
+- **Faz 9:** General AST call-count suite
+- **Faz 10:** trybuild type-suite genişletme
+- **Faz 11:** osp-desktop fix (#80)
+- **Faz 12:** Tests (tüm matrisler + EngineMeasurement test-only corrupt constructor ile
+  tam mismatch/derivation/drift coverage)
 
 ---
 
-*Bu belge INV-T9 #70 Commit 4b Faz 3 implementation planıdır. Faz 1+2 tamamlandı (scoped review #1→#4, 1067 osp-core test green). Faz 3 Commit 4b'nin kalbidir — engine binding & derivation.*
+*Bu belge INV-T9 #70 Commit 4b Faz 3 v5 APPROVED implementation planıdır. Reviewer turu #6
+APPROVE sonrası, reviewer turu #7 REQUEST CHANGES (P1-3 truth-surface sync) ile güncellendi.
+Gerçek implementation `a3fdeb1..813a3e2` aralığındadır.*

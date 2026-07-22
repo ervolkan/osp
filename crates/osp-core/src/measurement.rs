@@ -890,6 +890,18 @@ pub enum MeasurementBindingDerivationError {
         source: MeasurementDigestError,
     },
 
+    /// **INV-T9 #70 Commit 4b Faz 3 (reviewer v7 P2-1):** Measured-result commitment
+    /// computation failure — `MeasurementDigest::compute` hatası. Semantic ayrım:
+    /// structural delta canonicalization DEĞİL, measured-result (5-axis) commitment
+    /// başarısız. Telemetry bu ayrımı korur.
+    #[error("measurement result digest computation failed: {detail}")]
+    MeasurementResultDigestComputationFailed { detail: String },
+
+    /// **INV-T9 #70 Commit 4b Faz 3 (reviewer v7 P2-1):** Task-claim binding commitment
+    /// computation failure — `TaskClaimDigest::compute` hatası.
+    #[error("task-claim binding digest computation failed: {detail}")]
+    TaskClaimDigestComputationFailed { detail: String },
+
     /// **INV-T9 #70 Commit 4b Faz 3 (reviewer v6 P1-2):** Verification epoch sonunda
     /// revision yeniden hesaplanamadı. Capture başarılıydı ama final re-verify hatası —
     /// sistem hatası (derivation family). `current_space_view_revision` final çağrısı
@@ -2146,12 +2158,17 @@ mod tests {
     }
 
     #[test]
-    fn task_claim_digest_is_serialize_only() {
-        // Reviewer v6 P2-1: Deserialize absent — trusted value, wire bypass kapalı.
-        // Bu test type-level: serde::Deserialize impl olmadığını compile-time kanıtlar.
-        // (Gerçek compile-fail test Faz 10 trybuild'de — burada doc assertion.)
-        fn assert_serialize_only<T: serde::Serialize>() {}
-        assert_serialize_only::<TaskClaimDigest>();
-        assert_serialize_only::<MeasurementDigest>();
+    fn task_claim_and_measurement_digests_are_serializable() {
+        // **Reviewer v7 P2-2 (dürüst adlandırma):** Bu test yalnız `Serialize` impl
+        // varlığını doğrular — `Deserialize` absent OLDUĞUNU kanıtlamaz. Eğer her iki
+        // derive eklense bu test yine geçer. "Serialize-only kanıtı" iddiası KALDIRILDI.
+        //
+        // Deserialize absent kanıtı: gerçek compile-fail test gerekir ama tipler
+        // `pub(crate)` olduğundan external trybuild fixture onu adlandıramaz. Crate içi
+        // compile-fail veya derive AST guard Faz 10'da. Şimdilik sadece Serialize
+        // impl varlığı (downstream persistence için gerekli minimum).
+        fn assert_serializable<T: serde::Serialize>() {}
+        assert_serializable::<TaskClaimDigest>();
+        assert_serializable::<MeasurementDigest>();
     }
 }
