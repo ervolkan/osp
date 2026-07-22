@@ -24,21 +24,20 @@ const TARGET_TYPE: &str = "EngineMeasurement";
 const TARGET_METHOD: &str = "new";
 const EXPECTED_CALLER: &str = "measure_task_delta";
 
-/// **P1-2a (reviewer v7):** cfg attribute exact test ayrımı.
-/// `#[cfg(test)]` → test (dışla). `#[cfg(not(test))]` → production (TARAMAYA DEVAM ET).
-/// `#[cfg(any(test, feature))]` → belirsiz, TARAMAYA DEVAM ET (safe default).
-/// `#[cfg_attr(test, ...)]` → test bağlamında attr uygulanır → dışla.
+/// **P1-2a/b (reviewer v8):** cfg(test) exact kontrolü — syntax kesin.
+/// `#[cfg(test)]` → test (dışla). `#[cfg(not(test))]` → production (taramaya devam).
+/// `#[cfg_attr(test, ...)]` → **DIŞLAMA SEBEBİ DEĞİL** (cfg_attr item'ı kaldırmaz,
+/// yalnız koşul doğruysa ek attribute uygular). Reviewer v8: cfg_attr production
+/// kodunu false-positive dışlıyordu.
+/// Modül adı heuristic KALDIRILDI — `mod tests` `#[cfg(test)]` taşımıyorsa production
+/// kodudur ve taranmalı. Sadece syntax olarak kesin `#[cfg(test)]` dışlar.
 fn is_exact_cfg_test(attr: &syn::Attribute) -> bool {
     let syn::Meta::List(meta_list) = &attr.meta else {
         return false;
     };
     let path_str = meta_list.path.to_token_stream().to_string();
-    if path_str == "cfg_attr" {
-        let tokens = meta_list.tokens.to_token_stream().to_string();
-        let trimmed = tokens.trim();
-        return trimmed == "test" || trimmed.starts_with("test,");
-    }
     if path_str != "cfg" {
+        // cfg_attr DAHİL — dışlama sebebi değil.
         return false;
     }
     let tokens = meta_list.tokens.to_token_stream().to_string();
@@ -47,11 +46,6 @@ fn is_exact_cfg_test(attr: &syn::Attribute) -> bool {
 
 fn has_exact_cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(is_exact_cfg_test)
-}
-
-fn is_test_module(ident: &str) -> bool {
-    let lower = ident.to_lowercase();
-    lower == "tests" || lower == "test" || lower.starts_with("tests_") || lower.ends_with("_tests")
 }
 
 fn is_target_call(expr: &syn::Expr) -> bool {
@@ -115,13 +109,15 @@ impl<'ast> Visit<'ast> for ConstructCollector {
     fn visit_item(&mut self, item: &'ast Item) {
         match item {
             Item::Mod(item_mod) => {
+                // **P1-2b (reviewer v8):** modül adı heuristic KALDIRILDI.
+                // Sadece `#[cfg(test)]` (syntax kesin) dışlar. `mod tests` without
+                // `#[cfg(test)]` production kodudur ve taranmalı.
                 let is_exact_cfg = has_exact_cfg_test(&item_mod.attrs);
-                let is_test_mod_name = is_test_module(&item_mod.ident.to_string());
-                if is_exact_cfg || is_test_mod_name {
+                if is_exact_cfg {
                     self.test_depth += 1;
                 }
                 visit_item(self, item);
-                if is_exact_cfg || is_test_mod_name {
+                if is_exact_cfg {
                     self.test_depth = self.test_depth.saturating_sub(1);
                 }
             }
@@ -362,6 +358,61 @@ fn guard_exact_cfg_test_excludes_real_cfg_test() {
         0,
         "exact cfg(test) must exclude test-only code from scan"
     );
+}
+
+#[test]
+fn guard_cfg_attr_does_not_exclude_production() {
+    // **P1-2a (reviewer v8):** `#[cfg_attr(test, allow(dead_code))]` production kodunu
+    // dışlamaz. cfg_attr item'ı kaldırmaz; yalnız koşul doğruysa ek attribute uygular.
+    // Önceki guard bu production fonksiyonu false-positive dışlıyordu.
+    let synthetic = r#"
+        #[cfg_attr(test, allow(dead_code))]
+        fn production_under_cfg_attr() {
+            let _ = crate::measurement::EngineMeasurement::new(a, b, c, d);
+        }
+    "#;
+    let file = syn::parse_file(synthetic).unwrap();
+    let mut collector = ConstructCollector::new("synthetic.rs");
+    syn::visit::visit_file(&mut collector, &file);
+    let calls: Vec<&ConstructSite> = collector
+        .constructs
+        .iter()
+        .filter(|c| c.kind == ConstructKind::Call)
+        .collect();
+    assert_eq!(
+        calls.len(),
+        1,
+        "cfg_attr(test, ...) must NOT exclude production code — cfg_attr ≠ cfg(test)"
+    );
+    assert_eq!(calls[0].enclosing_fn, "production_under_cfg_attr");
+}
+
+#[test]
+fn guard_test_named_module_without_cfg_test_is_scanned() {
+    // **P1-2b (reviewer v8):** modül adı heuristic KALDIRILDI. `mod tests` without
+    // `#[cfg(test)]` production kodudur ve taranmalı. Önceki guard `*_tests` adlı
+    // production modüllerini dışlıyordu.
+    let synthetic = r#"
+        mod compatibility_tests {
+            pub(crate) fn production_inside_test_named_module() {
+                let _ = crate::measurement::EngineMeasurement::new(a, b, c, d);
+            }
+        }
+    "#;
+    let file = syn::parse_file(synthetic).unwrap();
+    let mut collector = ConstructCollector::new("synthetic.rs");
+    syn::visit::visit_file(&mut collector, &file);
+    let calls: Vec<&ConstructSite> = collector
+        .constructs
+        .iter()
+        .filter(|c| c.kind == ConstructKind::Call)
+        .collect();
+    assert_eq!(
+        calls.len(),
+        1,
+        "test-named module without #[cfg(test)] must be scanned as production"
+    );
+    assert_eq!(calls[0].enclosing_fn, "production_inside_test_named_module");
 }
 
 #[allow(dead_code)]

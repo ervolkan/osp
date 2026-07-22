@@ -722,6 +722,44 @@ impl EngineMeasurement {
     pub fn request_digest(&self) -> Result<MeasurementRequestDigest, MeasurementDigestError> {
         MeasurementRequestDigest::compute(&self.request)
     }
+
+    /// **Reviewer v8 P1-1d:** Test-only corrupt constructor — ContextDigestMismatch
+    /// fixture. Production `new()` defensive cross-field verify yapar (context digest ≠
+    /// request.measurement_input_digest imkânsız). Bu helper defensive verify'ı atlayıp
+    /// tutarsız token üretir — sadece `verify_measurement_binding` check 6 test'i için.
+    ///
+    /// **Güvenlik:** `#[cfg(test)]` — production build'de yok. Constructor bypass DEĞİL:
+    /// bu helper ile üretilen token verify_measurement_binding'de ContextDigestMismatch
+    /// üretir (token içi tutarsızlık tespit edilir).
+    #[cfg(test)]
+    #[allow(
+        dead_code,
+        reason = "engine.rs test: verify_rejects_context_digest_mismatch"
+    )]
+    pub(crate) fn corrupt_request_context_digest_for_test(
+        before: MeasurementBaseline,
+        after: crate::coords::MeasuredRawPosition,
+        context: crate::authorization::MeasurementInputContext,
+        mut request: MeasurementRequest,
+    ) -> Self {
+        // Defensive verify'ı atla — request'in measurement_input_digest'ini rastgele
+        // bytes ile değiştir (context ile tutarsız). Field private olduğu için unsafe
+        // erişim gerekmez — request'i yeniden kur.
+        let bogus_digest = MeasurementInputDigest::from_bytes([0xAA; 32]);
+        request = MeasurementRequest {
+            subject: request.subject,
+            impact: request.impact,
+            base_revision: request.base_revision,
+            structural_delta_digest: request.structural_delta_digest,
+            measurement_input_digest: bogus_digest,
+        };
+        Self {
+            before,
+            after,
+            context,
+            request,
+        }
+    }
 }
 // NOT: Deserialize intentionally absent — `EngineMeasurement` authority token, wire'dan
 // restore edilemez. Commit 4'te `UnverifiedWire + verify_against` iki aşamalı model.

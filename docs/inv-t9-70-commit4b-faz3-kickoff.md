@@ -1,5 +1,16 @@
 # INV-T9 #70 Commit 4b Faz 3 — Yeni Oturum Kickoff Mesajı
 
+> **⚠️ ARCHIVED (reviewer v8 P1-3):** Bu kickoff mesajı **eski Faz 3 sözleşmesini**
+> anlatıyor (engine-owned loss derivation, commit_task_claim verifier wiring,
+> build_authorization_context_v2, TaskCommitInput measurement field, inner
+> VerifiedMeasurementBinding dönüş, e4c6756 head, 1067 test). **GÜNCEL DEĞİL.**
+>
+> Gerçek Faz 3 kapsamı (standalone verifier, outer proof, drift epoch, 1102 test)
+> için: `docs/inv-t9-70-commit4b-faz3-plan.md` (v8 closure sync).
+>
+> Bu doc tarihsel referans olarak korunur — kickoff mesajı örneği. Faz 3 implementation
+> commit 1-5 aralığında (`96ca02c`..pending).
+
 Aşağıdaki mesajı yeni oturumda bana paste et:
 
 ---

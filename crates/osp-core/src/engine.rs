@@ -649,6 +649,26 @@ impl SpaceEngine {
         operation: EpochOperationResult<R>,
         coordinate_drift: Result<(), crate::coords::CoordinateMeasurementError>,
     ) -> Result<R, crate::measurement::MeasurementBindingVerificationError> {
+        // **Reviewer v8 P1-1:** revision_after engine'den alınıp pure decision function'a
+        // pass edilir. Bu sayede combine_verification_results test edilebilir (mock engine
+        // gerekmeden RevisionRecheckFailed kolu doğrulanabilir).
+        let revision_after = self.current_space_view_revision();
+        Self::combine_verification_results(operation, coordinate_drift, revision_after)
+    }
+
+    /// **Reviewer v8 P1-1:** Pure decision combiner — engine state bağımlılığı yok.
+    /// `finalize_verification` production'ta `current_space_view_revision()` sonucunu
+    /// `revision_after` olarak verir; testler synthetic `Err(...)` vererek
+    /// `RevisionRecheckFailed` kolunu doğrudan doğrular.
+    #[allow(
+        dead_code,
+        reason = "Faz 3 test matrisi consumer — combine_verification_results test'leri"
+    )]
+    fn combine_verification_results<R>(
+        operation: EpochOperationResult<R>,
+        coordinate_drift: Result<(), crate::coords::CoordinateMeasurementError>,
+        revision_after: Result<crate::authorization::SpaceViewRevision, String>,
+    ) -> Result<R, crate::measurement::MeasurementBindingVerificationError> {
         use crate::measurement::{
             MeasurementBindingDerivationError, MeasurementBindingDriftError,
             MeasurementBindingVerificationError as VerifErr,
@@ -668,8 +688,7 @@ impl SpaceEngine {
             }
         };
 
-        // Revision re-verify — baseline capture edildi, final revision hesapla.
-        let revision_after = self.current_space_view_revision();
+        // Revision re-verify — baseline capture edildi, final revision karşılaştır.
         match (coordinate_drift, revision_after) {
             // İkisi de Ok — revision before==after kontrolü.
             (Ok(()), Ok(after)) => {
@@ -5028,8 +5047,10 @@ v = 0.5
 
     #[test]
     fn verify_measurement_binding_no_state_mutation_on_failure() {
-        // Reviewer P3: mismatch durumunda engine state değişmez.
-        // space (node/edge count), t_c, audit/event-ledger boş (in-memory engine).
+        // **Reviewer v8 P2-2 (dürüst kapsam):** mismatch durumunda selected state
+        // cardinality (node/edge count) ve t_c korunur. Full space equality, coordinate
+        // generation, event/audit state Faz 12 carryover (in-memory engine'de audit/
+        // event-ledger boş; full snapshot test'i Faz 12'de persistent engine ile).
         let engine = make_measurement_engine();
         let engine_before_t_c = engine.t_c;
         let engine_before_space_node_count = engine.space.nodes.len();
@@ -5251,82 +5272,203 @@ v = 0.5
 
     #[test]
     fn verify_reports_revision_recheck_failed() {
-        // **P1-1 (reviewer v7):** Derivation — RevisionRecheckFailed. finalize_verification:
-        // operation Ok + coord Ok + revision_after Err → Derivation(RevisionRecheckFailed).
-        // Revision_after hatası simüle etmek zor — engine.rs current_space_view_revision
-        // infallible pratikte. Bu test finalize_verification'ın Err map'ini doğrular
-        // (defensively fallible yolu). Synthetic operation ile çağrılır.
-        // NOT: current_space_view_revision gerçekten Err üretemiyoruz (space digest
-        // infallible). Bu test yolu unreachable invariant — reviewer P2-5 kapsamında
-        // "test ÜRETİLMEZ" ama finalize_verification'ın match kolu doc olarak pinli.
-        // Test HERE: synthetic revision_after Err simüle eden helper gerekirdi ama
-        // finalize_verification engine.current_space_view_revision çağırıyor (param değil).
-        // Bu yüzden bu varyant Faz 12'de mockable engine ile test edilir. Şimdilik
-        // skip — doc-level assertion olarak korunur.
-        // Test adı korunur (matris coverage listesi için) ama içerik TODO.
-        // TODO Faz 12: mockable revision producer ile RevisionRecheckFailed test.
-    }
-
-    #[test]
-    fn verify_reports_current_context_capture_failed() {
-        // **P1-1 (reviewer v7):** Derivation — CurrentContextCaptureFailed.
-        // BoundMeasurementSession::begin Err → capture failure (drift DEĞİL).
-        // begin hatası coord_system axis descriptor hatası gerektirir — default engine'da
-        // reachable değil. Bu test with_epoch'in begin Err map'ini doğrulamak için
-        // malformed coord_system gerekir. Default engine'da begin infallible.
-        // TODO Faz 12: malformed coord_system fixture ile CurrentContextCaptureFailed test.
-        // Şimdilik skip — capture failure yolu doc-level assertion.
-    }
-
-    #[test]
-    fn verify_rejects_context_digest_mismatch() {
-        // **P1-1 (reviewer v7):** Check 6 — ContextDigestMismatch (token içi tutarsızlık).
-        // EngineMeasurement::new defensive cross-field verify yapıyor — token üretimi
-        // sırasında context digest ≠ request.measurement_input_digest imkânsız. Bu yüzden
-        // gerçek verify_measurement_binding bu varyantı üretemez (constructor invariant).
-        // Check 6 reachable değildir — constructor防御 ile kapatılmış.
-        // TODO Faz 12: EngineMeasurement test-only corrupt constructor ile token içi
-        // tutarsızlık fixture. Şimdilik doc-level assertion: constructor defensive verify
-        // check 6'yı upstream'den kapatır.
-    }
-
-    #[test]
-    fn verify_rejects_current_context_mismatch() {
-        // **P1-1 (reviewer v7):** Check 7 — CurrentContextMismatch (epoch context vs token).
-        // Token context ile engine'in epoch context'i farklı olmalı. Default engine'da
-        // coord_system sabit → epoch context == token context. Bu varyantı üretmek için
-        // token üretildikten sonra coord_system axis descriptor değiştirmek gerek
-        // (interior mutability). Default engine'da axis'ler immutable.
-        // TODO Faz 12: axis descriptor mutation fixture ile CurrentContextMismatch test.
-        // Şimdilik doc-level assertion — check 7 drift-detection coverage.
-    }
-
-    #[test]
-    fn verify_maps_derivation_failures_through_same_pattern() {
-        // **P1-1 (reviewer v7):** Derivation mapping pattern kanıtı.
-        // SubjectDerivationFailed test'i (module-scope predicate, yukarıda) gerçek
-        // verify_measurement_binding çağrısı ile SubjectDerivationFailed üretir.
-        // ImpactDerivationFailed / StructuralCanonicalizationFailed / RevisionComputationFailed
-        // aynı `map_err(|e| DerivErr::X { detail: e.to_string() })` pattern'ini kullanır
-        // (verify_measurement_binding_inner). Subject test'i pattern coverage kanıtlar.
-        //
-        // Impact/Structural için measurement üretilemez (derive_impact_scope /
-        // canonical_structural_delta_from_claim aynı helper'ları measure_task_delta
-        // kullanır → token üretimi fail). RevisionComputationFailed defensively
-        // fallible (SpaceDigest infallible).
-        //
-        // Bu test doc-level assertion: derivation mapping pattern single-source-of-truth
-        // (verify_measurement_binding_inner). Subject test live kanıt.
-        // Faz 12: EngineMeasurement test-only corrupt constructor ile tam matris.
-        let engine = make_measurement_engine();
-        let valid_task = task_with_node_scope(1, 42);
-        let claim = claim_with_node1_delta(42);
-        let measurement = produce_valid_measurement(&engine, &valid_task, &claim);
-        // Valid case — verify Ok (pattern validation).
-        let result = engine.verify_measurement_binding(&claim, &valid_task, &measurement);
+        // **P1-1 (reviewer v8):** Derivation — RevisionRecheckFailed.
+        // combine_verification_results pure decision fn — synthetic revision_after Err
+        // ile RevisionRecheckFailed kolu doğrudan doğrulanır (mock engine gerekmez).
+        let revision_before = crate::authorization::SpaceViewRevision {
+            view_id: crate::authorization::SpaceViewId::Ephemeral(0),
+            sequence: 0,
+            content_digest: crate::authorization::SpaceDigest::from_bytes([0; 32]),
+        };
+        let ok_proof: Result<(), crate::measurement::MeasurementBindingVerificationError> = Ok(());
+        let operation: EpochOperationResult<()> = Ok((revision_before.clone(), ok_proof));
+        let coord_drift: Result<(), crate::coords::CoordinateMeasurementError> = Ok(());
+        // revision_after Err — SpaceDigest computation hatası simülasyonu.
+        let revision_after: Result<crate::authorization::SpaceViewRevision, String> =
+            Err("simulated space digest failure".to_string());
+        let result =
+            SpaceEngine::combine_verification_results(operation, coord_drift, revision_after);
+        use crate::measurement::{
+            MeasurementBindingDerivationError, MeasurementBindingVerificationError,
+        };
         assert!(
-            result.is_ok(),
-            "valid token must verify (derivation pattern baseline): {result:?}"
+            matches!(
+                result,
+                Err(MeasurementBindingVerificationError::Derivation(
+                    MeasurementBindingDerivationError::RevisionRecheckFailed { .. }
+                ))
+            ),
+            "revision recheck Err must produce Derivation(RevisionRecheckFailed) — got {result:?}"
         );
     }
+
+    #[test]
+    fn verify_reports_coord_drift_and_revision_recheck_failed_prefers_coord() {
+        // **P1-1 (reviewer v8):** Coord drift + revision recheck failed → coord öncelikli.
+        // combine_verification_results ile doğrulanır.
+        let revision_before = crate::authorization::SpaceViewRevision {
+            view_id: crate::authorization::SpaceViewId::Ephemeral(0),
+            sequence: 0,
+            content_digest: crate::authorization::SpaceDigest::from_bytes([0; 32]),
+        };
+        let ok_proof: Result<(), crate::measurement::MeasurementBindingVerificationError> = Ok(());
+        let operation: EpochOperationResult<()> = Ok((revision_before, ok_proof));
+        let coord_drift = Err(crate::coords::CoordinateMeasurementError::EmptySourceSet);
+        let revision_after: Result<crate::authorization::SpaceViewRevision, String> =
+            Err("simulated failure".to_string());
+        let result =
+            SpaceEngine::combine_verification_results(operation, coord_drift, revision_after);
+        use crate::measurement::{
+            MeasurementBindingDriftError, MeasurementBindingVerificationError,
+        };
+        assert!(
+            matches!(
+                result,
+                Err(MeasurementBindingVerificationError::Drift(
+                    MeasurementBindingDriftError::CoordinateContextChanged { .. }
+                ))
+            ),
+            "coord drift + revision recheck failed → coord öncelikli — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_reports_operation_capture_failure_prefers_coord_drift() {
+        // **P1-1 (reviewer v8):** Operation Err (capture failure) + coord drift →
+        // coord drift öncelikli (capture sırasında gerçeklik değişti).
+        let capture_err: crate::measurement::MeasurementBindingVerificationError =
+            crate::measurement::MeasurementBindingDerivationError::RevisionComputationFailed {
+                detail: "capture failed".to_string(),
+            }
+            .into();
+        let operation: EpochOperationResult<()> = Err(capture_err);
+        let coord_drift = Err(crate::coords::CoordinateMeasurementError::EmptySourceSet);
+        let revision_after: Result<crate::authorization::SpaceViewRevision, String> =
+            Ok(crate::authorization::SpaceViewRevision {
+                view_id: crate::authorization::SpaceViewId::Ephemeral(0),
+                sequence: 0,
+                content_digest: crate::authorization::SpaceDigest::from_bytes([0; 32]),
+            });
+        let result =
+            SpaceEngine::combine_verification_results(operation, coord_drift, revision_after);
+        use crate::measurement::{
+            MeasurementBindingDriftError, MeasurementBindingVerificationError,
+        };
+        assert!(
+            matches!(
+                result,
+                Err(MeasurementBindingVerificationError::Drift(
+                    MeasurementBindingDriftError::CoordinateContextChanged { .. }
+                ))
+            ),
+            "capture failure + coord drift → coord drift öncelikli — got {result:?}"
+        );
+    }
+
+    #[test]
+    fn verify_rejects_current_context_mismatch_axis_descriptor_drift() {
+        // İki engine fixture: aynı Space + t_c ama farklı axis descriptor (CohesionAxis
+        // source TreeSitter vs Scip). Token engine A'da üretilip engine B'de verify →
+        // önceki kontroller geçer (subject/impact/delta/revision aynı — t_c aynı), ama
+        // check 7'de epoch context (engine B) ≠ token context (engine A) → CurrentContextMismatch.
+        let engine_a = make_measurement_engine(); // cohesion source = Scip (explicit)
+                                                  // Engine B: cohesion source = TreeSitter (default) — farklı axis descriptor.
+        let cs_b = CoordinateSystem::default_raw_five(
+            crate::coords::MetricSource::TreeSitter,
+            crate::axes::CohesionAxis::try_with_observed_source(
+                crate::coords::MetricSource::TreeSitter, // farklı source
+            )
+            .unwrap(),
+            crate::axes::EntropyAxis::from_commit_entropy(6.5),
+            crate::axes::WitnessDepthAxis::from_witness(0.5, 3),
+        )
+        .unwrap();
+        let engine_b = SpaceEngine::new(
+            crate::space::Space::new(),
+            cs_b,
+            VisionVector::new(RawPosition::default()),
+            EngineConfig::default_calibrated(),
+        );
+
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        // Token engine A'da üretilir (A'nın context digest'i ile).
+        let measurement = produce_valid_measurement(&engine_a, &task, &claim);
+        // Verify engine B'de — B'nin epoch context'i farklı (cohesion source farklı).
+        let result = engine_b.verify_measurement_binding(&claim, &task, &measurement);
+        use crate::measurement::{
+            MeasurementBindingDisposition, MeasurementBindingMismatch,
+            MeasurementBindingVerificationError,
+        };
+        match &result {
+            Err(MeasurementBindingVerificationError::Mismatch(
+                MeasurementBindingMismatch::CurrentContextMismatch {
+                    expected,
+                    presented,
+                },
+            )) => {
+                assert_ne!(
+                    expected, presented,
+                    "epoch context (engine B) must differ from token context (engine A)"
+                );
+                // Disposition: RegenerateMeasurement (axis config drift — stale).
+                assert_eq!(
+                    MeasurementBindingMismatch::CurrentContextMismatch {
+                        expected: expected.clone(),
+                        presented: presented.clone(),
+                    }
+                    .disposition(),
+                    MeasurementBindingDisposition::RegenerateMeasurement
+                );
+            }
+            other => panic!("expected CurrentContextMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_rejects_context_digest_mismatch_corrupt_fixture() {
+        // **P1-1d (reviewer v8):** Check 6 — ContextDigestMismatch (token içi tutarsızlık).
+        // EngineMeasurement::new defensive cross-field verify yapar → production yolunda
+        // unreachable. Ama verifier'daki defense-in-depth kolu test edilmeli.
+        // measurement.rs `#[cfg(test)] corrupt_request_context_digest_for_test` fixture
+        // ile tutarsız token üretilir, verify_measurement_binding check 6 yakalar.
+        let engine = make_measurement_engine();
+        let task = task_with_node_scope(1, 42);
+        let claim = claim_with_node1_delta(42);
+        let valid_measurement = produce_valid_measurement(&engine, &task, &claim);
+        // Corrupt fixture: measurement_input_digest rastgele bytes → context digest ile tutarsız.
+        let corrupt_measurement =
+            crate::measurement::EngineMeasurement::corrupt_request_context_digest_for_test(
+                valid_measurement.before().clone(),
+                valid_measurement.after().clone(),
+                valid_measurement.context().clone(),
+                valid_measurement.request().clone(),
+            );
+        let result = engine.verify_measurement_binding(&claim, &task, &corrupt_measurement);
+        use crate::measurement::{MeasurementBindingMismatch, MeasurementBindingVerificationError};
+        assert!(
+            matches!(
+                result,
+                Err(MeasurementBindingVerificationError::Mismatch(
+                    MeasurementBindingMismatch::ContextDigestMismatch { .. }
+                ))
+            ),
+            "corrupt token (context digest ≠ request digest) must produce ContextDigestMismatch — got {result:?}"
+        );
+    }
+
+    // NOTE: verify_reports_current_context_capture_failed ve verify_maps_derivation_failures
+    // testleri KALDIRILDI (reviewer v8 P1-1 — no-op testler closure kanıtı olarak sayılmaz).
+    //
+    // **Faz 12 carryover (açık doc — boş test yerine):**
+    // - CurrentContextCaptureFailed: malformed coord_system fixture (BoundMeasurementSession::begin
+    //   Err). Default engine'da begin infallible.
+    // - ContextDigestMismatch: EngineMeasurement #[cfg(test)] corrupt fixture (constructor
+    //   defensive verify yüzünden unreachable production yol).
+    // - CurrentContextMismatch: iki engine fixture farklı axis descriptor (token engine A'da
+    //   üretilip engine B'de verify — check 7). Mevcut engine helper'lar ile mümkün ama
+    //   farklı coord_system kurulumu gerek.
+    // - ImpactDerivationFailed / StructuralCanonicalizationFailed mapping: invalid edge kind /
+    //   duplicate node ID fixture (measurement üretilemez → verify çağrılamaz, ama
+    //   map_err pattern SubjectDerivationFailed test'i ile kanıtlandı).
 }
