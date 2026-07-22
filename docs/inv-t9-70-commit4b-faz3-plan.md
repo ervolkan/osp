@@ -1,7 +1,9 @@
 # INV-T9 #70 Commit 4b Faz 3 — Engine Binding & Derivation Plan (v5 APPROVED)
 
-**Tarih:** 2026-07-21 (ilk), 2026-07-22 (v8 closure sync)
-**WIP branch:** `wip/inv-t9-70-commit4b` (head: `c0bc206`)
+**Tarih:** 2026-07-21 (ilk), 2026-07-22 (v9 closure sync)
+**WIP branch:** `wip/inv-t9-70-commit4b` (PR head: GitHub PR #81 metadata authoritative)
+**Implementation commits:** `96ca02c..c0bc206` (commit 1-5)
+**Docs sync commit:** `25e7984` (truth-surface — implementation commit DEĞİL)
 **Base:** `baa90a8` (Commit 4a APPROVED 9.9/10)
 **Draft PR:** #81 (review-only, non-mergeable)
 **Önceki:** Faz 1+2 TAMAM (scoped review #1→#4, 1067 osp-core test green)
@@ -106,25 +108,42 @@ Reviewer v8 REQUEST CHANGES closure:
 - ContextDigestMismatch: `#[cfg(test)] corrupt_request_context_digest_for_test` fixture
 - CurrentContextMismatch: iki engine fixture farklı axis descriptor (cohesion source)
 
-**Derivation variants exercised: 1/7 (reachable)**
-- SubjectDerivationFailed: gerçek verify_measurement_binding çağrısı (module-scope predicate)
-- ImpactDerivationFailed / StructuralCanonicalizationFailed / RevisionComputationFailed:
-  measurement üretilemez (aynı helper'lar measure_task_delta kullanır) → Faz 12 carryover
-- CurrentContextCaptureFailed: malformed coord_system gerekir → Faz 12 carryover
-- MeasurementResultDigestComputationFailed / TaskClaimDigestComputationFailed /
-  RevisionRecheckFailed: combine_verification_results synthetic test
-- RequestDigestComputationFailed: defensively fallible unreachable invariant (reviewer P2-5)
+**Derivation variants directly exercised: 2/10** (reviewer v9 — enum yüzeyi 10 varyant)
+- `SubjectDerivationFailed` — gerçek verify_measurement_binding çağrısı (module-scope predicate)
+- `RevisionRecheckFailed` — `combine_verification_results` synthetic `revision_after: Err`
+
+**Deferred with missing fixture (Faz 12 carryover):**
+- `ImpactDerivationFailed` — invalid edge kind fixture (measurement üretilemez — aynı helper
+  measure_task_delta kullanır)
+- `StructuralCanonicalizationFailed` — duplicate/cross-list node ID fixture
+- `RevisionComputationFailed` — space digest computation failure (pratikte infallible)
+- `CurrentContextCaptureFailed` — malformed coord_system (BoundMeasurementSession::begin Err)
+- `ContextConstructionFailed` — MeasurementInputContext::try_new failure (reachable via
+  invalid descriptors, fixture gerek)
+
+**Reachable through corrupted measured result but not yet exercised (Faz 12 carryover):**
+- `MeasurementResultDigestComputationFailed` — verify_measurement_binding_inner commitment
+  derivation, NaN/∞ measured result (MeasuredRawPosition smart constructor yok — struct literal)
+
+**Defensively fallible / currently unreachable:**
+- `TaskClaimDigestComputationFailed` — verify_measurement_binding_inner, claim canonicalization
+  (context-dependent; Faz 12)
+- `RequestDigestComputationFailed` — defensively fallible, unreachable invariant (pratikte
+  infallible — input already-canonical; reviewer P2-5)
+
+**NOT:** `combine_verification_results` yalnız `RevisionRecheckFailed` üretir (`revision_after: Err`).
+`MeasurementResultDigestComputationFailed` ve `TaskClaimDigestComputationFailed` bu fonksiyonun
+çıktısı DEĞİL — `verify_measurement_binding_inner` commitment derivation'da üretilir.
 
 **Drift variants exercised: 3/3**
-- CoordinateContextChanged / SpaceRevisionChanged / BothChanged
-- combine_verification_results ile (RevisionRecheckFailed + coord drift precedence dahil)
+- `CoordinateContextChanged` / `SpaceRevisionChanged` / `BothChanged`
+- `combine_verification_results` ile + coord drift + revision recheck failed precedence
 
 **State-integrity tests: 2**
 - verify_measurement_binding_no_state_mutation_on_failure (selected state: t_c + node/edge count)
 - invalid_task_declaration_no_state_mutation
-- **Dürüst kapsam:** "selected state cardinality and t_c remained unchanged on tested
-  failure paths" — full space equality / coordinate generation / event-audit state
-  Faz 12 carryover.
+- **Dürüst kapsam:** "selected state cardinality and t_c remained unchanged on tested failure
+  paths" — full space equality / coordinate generation / event-audit state Faz 12 carryover.
 
 **Digest tests: 12**
 - task_claim_digest (claim_id/task_id/author mutasyon + stable)
@@ -167,16 +186,18 @@ RUSTFLAGS="-D warnings" cargo test -p osp-core --test measurement_binding_typele
 
 Measurement-binding verifier, coordinate context'i ve monotonik space revision'ını
 optimistic consistency validation altında gözlemleyen drift-detected verification epoch ile
-oluşturuldu. Session başladıktan sonraki bütün yollar coordinate finalization'dan geçirildi;
-revision baseline'ı başarıyla capture edilen yollar verification sonunda yeniden ölçülerek
-karşılaştırıldı (combine_verification_results pure decision function ile test edilebilir).
-Capture failure, derivation; gözlenen değişim, drift olarak modellendi. Mevcut Faz-1
-`VerifiedMeasurementBinding` modeli korunurken task, claim ve measured-result kimlikleri
-clone edilemeyen outer opaque proof içinde bağlandı. Outer proof cross-context substitution'ı
-engeller; same-context replay ve idempotency Faz 8 commit-ledger sorumluluğudur.
-`EngineMeasurement` deserialize edilemez ve crate-private producer yüzeyi AST tabanlı
-source-regression guard ile `measure_task_delta` call-site'ına pinlenmiştir (cfg_attr +
-modül-adı bypass kapandı). Commitment encoding stable canonical tag'ler, fixed-width numeric
+oluşturuldu. Session başladıktan sonraki bütün yollar coordinate finalization'dan geçer;
+revision ve context capture işlemleri başarıyla tamamlanıp epoch view oluşturulan yolların
+revision değeri verification sonunda yeniden hesaplanarak karşılaştırılır (context construction
+failure durumunda revision_before dışarı taşınmaz — proof üretimi engellenir; combine_verification_results
+pure decision function ile test edilebilir). Capture failure, derivation; gözlenen değişim,
+drift olarak modellendi. Mevcut Faz-1 `VerifiedMeasurementBinding` modeli korunurken task,
+claim ve measured-result kimlikleri clone edilemeyen outer opaque proof içinde bağlandı. Outer
+proof cross-context substitution'ı engeller; same-context replay ve idempotency Faz 8
+commit-ledger sorumluluğudur. `EngineMeasurement` deserialize edilemez ve crate-private
+producer yüzeyi AST tabanlı source-regression guard ile `measure_task_delta` call-site'ına
+pinlenmiştir (cfg_attr + modül-adı bypass kapandı). Commitment encoding stable canonical tag'ler,
+fixed-width numeric
 author identity encoding (`AgentId` as canonical little-endian `u64`) ve normalized float
 encoding kullanır. Task declaration guard Q5 öncesine bağlanmış; selected state cardinality
 ve `t_c` test edilen failure path'lerde korunmuştur (full state-integrity Faz 12 carryover).

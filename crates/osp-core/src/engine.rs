@@ -5460,15 +5460,20 @@ v = 0.5
     // NOTE: verify_reports_current_context_capture_failed ve verify_maps_derivation_failures
     // testleri KALDIRILDI (reviewer v8 P1-1 — no-op testler closure kanıtı olarak sayılmaz).
     //
-    // **Faz 12 carryover (açık doc — boş test yerine):**
+    // **Reviewer v9 P2-1:** ContextDigestMismatch ve CurrentContextMismatch artık gerçek
+    // test edildi (yukarıda verify_rejects_context_digest_mismatch_corrupt_fixture +
+    // verify_rejects_current_context_mismatch_axis_descriptor_drift). Faz 12 carryover
+    // olarak yalnız gerçekten ertelenen yollar kaldı:
+    //
+    // **Faz 12 carryover:**
     // - CurrentContextCaptureFailed: malformed coord_system fixture (BoundMeasurementSession::begin
     //   Err). Default engine'da begin infallible.
-    // - ContextDigestMismatch: EngineMeasurement #[cfg(test)] corrupt fixture (constructor
-    //   defensive verify yüzünden unreachable production yol).
-    // - CurrentContextMismatch: iki engine fixture farklı axis descriptor (token engine A'da
-    //   üretilip engine B'de verify — check 7). Mevcut engine helper'lar ile mümkün ama
-    //   farklı coord_system kurulumu gerek.
-    // - ImpactDerivationFailed / StructuralCanonicalizationFailed mapping: invalid edge kind /
-    //   duplicate node ID fixture (measurement üretilemez → verify çağrılamaz, ama
-    //   map_err pattern SubjectDerivationFailed test'i ile kanıtlandı).
+    // - ImpactDerivationFailed: invalid edge kind fixture (measurement üretilemez — aynı
+    //   helper measure_task_delta kullanır).
+    // - StructuralCanonicalizationFailed: duplicate/cross-list node ID fixture.
+    // - RevisionComputationFailed: space digest computation failure (pratikte infallible).
+    // - ContextConstructionFailed: MeasurementInputContext::try_new invalid descriptors fixture.
+    // - MeasurementResultDigestComputationFailed: corrupted measured result (NaN/∞ —
+    //   MeasuredRawPosition smart constructor yok, struct literal).
+    // - Full state-integrity: space equality / coordinate generation / event-audit state.
 }

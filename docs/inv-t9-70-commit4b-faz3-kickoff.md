@@ -9,7 +9,7 @@
 > için: `docs/inv-t9-70-commit4b-faz3-plan.md` (v8 closure sync).
 >
 > Bu doc tarihsel referans olarak korunur — kickoff mesajı örneği. Faz 3 implementation
-> commit 1-5 aralığında (`96ca02c`..pending).
+> commit 1-5 aralığında (`96ca02c`..`c0bc206`) + docs sync (`25e7984`).
 
 Aşağıdaki mesajı yeni oturumda bana paste et:
 
