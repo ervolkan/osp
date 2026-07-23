@@ -13755,40 +13755,59 @@ v = 0.5
     // Reviewer: golden fixture yalnız available/ephemeral pinliyor. Kalan varyantlar
     // modül içi testlerde private DTO'lara erişerek exact JSON shape pinlenir.
 
-    #[test]
-    fn commit1b_wire_shape_baseline_all_members_golden() {
-        let value = serde_json::to_value(
-            RawBaselineUnavailableReasonV2::AllMembersIntroducedByDelta {
-                members: vec![1, 2],
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!({"kind": "all_members_introduced_by_delta", "members": [1, 2]})
-        );
-    }
+    // ── P1-1 v3: Production *Ref serializer golden wire shape testleri ────────────
+    // Reviewer: production serializer *Ref tiplerini kullanır (owned DTO değil).
+    // Outer baseline wrapper + nested reason birlikte pinlenir.
 
     #[test]
-    fn commit1b_wire_shape_baseline_partial_new_subject_golden() {
-        let value = serde_json::to_value(RawBaselineUnavailableReasonV2::PartialNewSubject {
-            existing: vec![1, 2],
-            introduced: vec![3],
+    fn commit1b_wire_shape_baseline_unavailable_all_members_output_golden() {
+        // Production Ref serializer — outer wrapper + nested reason.
+        let members = [1u64, 2];
+        let value = serde_json::to_value(RawTrajectoryBaselineV2Ref::Unavailable {
+            reason: RawBaselineUnavailableReasonV2Ref::AllMembersIntroducedByDelta {
+                members: &members,
+            },
         })
         .unwrap();
         assert_eq!(
             value,
             serde_json::json!({
-                "kind": "partial_new_subject",
-                "existing": [1, 2],
-                "introduced": [3]
+                "kind": "unavailable",
+                "reason": {
+                    "kind": "all_members_introduced_by_delta",
+                    "members": [1, 2]
+                }
             })
         );
     }
 
     #[test]
-    fn commit1b_wire_shape_loss_unavailable_golden() {
-        let value = serde_json::to_value(RawTrajectoryLossV2::Unavailable {
+    fn commit1b_wire_shape_baseline_unavailable_partial_new_subject_output_golden() {
+        let existing = [1u64, 2];
+        let introduced = [3u64];
+        let value = serde_json::to_value(RawTrajectoryBaselineV2Ref::Unavailable {
+            reason: RawBaselineUnavailableReasonV2Ref::PartialNewSubject {
+                existing: &existing,
+                introduced: &introduced,
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "kind": "unavailable",
+                "reason": {
+                    "kind": "partial_new_subject",
+                    "existing": [1, 2],
+                    "introduced": [3]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn commit1b_wire_shape_loss_unavailable_output_golden() {
+        let value = serde_json::to_value(RawTrajectoryLossV2Ref::Unavailable {
             reason: RawTrajectoryLossUnavailableReasonV2::NoPreferredVector,
         })
         .unwrap();
@@ -13799,12 +13818,12 @@ v = 0.5
     }
 
     #[test]
-    fn commit1b_wire_shape_space_view_id_persisted_golden() {
+    fn commit1b_wire_shape_space_view_id_persisted_output_golden() {
         let id_bytes = [
             0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
             0xff, 0x00,
         ];
-        let value = serde_json::to_value(RawSpaceViewIdV2::Persisted { id: id_bytes }).unwrap();
+        let value = serde_json::to_value(RawSpaceViewIdV2Ref::Persisted { id: &id_bytes }).unwrap();
         assert_eq!(
             value,
             serde_json::json!({
@@ -13847,21 +13866,19 @@ v = 0.5
     }
 
     // ── P2-3: Tek-wire-surface invariant compile-time guard ──────────────────────
-    // Reviewer: Serialize/Deserialize non-bypass compile-fail guard. Trybuild external
-    // crate fixture yerine modül içi static assertion — trait bound absent compile error.
+    // Reviewer P1-2 v3: Bu test "Serialize absent compile-time guard" DEĞİL.
+    // AuthorizationBasisV2: Serialize trait bound'una başvurmuyor — yarın derive
+    // geri eklenirse test yine geçer. Gerçek compile-fail guard (trybuild external
+    // crate fixture — requires_serialize::<AuthorizationBasisV2>()) Faz 10 type-
+    // suite'e deferred. Bu test sadece "wrapper serialization çalışıyor" doğrular.
 
-    /// **P2-3:** AuthorizationBasisV2 `serde::Serialize` taşımaz (direct bypass kapalı).
-    /// Bu fonksiyon derlenirse Serialize impl var demektir — invariant broken.
-    /// Şu an derlenmez (Serialize absent) → invariant korundu.
+    /// **P1-2 v3:** VersionedAuthorizationBasis wrapper serialization çalışıyor —
+    /// V2 envelope tek serialization yolu. **NOT:** Bu test AuthorizationBasisV2
+    /// direct Serialize absent invariant'ını doğrulamaz. Compile-fail guard
+    /// (trybuild external crate) Faz 10 type-suite'e deferred.
     #[test]
-    fn commit1b_authorization_basis_v2_serialize_absent_invariant() {
-        // Eğer AuthorizationBisV2 Serialize trait'ini implement etseydi, bu satır
-        // derlenirdi. Şu an derlenmez çünkü Serialize kaldırıldı (P0-1 v2).
-        // Static assertion — runtime'da bir şey yapmaz, compile-time guarantee.
-        // NOT: Bu test sadece doc/invariant pin olarak çalışır. Gerçek compile-fail
-        // external crate trybuild fixture Faz 10 type-suite'e eklenecek.
+    fn commit1b_versioned_v2_wrapper_is_serializable() {
         let basis = faz4_basis_v2_fixture();
-        // VersionedAuthorizationBasis üzerinden serialize — tek yol.
         let envelope = VersionedAuthorizationBasis::try_v2(basis);
         let json = serde_json::to_string(&envelope).unwrap();
         assert!(
