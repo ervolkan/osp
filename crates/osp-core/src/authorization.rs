@@ -6113,6 +6113,103 @@ impl PendingAuthorizationStore for NullPendingAuthorizationStore {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 #70 Commit 4b Faz 4 — Faz 5/8 Contract Documentation
+// (plan md:197-199)
+//
+// Bu section Faz 4'ün sonraki fazlara bıraktığı contract'leri pinler. Implementation
+// yok — sadece doc invariant'lar.
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// ## Faz 5 — Gate Evaluator → VerifiedGateEvaluationV2 Gerçek Producer
+//
+// Faz 4'te `VerifiedGateEvaluationV2` production build'de constructor YOK — yalnız
+// `#[cfg(test)] fixture`. Faz 5 gerçek deterministic gate evaluator producer:
+//
+// ```text
+// Deterministic gate chain (Q4 syntax → Q5 vision → Q6 rule → Q5.b binding)
+//     ↓ Faz 5 evaluator
+// CanonicalGateEvaluationV2 (RejectedByGate { GateDecisionTag } | GatePassed { MutationDecision })
+//     ↓ VerifiedGateEvaluationV2 (opaque proof — field private)
+// ```
+//
+// Faz 5 aynı zamanda `CanonicalTrajectoryLossEvidence::Unavailable` için yeni reason
+// varyantları ekleyebilir (örn `MeasurementUnavailable`, `PolicyDoesNotRequireLoss`).
+// Commit 1b'de loss reason mapping exhaustive yapıldı — yeni varyant compiler error
+// üretir (fail-open kapalı).
+//
+// ## Faz 8 — Production Wiring + AuthorizationReceiptV2 + Omega Receipt
+//
+// Faz 4 standalone — production wiring yok. Faz 8'de atomik:
+//
+// ```text
+// commit_task_claim
+//     ↓ verify_measurement_binding (Faz 3)
+//     ↓ deterministic gate evaluation (Faz 5)
+//     ↓ canonical witness requirement derivation
+//     ↓ build_authorization_context_v2 (Faz 4 Commit 2)
+//     ↓ witness evaluation + receipt
+//     ↓ navigator V2 + persistence write V2
+//     ↓ AuthorizationReceiptV2 + omega receipt
+// ```
+//
+// `AuthorizationReceiptV2` (Faz 8):
+// - `apply_target` context'te YOK (plan md:62) — receipt'te.
+// - `witness_status` context'te YOK (plan md:63) — receipt'te.
+// - Faz 4 `AuthorizationContextV2` proof-gated construction receipt için zemin sağlar.
+//
+// ## Clone Semantiği
+//
+// `VerifiedTaskMeasurementBinding`: Clone YOK (move-only consuming projection).
+// Cross-context substitution protection (same-context replay Faz 8 commit-ledger).
+//
+// `VerifiedGateEvaluationV2`: Serialize/Deserialize/Clone YOK. Opaque proof — field
+// private. Production constructor Faz 5. `cfg(test)` fixture authorization.rs'te.
+//
+// `AuthorizationBasisV2`: Clone VAR (wire serializer field'lara erişir).
+// `AuthorizationContextV2`: Clone VAR.
+//
+// ## Digest Reccompute
+//
+// `AuthorizationBasisV2::validate_semantics` stored digest'leri reverify eder:
+// 1. Baseline reason ↔ request subject (defense-in-depth)
+// 2. Baseline digest (shared encoder `compute_measurement_baseline_digest`)
+// 3. Engine measurement digest (`compute_from_commitments` shared encoder)
+// 4. Request snapshot → digest (`compute_from_canonical` shared encoder)
+// 5. Request delta digest == basis canonical_delta_digest
+//
+// Builder (`build_authorization_context_v2`) ek olarak proof ↔ artifact mismatch
+// kontrolü yapar: `measurement.compute_digest() == proof.engine_measurement_digest()`.
+//
+// ## VersionedAuthorizationBasis JSON-Specific
+//
+// Wire contract JSON-specific (plan md:112). Generic `Deserialize` absent — dispatch
+// `serde_json::Value` peek + `RawValue` duplicate-key koruması ile. Format-agnostic
+// Serde Faz 13 kapsamında.
+//
+// ## VerifiedGateEvaluationV2 Non-Test Constructor Yok
+//
+// Production build'de `VerifiedGateEvaluationV2` constructor YOK. Faz 5 gerçek
+// evaluator producer. `into_canonical(self)` pub(crate) — context constructor
+// tüketir. `cfg(test)` fixture authorization.rs'te (field privacy).
+//
+// ## Proof-Gated Context
+//
+// `AuthorizationContextV2::new(basis, gate_evaluation: VerifiedGateEvaluationV2,
+// witness_requirement)` — `VerifiedGateEvaluationV2` tüketir. `CanonicalGateEvaluationV2`
+// (persisted snapshot) → `new` reddedilir (compile error — farklı tip). Bypass imkânsız.
+//
+// ## Baseline Digest Shared Encoder Invariant
+//
+// `MeasurementBaseline::compute_digest()` ve `CanonicalTrajectoryEvidenceBaseline::
+// compute_measurement_baseline_digest()` aynı neutral writer'ı
+// (`write_measurement_baseline_commitment`) çağırır. Drift risk yapısal kapalı.
+//
+// ## Workspace Closure
+//
+// `osp-desktop` pre-existing breakage INV-T9 #80 (Faz 11 kapsamında, Faz 4'ten
+// bağımsız). osp-core + osp-cli + diğer crate'ler `cargo check --workspace` green.
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // INV-T9 #70 Commit 4b Faz 4 Commit 1b — VersionedAuthorizationBasis wire dispatch
 // (plan md:104-112, reviewer v2 closure)
 //
