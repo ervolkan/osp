@@ -792,6 +792,20 @@ pub struct CanonicalRawPosition {
     pub v: CanonicalF64,
 }
 
+/// **P1-1 (reviewer):** RawPosition → CanonicalRawPosition projection.
+/// 5 alan elle kopyalama yerine tek yerde pinlenir.
+impl From<crate::coords::RawPosition> for CanonicalRawPosition {
+    fn from(pos: crate::coords::RawPosition) -> Self {
+        Self {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            w: pos.w,
+            v: pos.v,
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SpaceViewId + SpaceViewRevision (reviewer P0-2 — lifecycle tam)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1640,6 +1654,31 @@ pub struct ProvenancedMeasuredResult {
     pub instability: CanonicalAxisMeasurement,
     pub entropy: CanonicalAxisMeasurement,
     pub witness_depth: CanonicalAxisMeasurement,
+}
+
+/// **P1-1 (reviewer):** MeasuredRawPosition → ProvenancedMeasuredResult projection.
+/// 5-axis mapping (value + CanonicalMetricSourceTag) tek yerde pinlenir — engine
+/// orchestration canonical tag ayrıntısını bilmez. Axis unutma/yanlış eşleme riski
+/// ayrı unit test ile kapanır.
+impl TryFrom<&crate::coords::MeasuredRawPosition> for ProvenancedMeasuredResult {
+    type Error = CanonicalizationError;
+
+    fn try_from(measured: &crate::coords::MeasuredRawPosition) -> Result<Self, Self::Error> {
+        let convert = |axis: &crate::coords::AxisMeasurement|
+         -> Result<CanonicalAxisMeasurement, CanonicalizationError> {
+            Ok(CanonicalAxisMeasurement {
+                value: axis.value,
+                source: crate::canonical_tags::CanonicalMetricSourceTag::try_from(&axis.source)?,
+            })
+        };
+        Ok(Self {
+            coupling: convert(&measured.coupling)?,
+            cohesion: convert(&measured.cohesion)?,
+            instability: convert(&measured.instability)?,
+            entropy: convert(&measured.entropy)?,
+            witness_depth: convert(&measured.witness_depth)?,
+        })
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4567,12 +4606,26 @@ impl VerifiedGateEvaluationV2 {
 
 /// **INV-T9 #70 Commit 4b Faz 4 (plan md:164):** AuthorizationContextV2 build error —
 /// orchestration (Commit 2 builder). Context invariant hatası `AuthorizationContextV2Error`.
+///
+/// **P0-2 (reviewer):** Typed taxonomy — builder'ın fallible zincirinin tüm error tipleri
+/// korunur (telemetry + exact assertion). BasisDigest kaldırıldı — AuthorizationContextV2::new
+/// basis digest hesaplamıyor.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum AuthorizationContextV2BuildError {
+    #[error("engine measurement digest computation failed: {0}")]
+    EngineMeasurementDigest(#[from] crate::measurement::EngineMeasurementDigestError),
+    #[error("engine measurement binding mismatch: proof={proof}, recomputed={recomputed}")]
+    EngineMeasurementBindingMismatch { proof: String, recomputed: String },
+    #[error("canonical evidence conversion failed: {0}")]
+    Canonicalization(#[from] CanonicalizationError),
+    #[error("baseline evidence validation failed: {0}")]
+    BaselineValidation(#[from] CanonicalBaselineValidationError),
+    #[error("measurement digest computation failed: {0}")]
+    MeasurementDigest(#[from] crate::measurement::MeasurementDigestError),
+    #[error("authorization basis construction failed: {0}")]
+    Basis(#[from] AuthorizationBasisV2Error),
     #[error("witness requirement validation failed: {0}")]
     WitnessRequirement(#[from] CanonicalWitnessRequirementV2Error),
-    #[error("basis digest computation failed: {0}")]
-    BasisDigest(#[from] CanonicalDigestError),
 }
 
 /// **INV-T9 #70 Commit 4b Faz 4 (plan md:164):** AuthorizationContextV2 invariant error.
