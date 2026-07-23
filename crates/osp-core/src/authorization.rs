@@ -2159,7 +2159,11 @@ pub enum AuthorizationBasisV2Error {
 /// **Field visibility (reviewer P1-2):** Tüm field'lar PRIVATE. Tek creation yolu
 /// `new()` (checked constructor — `validate_semantics` çağırır). Struct literal bypass
 /// imkânsız. Erasure/mutation imkânsız. Accessor'lar read-only.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+///
+/// **P0-1 v3 (reviewer):** `serde::Serialize` intentionally absent — tek dış
+/// serialization yolu `VersionedAuthorizationBasis::V2` (explicit envelope + LowerHex32).
+/// Direct `serde_json::to_string(&basis_v2)` compile error — wire bypass kapalı.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AuthorizationBasisV2 {
     /// Task identity.
     task_id: crate::trajectory::TaskId,
@@ -2621,8 +2625,20 @@ impl AuthorizationBasisDigest {
 /// **INV-T9 #70 Commit 4b Faz 4 (plan md:55):** V2 authorization basis digest. Ayrı
 /// domain separator (`OSP/AUTHORIZATION-BASIS/V2`) — V1 (`osp.authorization-basis.v1\0`)
 /// frozen. Canonical encoding (JSON DEĞİL) + hex wire format (64 lowercase).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+///
+/// **P0-1 v3 (reviewer):** Custom Serialize — yalnız 64 lowercase hex string üretir
+/// (derived Serialize byte array üretir, wire format ile çelişir).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AuthorizationBasisDigestV2([u8; 32]);
+
+impl serde::Serialize for AuthorizationBasisDigestV2 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(self.0))
+    }
+}
 
 impl AuthorizationBasisDigestV2 {
     /// Faz 4 V2 convention domain separator (compile-time ayrım — V1 frozen).
@@ -2675,8 +2691,19 @@ impl AuthorizationBasisDigestV2 {
 /// **INV-T9 #70 Commit 4b Faz 4 (plan md:55):** V2 authorization context digest.
 /// Basis + verified gate evaluation + canonical witness requirement commitment.
 /// Ayrı domain separator (`OSP/AUTHORIZATION-CONTEXT/V2`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
+///
+/// **P0-1 v3 (reviewer):** Custom Serialize — yalnız 64 lowercase hex string üretir.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AuthorizationContextDigestV2([u8; 32]);
+
+impl serde::Serialize for AuthorizationContextDigestV2 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(self.0))
+    }
+}
 
 impl AuthorizationContextDigestV2 {
     /// Faz 4 V2 convention domain separator.
@@ -4562,7 +4589,10 @@ pub enum AuthorizationContextV2Error {
 /// **3 katman:** Context = Basis (kanıtsal zemin) + verified gate snapshot (Faz 5
 /// evaluator'den) + canonical witness requirement. `apply_target` context'te YOK
 /// (plan md:63 — `AuthorizationReceiptV2`'ye Faz 8'de). `witness_status` context'te YOK.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+///
+/// **P0-1 v3 (reviewer):** `serde::Serialize` intentionally absent — V2 tiplerinin
+/// tek serialization yolu wire DTO (VersionedAuthorizationBasis). Direct Serialize bypass kapalı.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AuthorizationContextV2 {
     basis: AuthorizationBasisV2,
     gate_evaluation: CanonicalGateEvaluationV2,
@@ -6050,35 +6080,70 @@ pub const AUTHORIZATION_BASIS_WIRE_SCHEMA_V2: u16 = 2;
 /// **P2-1:** Generic `Deserialize` intentionally absent — dispatch requires duplicate-key-
 /// preserving raw JSON parsing via `from_json_slice`. Derived Deserialize would bypass
 /// strict dispatch + duplicate-key koruması.
+///
+/// **P1-1 v3 (reviewer):** Opaque struct + private repr. Checked constructor `try_v1`/
+/// `try_v2` inner schema_version exact check yapar — outer/inner version illegal state
+/// yapısal olarak imkânsız (V1 varyantı inner schema_version=1 dışını kabul etmez).
 #[derive(Debug, Clone, PartialEq)]
-pub enum VersionedAuthorizationBasis {
+pub struct VersionedAuthorizationBasis {
+    repr: VersionedAuthorizationBasisRepr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum VersionedAuthorizationBasisRepr {
     V1(AuthorizationBasisV1),
     V2(AuthorizationBasisV2),
 }
 
 impl VersionedAuthorizationBasis {
+    /// **P1-1 v3:** V1 checked constructor — inner schema_version exact check.
+    /// `schema_version != 1` → `InnerV1SchemaMismatch`. Illegal state bellekte bulunamaz.
+    pub fn try_v1(basis: AuthorizationBasisV1) -> Result<Self, VersionedAuthorizationBasisError> {
+        if basis.schema_version != u32::from(AUTHORIZATION_BASIS_WIRE_SCHEMA_V1) {
+            return Err(VersionedAuthorizationBasisError::InnerV1SchemaMismatch {
+                expected: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+                found: basis.schema_version,
+            });
+        }
+        Ok(Self {
+            repr: VersionedAuthorizationBasisRepr::V1(basis),
+        })
+    }
+
+    /// **P1-1 v3:** V2 constructor — AuthorizationBasisV2 zaten checked constructor.
+    pub fn try_v2(basis: AuthorizationBasisV2) -> Self {
+        Self {
+            repr: VersionedAuthorizationBasisRepr::V2(basis),
+        }
+    }
+
     /// Wire schema version — `AUTHORIZATION_BASIS_WIRE_SCHEMA_V1` veya `V2`.
     pub fn version(&self) -> u16 {
-        match self {
-            Self::V1(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
-            Self::V2(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V2,
+        match &self.repr {
+            VersionedAuthorizationBasisRepr::V1(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+            VersionedAuthorizationBasisRepr::V2(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V2,
         }
     }
 
     /// V1 basis accessor (legacy/strict).
     pub fn as_v1(&self) -> Option<&AuthorizationBasisV1> {
-        match self {
-            Self::V1(v) => Some(v),
-            Self::V2(_) => None,
+        match &self.repr {
+            VersionedAuthorizationBasisRepr::V1(v) => Some(v),
+            VersionedAuthorizationBasisRepr::V2(_) => None,
         }
     }
 
     /// V2 basis accessor (strict).
     pub fn as_v2(&self) -> Option<&AuthorizationBasisV2> {
-        match self {
-            Self::V2(v) => Some(v),
-            Self::V1(_) => None,
+        match &self.repr {
+            VersionedAuthorizationBasisRepr::V2(v) => Some(v),
+            VersionedAuthorizationBasisRepr::V1(_) => None,
         }
+    }
+
+    /// Private repr accessor (modül içi — dispatch/serialize).
+    fn repr(&self) -> &VersionedAuthorizationBasisRepr {
+        &self.repr
     }
 }
 
@@ -6109,6 +6174,9 @@ pub enum VersionedAuthorizationBasisError {
     UnknownSchemaVersion(u16),
     #[error("inner V1 schema_version mismatch: expected={expected}, found={found}")]
     InnerV1SchemaMismatch { expected: u16, found: u32 },
+    /// **P1-2 v3:** `basis` yok ama schema_version=2 → V2-shaped input, legacy fallback yok.
+    #[error("schema_version={schema_version} without 'basis' key — versioned envelope required")]
+    MissingBasisForVersionedSchema { schema_version: u16 },
     #[error("V2 wire conversion failed: {detail}")]
     V2WireConversion { detail: String },
     #[error("V2 basis validation failed: {0}")]
@@ -6467,7 +6535,10 @@ impl<'a> RawTrajectoryLossV2Ref<'a> {
                 target: RawPositionV2Ref::from_domain(target),
                 loss_after: *loss_after,
             },
-            CanonicalTrajectoryLossEvidence::Unavailable { reason: _ } => Self::Unavailable {
+            // **P1-3 v3:** Exhaustive match — yeni reason varyantı compiler error üretir.
+            CanonicalTrajectoryLossEvidence::Unavailable {
+                reason: CanonicalTrajectoryLossUnavailableReason::NoPreferredVector,
+            } => Self::Unavailable {
                 reason: RawTrajectoryLossUnavailableReasonV2::NoPreferredVector,
             },
         }
@@ -6633,7 +6704,10 @@ impl VersionedAuthorizationBasis {
                             env.schema_version,
                         ));
                     }
-                    Ok(Self::V1(env.basis.try_into()?))
+                    // env.basis.try_into() inner schema check yapar → AuthorizationBasisV1.
+                    // try_v1 tekrar check eder (double-check defense-in-depth).
+                    let basis: AuthorizationBasisV1 = env.basis.try_into()?;
+                    Self::try_v1(basis)
                 }
                 AUTHORIZATION_BASIS_WIRE_SCHEMA_V2 => {
                     let env: RawAuthorizationBasisV2Envelope =
@@ -6648,28 +6722,52 @@ impl VersionedAuthorizationBasis {
                         ));
                     }
                     let basis = AuthorizationBasisV2::from_wire(env.basis)?;
-                    Ok(Self::V2(basis))
+                    Ok(Self::try_v2(basis))
                 }
                 unknown => Err(VersionedAuthorizationBasisError::UnknownSchemaVersion(
                     unknown,
                 )),
             }
         } else {
-            // Legacy bare V1. "basis" key yok → permissive parser korur.
-            let basis: AuthorizationBasisV1 =
-                serde_json::from_str(raw_value.get()).map_err(|e| {
-                    VersionedAuthorizationBasisError::LegacyV1Decode {
-                        detail: e.to_string(),
+            // **P1-2 v3:** "basis" key yok. Önce inner schema_version sınıflandır —
+            // V2-shaped input (schema_version=2 + basis yok) hiçbir koşulda legacy V1
+            // parser'a ulaşmaz. V1 (schema_version=1 veya yok) → legacy parse.
+            match peek.get("schema_version") {
+                None => {
+                    // schema_version yok → legacy bare V1 (permissive parser korur).
+                    let basis: AuthorizationBasisV1 = serde_json::from_str(raw_value.get())
+                        .map_err(|e| VersionedAuthorizationBasisError::LegacyV1Decode {
+                            detail: e.to_string(),
+                        })?;
+                    Self::try_v1(basis)
+                }
+                Some(serde_json::Value::Number(n)) if n.is_u64() => {
+                    let raw = n.as_u64().unwrap();
+                    match u16::try_from(raw) {
+                        Ok(AUTHORIZATION_BASIS_WIRE_SCHEMA_V1) => {
+                            // Legacy V1 with schema_version=1.
+                            let basis: AuthorizationBasisV1 = serde_json::from_str(raw_value.get())
+                                .map_err(|e| VersionedAuthorizationBasisError::LegacyV1Decode {
+                                    detail: e.to_string(),
+                                })?;
+                            Self::try_v1(basis)
+                        }
+                        Ok(other) => {
+                            // schema_version=2 (veya diğer) ama basis yok → V2-shaped,
+                            // versioned envelope required. Legacy fallback YOK.
+                            Err(
+                                VersionedAuthorizationBasisError::MissingBasisForVersionedSchema {
+                                    schema_version: other,
+                                },
+                            )
+                        }
+                        Err(_) => Err(VersionedAuthorizationBasisError::SchemaVersionOutOfRange(
+                            raw,
+                        )),
                     }
-                })?;
-            // Inner V1 schema_version exact check.
-            if basis.schema_version != u32::from(AUTHORIZATION_BASIS_WIRE_SCHEMA_V1) {
-                return Err(VersionedAuthorizationBasisError::InnerV1SchemaMismatch {
-                    expected: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
-                    found: basis.schema_version,
-                });
+                }
+                Some(_) => Err(VersionedAuthorizationBasisError::SchemaVersionNotStrict),
             }
-            Ok(Self::V1(basis))
         }
     }
 }
@@ -6712,13 +6810,13 @@ impl serde::Serialize for VersionedAuthorizationBasis {
     where
         S: serde::Serializer,
     {
-        match self {
-            Self::V1(basis) => VersionedV1EnvelopeRef {
+        match self.repr() {
+            VersionedAuthorizationBasisRepr::V1(basis) => VersionedV1EnvelopeRef {
                 schema_version: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
                 basis,
             }
             .serialize(serializer),
-            Self::V2(basis) => VersionedV2EnvelopeRef {
+            VersionedAuthorizationBasisRepr::V2(basis) => VersionedV2EnvelopeRef {
                 schema_version: AUTHORIZATION_BASIS_WIRE_SCHEMA_V2,
                 basis: RawAuthorizationBasisV2Ref::from_domain(basis),
             }
@@ -6825,11 +6923,12 @@ impl AuthorizationBasisV2 {
                     loss_after,
                 }
             }
-            RawTrajectoryLossV2::Unavailable { reason: _ } => {
-                CanonicalTrajectoryLossEvidence::Unavailable {
-                    reason: CanonicalTrajectoryLossUnavailableReason::NoPreferredVector,
-                }
-            }
+            // **P1-3 v3:** Exhaustive match — yeni wire reason varyantı compiler error üretir.
+            RawTrajectoryLossV2::Unavailable {
+                reason: RawTrajectoryLossUnavailableReasonV2::NoPreferredVector,
+            } => CanonicalTrajectoryLossEvidence::Unavailable {
+                reason: CanonicalTrajectoryLossUnavailableReason::NoPreferredVector,
+            },
         };
 
         // Measurement request evidence conversion.
@@ -13177,14 +13276,14 @@ v = 0.5
     /// Versioned V1 envelope JSON string — `{schema_version:1, basis:{...}}`.
     fn faz4_versioned_v1_envelope_json() -> String {
         let basis = faz4_v1_basis_fixture();
-        let envelope = VersionedAuthorizationBasis::V1(basis);
+        let envelope = VersionedAuthorizationBasis::try_v1(basis).unwrap();
         serde_json::to_string(&envelope).unwrap()
     }
 
     /// Versioned V2 envelope JSON string — `{schema_version:2, basis:{...}}`.
     fn faz4_versioned_v2_envelope_json() -> String {
         let basis = faz4_basis_v2_fixture();
-        let envelope = VersionedAuthorizationBasis::V2(basis);
+        let envelope = VersionedAuthorizationBasis::try_v2(basis);
         serde_json::to_string(&envelope).unwrap()
     }
 
@@ -13246,15 +13345,14 @@ v = 0.5
 
     #[test]
     fn commit1b_schema_version_2_without_basis_rejects() {
-        // P0-1: schema_version=2 ama basis yok → reject, legacy fallback yok.
+        // P1-2 v3: schema_version=2 ama basis yok → MissingBasisForVersionedSchema.
+        // V2-shaped input hiçbir koşulda legacy V1 parser'a ulaşmaz.
         let json = r#"{"schema_version": 2, "task_id": 42}"#;
         let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
             .expect_err("schema_version=2 without basis must reject");
-        // "basis" yok → legacy V1 path → V1 deserialize fail veya inner schema mismatch.
         assert!(matches!(
             err,
-            VersionedAuthorizationBasisError::LegacyV1Decode { .. }
-                | VersionedAuthorizationBasisError::InnerV1SchemaMismatch { .. }
+            VersionedAuthorizationBasisError::MissingBasisForVersionedSchema { schema_version: 2 }
         ));
     }
 
@@ -13442,6 +13540,29 @@ v = 0.5
         ));
     }
 
+    // ── Bağımsız V2 golden fixture (reviewer P1-4) ────────────────────────────────
+
+    /// **P1-4:** Bağımsız golden JSON fixture — serializer/deserializer birlikte
+    /// yanlış değişse bile wire contract pinlenir. Repository fixture'dan okunur.
+    const V2_WIRE_GOLDEN_FIXTURE: &str =
+        include_str!("../tests/fixtures/authorization_basis_v2_wire.json");
+
+    #[test]
+    fn commit1b_v2_wire_golden_fixture_round_trip() {
+        // P1-4: Bağımsız fixture → parse → reserialize → Value equality.
+        let parsed =
+            VersionedAuthorizationBasis::from_json_slice(V2_WIRE_GOLDEN_FIXTURE.as_bytes())
+                .expect("golden fixture must parse");
+        assert_eq!(parsed.version(), AUTHORIZATION_BASIS_WIRE_SCHEMA_V2);
+        let actual: serde_json::Value = serde_json::to_value(&parsed).expect("reserialize");
+        let expected: serde_json::Value =
+            serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).expect("fixture is valid JSON");
+        assert_eq!(
+            actual, expected,
+            "V2 wire golden fixture round-trip — wire contract pin"
+        );
+    }
+
     // ── LowerHex32 strict matrisi (P1-2) ─────────────────────────────────────────
 
     #[test]
@@ -13461,5 +13582,165 @@ v = 0.5
                 .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')),
             "V2 digest must be lowercase hex only"
         );
+    }
+
+    // ── P2: Negatif wire testleri (reviewer) ──────────────────────────────────────
+
+    #[test]
+    fn commit1b_v2_uppercase_hex_rejects() {
+        // P2: uppercase hex → LowerHex32 reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["task_goal_digest"] =
+            serde_json::json!("03A3AD384D2DFF383974A301ED68A52D932439F18E3C08CC4CB8A8B9C7C8201C");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("uppercase hex reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_0x_prefix_hex_rejects() {
+        // P2: 0x prefix → LowerHex32 reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["task_goal_digest"] =
+            serde_json::json!("0x03a3ad384d2dff383974a301ed68a52d932439f18e3c08cc4cb8a8b9c7c8201c");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("0x prefix reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_short_hex_rejects() {
+        // P2: 63 karakter hex → reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["task_goal_digest"] =
+            serde_json::json!("03a3ad384d2dff383974a301ed68a52d932439f18e3c08cc4cb8a8b9c7c8201");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("short hex reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_source_tag_255_rejects() {
+        // P2: source_tag=255 → checked TryFrom reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["trajectory_baseline"]["before"]["coupling"]["source_tag"] =
+            serde_json::json!(255);
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("source_tag=255 reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::V2WireConversion { .. }
+                | VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_unknown_baseline_kind_rejects() {
+        // P2: unknown baseline kind → reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["trajectory_baseline"]["kind"] = serde_json::json!("unknown_kind");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("unknown baseline kind reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_unknown_loss_kind_rejects() {
+        // P2: unknown loss kind → reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["trajectory_loss"]["kind"] = serde_json::json!("unknown_loss");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("unknown loss kind reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_unknown_space_view_id_kind_rejects() {
+        // P2: unknown space_view_id kind → reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["measurement_request"]["base_revision"]["view_id"]["kind"] =
+            serde_json::json!("unknown_view");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("unknown space_view_id kind reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_negative_loss_after_rejects() {
+        // P2: negative loss_after → local invariant reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        value["basis"]["trajectory_loss"]["loss_after"] = serde_json::json!(-0.5);
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("negative loss_after reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::V2WireConversion { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v1_inner_schema_version_2_rejects() {
+        // P1-1: outer V1 + inner schema_version=2 → InnerV1SchemaMismatch exact error.
+        let mut basis = faz4_v1_basis_fixture();
+        basis.schema_version = 2;
+        let err = VersionedAuthorizationBasis::try_v1(basis)
+            .expect_err("inner schema_version=2 with V1 constructor must reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::InnerV1SchemaMismatch {
+                expected: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+                found: 2
+            }
+        ));
+    }
+
+    #[test]
+    fn commit1b_v2_missing_axis_field_rejects() {
+        // P2: missing axis field (coupling removed) → reject.
+        let mut value: serde_json::Value = serde_json::from_str(V2_WIRE_GOLDEN_FIXTURE).unwrap();
+        // Remove coupling axis from before.
+        let before = value
+            .get_mut("basis")
+            .unwrap()
+            .get_mut("trajectory_baseline")
+            .unwrap()
+            .get_mut("before")
+            .unwrap()
+            .as_object_mut()
+            .unwrap();
+        before.remove("coupling");
+        let json = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("missing axis field reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::VersionedV2Decode { .. }
+        ));
     }
 }
