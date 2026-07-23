@@ -26,7 +26,12 @@ description = "Ontological Space Protocol — software as a conceptual space"
 [workspace.dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# INV-T9 #70 Commit 4b Faz 4 Commit 1b: raw_value feature — RawValue ile duplicate-key
+# koruması (strict wire dispatch). authorization basis wire format JSON-specific.
+serde_json = { version = "1", features = ["raw_value"] }
+# INV-T9 #70 Commit 4b Faz 4: V2 digest wire format (64 lowercase hex). authorization
+# basis digest hex encode/decode — evidence integrity.
+hex = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

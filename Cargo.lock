@@ -2432,6 +2432,7 @@ dependencies = [
  "bincode",
  "blake3",
  "getrandom 0.4.3",
+ "hex",
  "libc",
  "quote",
  "serde",

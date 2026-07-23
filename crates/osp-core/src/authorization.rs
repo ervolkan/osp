@@ -2340,6 +2340,38 @@ impl AuthorizationBasisV2 {
     pub(crate) fn canonical_delta_digest(&self) -> &crate::measurement::MeasurementDeltaDigest {
         &self.canonical_delta_digest
     }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn task_claim_digest(&self) -> &crate::measurement::TaskClaimDigest {
+        &self.task_claim_digest
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn task_goal_digest(&self) -> &crate::measurement::TaskGoalDigest {
+        &self.task_goal_digest
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn measurement_digest(&self) -> &crate::measurement::MeasurementDigest {
+        &self.measurement_digest
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn trajectory_baseline(&self) -> &CanonicalTrajectoryEvidenceBaseline {
+        &self.trajectory_baseline
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn measurement_baseline_digest(
+        &self,
+    ) -> &crate::measurement::MeasurementBaselineDigest {
+        &self.measurement_baseline_digest
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn trajectory_loss(&self) -> &CanonicalTrajectoryLossEvidence {
+        &self.trajectory_loss
+    }
+    #[allow(dead_code, reason = "Faz 4 wire serializer / Commit 1b consumer")]
+    pub(crate) fn measurement_context_digest(
+        &self,
+    ) -> &crate::measurement::MeasurementContextDigest {
+        &self.measurement_context_digest
+    }
 
     /// **AuthorizationBasisDigestV2 (plan md:55):** V2 canonical digest. Ayrı domain
     /// separator (`OSP/AUTHORIZATION-BASIS/V2`) — V1 frozen. Builder (Commit 2) bu
@@ -5994,6 +6026,869 @@ impl PendingAuthorizationStore for NullPendingAuthorizationStore {
             authorization_basis_digest: envelope.record().authorization_basis_digest.clone(),
             evidence_digest: envelope.record().evidence_digest.clone(),
         })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INV-T9 #70 Commit 4b Faz 4 Commit 1b — VersionedAuthorizationBasis wire dispatch
+// (plan md:104-112, reviewer v2 closure)
+//
+// **Wire dispatch surface:** legacy bare-V1 + strict versioned V1/V2. Shape-based
+// dispatch ("basis" key discriminator). RawValue + duplicate-key koruması. JSON-specific.
+// V2→V1 fallback YOK. V1 frozen (wire format HİÇ değişmez). Model A (versioned payload,
+// outer basis_digest yok — self-verifying envelope Faz 8).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// **P1-4 rename:** Wire schema constants — `WIRE` ayrımı (mevcut V1 basis'in kendi
+/// `schema_version: u32` alanı var, iki farklı version kavramı).
+pub const AUTHORIZATION_BASIS_WIRE_SCHEMA_V1: u16 = 1;
+pub const AUTHORIZATION_BASIS_WIRE_SCHEMA_V2: u16 = 2;
+
+/// **INV-T9 #70 Commit 4b Faz 4 Commit 1b:** Versioned authorization basis wire dispatch
+/// surface. V1 (legacy/strict) + V2 (strict). JSON-specific `from_json_slice` entry point.
+///
+/// **P2-1:** Generic `Deserialize` intentionally absent — dispatch requires duplicate-key-
+/// preserving raw JSON parsing via `from_json_slice`. Derived Deserialize would bypass
+/// strict dispatch + duplicate-key koruması.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VersionedAuthorizationBasis {
+    V1(AuthorizationBasisV1),
+    V2(AuthorizationBasisV2),
+}
+
+impl VersionedAuthorizationBasis {
+    /// Wire schema version — `AUTHORIZATION_BASIS_WIRE_SCHEMA_V1` veya `V2`.
+    pub fn version(&self) -> u16 {
+        match self {
+            Self::V1(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+            Self::V2(_) => AUTHORIZATION_BASIS_WIRE_SCHEMA_V2,
+        }
+    }
+
+    /// V1 basis accessor (legacy/strict).
+    pub fn as_v1(&self) -> Option<&AuthorizationBasisV1> {
+        match self {
+            Self::V1(v) => Some(v),
+            Self::V2(_) => None,
+        }
+    }
+
+    /// V2 basis accessor (strict).
+    pub fn as_v2(&self) -> Option<&AuthorizationBasisV2> {
+        match self {
+            Self::V2(v) => Some(v),
+            Self::V1(_) => None,
+        }
+    }
+}
+
+/// **INV-T9 #70 Commit 4b Faz 4 Commit 1b (reviewer P1-3):** Versioned authorization basis
+/// wire dispatch error. Real `serde_json::Error` call-site'lar taşır — InvalidHexDigest
+/// kaldırıldı (LowerHex32 hatası envelope parse sırasında serde_json::Error içine dönüşür).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum VersionedAuthorizationBasisError {
+    #[error("invalid JSON peek: {detail}")]
+    JsonPeek { detail: String },
+    #[error("JSON parse failed: {detail}")]
+    JsonParse { detail: String },
+    #[error("top-level authorization basis must be a JSON object")]
+    TopLevelNotObject,
+    #[error("versioned V1 envelope decode failed: {detail}")]
+    VersionedV1Decode { detail: String },
+    #[error("versioned V2 envelope decode failed: {detail}")]
+    VersionedV2Decode { detail: String },
+    #[error("legacy V1 decode failed: {detail}")]
+    LegacyV1Decode { detail: String },
+    #[error("schema_version missing")]
+    MissingSchemaVersion,
+    #[error("schema_version out of u16 range: {0}")]
+    SchemaVersionOutOfRange(u64),
+    #[error("schema_version must be an unsigned integer (reject float/string/null/exponent)")]
+    SchemaVersionNotStrict,
+    #[error("unknown schema_version: {0}")]
+    UnknownSchemaVersion(u16),
+    #[error("inner V1 schema_version mismatch: expected={expected}, found={found}")]
+    InnerV1SchemaMismatch { expected: u16, found: u32 },
+    #[error("V2 wire conversion failed: {detail}")]
+    V2WireConversion { detail: String },
+    #[error("V2 basis validation failed: {0}")]
+    V2Validation(#[from] AuthorizationBasisV2Error),
+}
+
+/// **INV-T9 #70 Commit 4b Faz 4 Commit 1b (reviewer P0-3, P1-2):** V2 wire digest — tam
+/// 64 karakter, yalnız lowercase hex [0-9a-f], 0x prefix yok. Uppercase, 0x prefix,
+/// exponent, kısa/uzun reject. Serialize + Deserialize — V2 serializer yolu da var.
+struct LowerHex32([u8; 32]);
+
+impl LowerHex32 {
+    fn into_bytes(self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LowerHex32 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+        let value = String::deserialize(deserializer)?;
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
+        {
+            return Err(D::Error::custom(
+                "expected exactly 64 lowercase hexadecimal characters [0-9a-f]",
+            ));
+        }
+        let decoded = hex::decode(&value).map_err(D::Error::custom)?;
+        let bytes: [u8; 32] = decoded
+            .try_into()
+            .map_err(|_| D::Error::custom("digest must be 32 bytes"))?;
+        Ok(Self(bytes))
+    }
+}
+
+impl serde::Serialize for LowerHex32 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&hex::encode(self.0))
+    }
+}
+
+// ── V2 wire DTO ağacı (reviewer P0-3, P1-1) ─────────────────────────────────────
+// Nested Serialize-only tipleri doğrudan Deserialize edilemez. Tam wire DTO ağacı.
+// Hepsi deny_unknown_fields + tag="kind" + rename_all="snake_case".
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RawTrajectoryBaselineV2 {
+    Available {
+        before: RawProvenancedMeasuredResultV2,
+    },
+    Unavailable {
+        reason: RawBaselineUnavailableReasonV2,
+    },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RawBaselineUnavailableReasonV2 {
+    AllMembersIntroducedByDelta {
+        members: Vec<u64>,
+    },
+    PartialNewSubject {
+        existing: Vec<u64>,
+        introduced: Vec<u64>,
+    },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RawTrajectoryLossV2 {
+    Available {
+        target: RawPositionV2,
+        loss_after: f64,
+    },
+    Unavailable {
+        reason: RawTrajectoryLossUnavailableReasonV2,
+    },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+enum RawTrajectoryLossUnavailableReasonV2 {
+    NoPreferredVector,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPositionV2 {
+    x: f64,
+    y: f64,
+    z: f64,
+    w: f64,
+    v: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAxisMeasurementV2 {
+    value: f64,
+    source_tag: u8,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProvenancedMeasuredResultV2 {
+    coupling: RawAxisMeasurementV2,
+    cohesion: RawAxisMeasurementV2,
+    instability: RawAxisMeasurementV2,
+    entropy: RawAxisMeasurementV2,
+    witness_depth: RawAxisMeasurementV2,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum RawSpaceViewIdV2 {
+    Persisted { id: [u8; 16] },
+    Ephemeral { id: u64 },
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSpaceViewRevisionV2 {
+    view_id: RawSpaceViewIdV2,
+    sequence: u64,
+    content_digest: LowerHex32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMeasurementRequestEvidenceV2 {
+    subject: crate::measurement::CanonicalSubjectScope,
+    impact: crate::measurement::CanonicalImpactScope,
+    base_revision: RawSpaceViewRevisionV2,
+    structural_delta_digest: LowerHex32,
+    measurement_input_digest: LowerHex32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuthorizationBasisV2 {
+    task_id: u64,
+    claim_id: u64,
+    task_claim_digest: LowerHex32,
+    task_goal_digest: LowerHex32,
+    measurement_digest: LowerHex32,
+    engine_measurement_digest: LowerHex32,
+    trajectory_baseline: RawTrajectoryBaselineV2,
+    measurement_baseline_digest: LowerHex32,
+    trajectory_loss: RawTrajectoryLossV2,
+    measurement_request: RawMeasurementRequestEvidenceV2,
+    measurement_request_digest: LowerHex32,
+    measurement_context_digest: LowerHex32,
+    canonical_delta_digest: LowerHex32,
+}
+
+// ── Envelope tipleri (reviewer P0-2) ────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuthorizationBasisV2Envelope {
+    schema_version: u16,
+    basis: RawAuthorizationBasisV2,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuthorizationBasisV1Envelope {
+    schema_version: u16,
+    basis: RawAuthorizationBasisV1TopLevelStrict,
+}
+
+/// **P1-2 V1 strictlik:** Top-level strict, nested legacy semantics korur. Tam recursive
+/// strictlik gereksiz risk (frozen V1 uyumluluğu). Basis top-level field'ları strict,
+/// nested V1 representation mevcut parser davranışını korur.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAuthorizationBasisV1TopLevelStrict {
+    schema_version: u32,
+    task_id: crate::trajectory::TaskId,
+    claim_identity: ClaimIdentity,
+    claim_author: ClaimAuthor,
+    structural_delta: CanonicalStructuralDelta,
+    predicate_content: CanonicalPredicateContent,
+    predicate_evaluation: PredicateEvaluationBasis,
+    measured_result: ProvenancedMeasuredResult,
+    deterministic_gate_result: crate::trajectory::GateDecision,
+    predicate_completion: crate::trajectory::PredicateCompletion,
+    mutation_decision: crate::trajectory::MutationDecision,
+    intended_apply_target: crate::trajectory::ApplyTarget,
+    witness_policy: CanonicalWitnessPolicy,
+    measurement_input_digest: MeasurementInputDigest,
+    evaluation_context_digest: EvaluationContextDigest,
+    base_space_view_revision: SpaceViewRevision,
+}
+
+impl RawAuthorizationBasisV1TopLevelStrict {
+    fn into_domain(self) -> AuthorizationBasisV1 {
+        AuthorizationBasis {
+            schema_version: self.schema_version,
+            task_id: self.task_id,
+            claim_identity: self.claim_identity,
+            claim_author: self.claim_author,
+            structural_delta: self.structural_delta,
+            predicate_content: self.predicate_content,
+            predicate_evaluation: self.predicate_evaluation,
+            measured_result: self.measured_result,
+            deterministic_gate_result: self.deterministic_gate_result,
+            predicate_completion: self.predicate_completion,
+            mutation_decision: self.mutation_decision,
+            intended_apply_target: self.intended_apply_target,
+            witness_policy: self.witness_policy,
+            measurement_input_digest: self.measurement_input_digest,
+            evaluation_context_digest: self.evaluation_context_digest,
+            base_space_view_revision: self.base_space_view_revision,
+        }
+    }
+}
+
+// Serialize ref'ler (clone yok — &self üzerinden)
+#[derive(serde::Serialize)]
+struct VersionedV1EnvelopeRef<'a> {
+    schema_version: u16,
+    basis: &'a AuthorizationBasisV1,
+}
+
+#[derive(serde::Serialize)]
+struct VersionedV2EnvelopeRef<'a> {
+    schema_version: u16,
+    basis: RawAuthorizationBasisV2Ref<'a>,
+}
+
+/// V2 basis → wire DTO (borrow, clone yok).
+#[derive(serde::Serialize)]
+struct RawAuthorizationBasisV2Ref<'a> {
+    task_id: u64,
+    claim_id: u64,
+    task_claim_digest: LowerHex32,
+    task_goal_digest: LowerHex32,
+    measurement_digest: LowerHex32,
+    engine_measurement_digest: LowerHex32,
+    trajectory_baseline: RawTrajectoryBaselineV2Ref<'a>,
+    measurement_baseline_digest: LowerHex32,
+    trajectory_loss: RawTrajectoryLossV2Ref<'a>,
+    measurement_request: RawMeasurementRequestEvidenceV2Ref<'a>,
+    measurement_request_digest: LowerHex32,
+    measurement_context_digest: LowerHex32,
+    canonical_delta_digest: LowerHex32,
+}
+
+impl<'a> RawAuthorizationBasisV2Ref<'a> {
+    #[allow(dead_code)]
+    fn from_domain(basis: &'a AuthorizationBasisV2) -> Self {
+        Self {
+            task_id: basis.task_id(),
+            claim_id: basis.claim_id(),
+            task_claim_digest: LowerHex32(*basis.task_claim_digest().as_bytes()),
+            task_goal_digest: LowerHex32(*basis.task_goal_digest().as_bytes()),
+            measurement_digest: LowerHex32(*basis.measurement_digest().as_bytes()),
+            engine_measurement_digest: LowerHex32(*basis.engine_measurement_digest().as_bytes()),
+            trajectory_baseline: RawTrajectoryBaselineV2Ref::from_domain(
+                basis.trajectory_baseline(),
+            ),
+            measurement_baseline_digest: LowerHex32(
+                *basis.measurement_baseline_digest().as_bytes(),
+            ),
+            trajectory_loss: RawTrajectoryLossV2Ref::from_domain(basis.trajectory_loss()),
+            measurement_request: RawMeasurementRequestEvidenceV2Ref::from_domain(
+                basis.measurement_request(),
+            ),
+            measurement_request_digest: LowerHex32(*basis.measurement_request_digest().as_bytes()),
+            measurement_context_digest: LowerHex32(*basis.measurement_context_digest().as_bytes()),
+            canonical_delta_digest: LowerHex32(*basis.canonical_delta_digest().as_bytes()),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RawTrajectoryBaselineV2Ref<'a> {
+    Available {
+        before: RawProvenancedMeasuredResultV2Ref<'a>,
+    },
+    Unavailable {
+        reason: RawBaselineUnavailableReasonV2Ref<'a>,
+    },
+}
+
+impl<'a> RawTrajectoryBaselineV2Ref<'a> {
+    fn from_domain(baseline: &'a CanonicalTrajectoryEvidenceBaseline) -> Self {
+        match baseline {
+            CanonicalTrajectoryEvidenceBaseline::Available { before } => Self::Available {
+                before: RawProvenancedMeasuredResultV2Ref::from_domain(before),
+            },
+            CanonicalTrajectoryEvidenceBaseline::Unavailable { reason } => Self::Unavailable {
+                reason: RawBaselineUnavailableReasonV2Ref::from_domain(reason),
+            },
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RawBaselineUnavailableReasonV2Ref<'a> {
+    AllMembersIntroducedByDelta {
+        members: &'a [crate::space::NodeId],
+    },
+    PartialNewSubject {
+        existing: &'a [crate::space::NodeId],
+        introduced: &'a [crate::space::NodeId],
+    },
+}
+
+impl<'a> RawBaselineUnavailableReasonV2Ref<'a> {
+    fn from_domain(reason: &'a CanonicalBaselineUnavailableReason) -> Self {
+        match reason.view() {
+            CanonicalBaselineUnavailableReasonView::AllMembersIntroducedByDelta { members } => {
+                Self::AllMembersIntroducedByDelta { members }
+            }
+            CanonicalBaselineUnavailableReasonView::PartialNewSubject {
+                existing,
+                introduced,
+            } => Self::PartialNewSubject {
+                existing,
+                introduced,
+            },
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RawTrajectoryLossV2Ref<'a> {
+    Available {
+        target: RawPositionV2Ref<'a>,
+        loss_after: CanonicalF64,
+    },
+    Unavailable {
+        reason: RawTrajectoryLossUnavailableReasonV2,
+    },
+}
+
+impl<'a> RawTrajectoryLossV2Ref<'a> {
+    fn from_domain(loss: &'a CanonicalTrajectoryLossEvidence) -> Self {
+        match loss {
+            CanonicalTrajectoryLossEvidence::Available { target, loss_after } => Self::Available {
+                target: RawPositionV2Ref::from_domain(target),
+                loss_after: *loss_after,
+            },
+            CanonicalTrajectoryLossEvidence::Unavailable { reason: _ } => Self::Unavailable {
+                reason: RawTrajectoryLossUnavailableReasonV2::NoPreferredVector,
+            },
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RawPositionV2Ref<'a> {
+    x: CanonicalF64,
+    y: CanonicalF64,
+    z: CanonicalF64,
+    w: CanonicalF64,
+    v: CanonicalF64,
+    #[serde(skip)]
+    _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> RawPositionV2Ref<'a> {
+    fn from_domain(pos: &'a CanonicalRawPosition) -> Self {
+        Self {
+            x: pos.x,
+            y: pos.y,
+            z: pos.z,
+            w: pos.w,
+            v: pos.v,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RawProvenancedMeasuredResultV2Ref<'a> {
+    coupling: RawAxisMeasurementV2Ref<'a>,
+    cohesion: RawAxisMeasurementV2Ref<'a>,
+    instability: RawAxisMeasurementV2Ref<'a>,
+    entropy: RawAxisMeasurementV2Ref<'a>,
+    witness_depth: RawAxisMeasurementV2Ref<'a>,
+}
+
+impl<'a> RawProvenancedMeasuredResultV2Ref<'a> {
+    fn from_domain(result: &'a ProvenancedMeasuredResult) -> Self {
+        Self {
+            coupling: RawAxisMeasurementV2Ref::from_domain(&result.coupling),
+            cohesion: RawAxisMeasurementV2Ref::from_domain(&result.cohesion),
+            instability: RawAxisMeasurementV2Ref::from_domain(&result.instability),
+            entropy: RawAxisMeasurementV2Ref::from_domain(&result.entropy),
+            witness_depth: RawAxisMeasurementV2Ref::from_domain(&result.witness_depth),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RawAxisMeasurementV2Ref<'a> {
+    value: CanonicalF64,
+    source_tag: u8,
+    #[serde(skip)]
+    _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> RawAxisMeasurementV2Ref<'a> {
+    fn from_domain(axis: &'a CanonicalAxisMeasurement) -> Self {
+        Self {
+            value: axis.value,
+            source_tag: axis.source.as_u8(),
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RawMeasurementRequestEvidenceV2Ref<'a> {
+    subject: &'a crate::measurement::CanonicalSubjectScope,
+    impact: &'a crate::measurement::CanonicalImpactScope,
+    base_revision: RawSpaceViewRevisionV2Ref<'a>,
+    structural_delta_digest: LowerHex32,
+    measurement_input_digest: LowerHex32,
+}
+
+impl<'a> RawMeasurementRequestEvidenceV2Ref<'a> {
+    fn from_domain(evidence: &'a crate::measurement::CanonicalMeasurementRequestEvidence) -> Self {
+        Self {
+            subject: &evidence.subject,
+            impact: &evidence.impact,
+            base_revision: RawSpaceViewRevisionV2Ref::from_domain(&evidence.base_revision),
+            structural_delta_digest: LowerHex32(*evidence.structural_delta_digest.as_bytes()),
+            measurement_input_digest: LowerHex32(*evidence.measurement_input_digest.as_bytes()),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RawSpaceViewRevisionV2Ref<'a> {
+    view_id: RawSpaceViewIdV2Ref<'a>,
+    sequence: u64,
+    content_digest: LowerHex32,
+}
+
+impl<'a> RawSpaceViewRevisionV2Ref<'a> {
+    fn from_domain(rev: &'a SpaceViewRevision) -> Self {
+        Self {
+            view_id: RawSpaceViewIdV2Ref::from_domain(&rev.view_id),
+            sequence: rev.sequence,
+            content_digest: LowerHex32(*rev.content_digest.as_bytes()),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RawSpaceViewIdV2Ref<'a> {
+    Persisted { id: &'a [u8; 16] },
+    Ephemeral { id: u64 },
+}
+
+impl<'a> RawSpaceViewIdV2Ref<'a> {
+    fn from_domain(view_id: &'a SpaceViewId) -> Self {
+        match view_id {
+            SpaceViewId::Persisted(id) => Self::Persisted { id: id.as_bytes() },
+            SpaceViewId::Ephemeral(id) => Self::Ephemeral { id: *id },
+        }
+    }
+}
+
+// ── Dispatch + conversion (reviewer P0-1, P0-4, P1-4) ───────────────────────────
+
+impl VersionedAuthorizationBasis {
+    /// **P2-1:** JSON-specific entry point. RawValue ile duplicate-key koruması.
+    /// Generic Deserialize intentionally absent — dispatch requires duplicate-key-
+    /// preserving raw JSON parsing.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub fn from_json_slice(data: &[u8]) -> Result<Self, VersionedAuthorizationBasisError> {
+        // Top-level RawValue — duplicate-key preserved.
+        let raw_value: &serde_json::value::RawValue =
+            serde_json::from_slice(data).map_err(|e| {
+                VersionedAuthorizationBasisError::JsonParse {
+                    detail: e.to_string(),
+                }
+            })?;
+        // Peek outer shape (Value — dispatch only, typed parse sonra).
+        let peek: serde_json::Value = serde_json::from_str(raw_value.get()).map_err(|e| {
+            VersionedAuthorizationBasisError::JsonPeek {
+                detail: e.to_string(),
+            }
+        })?;
+        // Top-level non-object check (P2-2).
+        if !peek.is_object() {
+            return Err(VersionedAuthorizationBasisError::TopLevelNotObject);
+        }
+        // Shape-based dispatch (P0-1): "basis" key discriminator (P1-4 reserved).
+        if peek.get("basis").is_some() {
+            // Explicit versioned envelope.
+            let schema_version = parse_outer_schema_version_strictly(&peek)?;
+            match schema_version {
+                AUTHORIZATION_BASIS_WIRE_SCHEMA_V1 => {
+                    let env: RawAuthorizationBasisV1Envelope =
+                        serde_json::from_str(raw_value.get()).map_err(|e| {
+                            VersionedAuthorizationBasisError::VersionedV1Decode {
+                                detail: e.to_string(),
+                            }
+                        })?;
+                    if env.schema_version != AUTHORIZATION_BASIS_WIRE_SCHEMA_V1 {
+                        return Err(VersionedAuthorizationBasisError::UnknownSchemaVersion(
+                            env.schema_version,
+                        ));
+                    }
+                    Ok(Self::V1(env.basis.try_into()?))
+                }
+                AUTHORIZATION_BASIS_WIRE_SCHEMA_V2 => {
+                    let env: RawAuthorizationBasisV2Envelope =
+                        serde_json::from_str(raw_value.get()).map_err(|e| {
+                            VersionedAuthorizationBasisError::VersionedV2Decode {
+                                detail: e.to_string(),
+                            }
+                        })?;
+                    if env.schema_version != AUTHORIZATION_BASIS_WIRE_SCHEMA_V2 {
+                        return Err(VersionedAuthorizationBasisError::UnknownSchemaVersion(
+                            env.schema_version,
+                        ));
+                    }
+                    let basis = AuthorizationBasisV2::from_wire(env.basis)?;
+                    Ok(Self::V2(basis))
+                }
+                unknown => Err(VersionedAuthorizationBasisError::UnknownSchemaVersion(
+                    unknown,
+                )),
+            }
+        } else {
+            // Legacy bare V1. "basis" key yok → permissive parser korur.
+            let basis: AuthorizationBasisV1 =
+                serde_json::from_str(raw_value.get()).map_err(|e| {
+                    VersionedAuthorizationBasisError::LegacyV1Decode {
+                        detail: e.to_string(),
+                    }
+                })?;
+            // Inner V1 schema_version exact check.
+            if basis.schema_version != u32::from(AUTHORIZATION_BASIS_WIRE_SCHEMA_V1) {
+                return Err(VersionedAuthorizationBasisError::InnerV1SchemaMismatch {
+                    expected: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+                    found: basis.schema_version,
+                });
+            }
+            Ok(Self::V1(basis))
+        }
+    }
+}
+
+/// **P2-3 (exponent dahil):** Strict numeric schema_version parse. `is_u64()` float/
+/// exponent'i reject eder (1.0, 1e0 `is_u64()` false). String/null/missing ayrı reject.
+fn parse_outer_schema_version_strictly(
+    peek: &serde_json::Value,
+) -> Result<u16, VersionedAuthorizationBasisError> {
+    match peek.get("schema_version") {
+        Some(serde_json::Value::Number(n)) if n.is_u64() => {
+            let raw = n.as_u64().unwrap();
+            u16::try_from(raw)
+                .map_err(|_| VersionedAuthorizationBasisError::SchemaVersionOutOfRange(raw))
+        }
+        Some(_) => Err(VersionedAuthorizationBasisError::SchemaVersionNotStrict),
+        None => Err(VersionedAuthorizationBasisError::MissingSchemaVersion),
+    }
+}
+
+/// **P1-4:** Versioned V1 TryFrom — inner schema_version exact check.
+impl TryFrom<RawAuthorizationBasisV1TopLevelStrict> for AuthorizationBasisV1 {
+    type Error = VersionedAuthorizationBasisError;
+
+    fn try_from(raw: RawAuthorizationBasisV1TopLevelStrict) -> Result<Self, Self::Error> {
+        if raw.schema_version != u32::from(AUTHORIZATION_BASIS_WIRE_SCHEMA_V1) {
+            return Err(VersionedAuthorizationBasisError::InnerV1SchemaMismatch {
+                expected: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+                found: raw.schema_version,
+            });
+        }
+        Ok(raw.into_domain())
+    }
+}
+
+impl serde::Serialize for VersionedAuthorizationBasis {
+    /// **P0-2:** Her iki varyant için explicit envelope. Clone yok — `&self`.
+    /// Legacy yazım yalnız doğrudan `AuthorizationBasisV1` serializer'ı ile.
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::V1(basis) => VersionedV1EnvelopeRef {
+                schema_version: AUTHORIZATION_BASIS_WIRE_SCHEMA_V1,
+                basis,
+            }
+            .serialize(serializer),
+            Self::V2(basis) => VersionedV2EnvelopeRef {
+                schema_version: AUTHORIZATION_BASIS_WIRE_SCHEMA_V2,
+                basis: RawAuthorizationBasisV2Ref::from_domain(basis),
+            }
+            .serialize(serializer),
+        }
+    }
+}
+
+impl AuthorizationBasisV2 {
+    /// **P0-3 conversion sırası:** Raw wire DTO → checked domain construction.
+    /// 1. subject parse. 2. baseline reason + subject → try_from_reason (union invariant).
+    /// 3. trajectory loss local invariant (finite + >= 0, target finite). 4. new() validate_semantics.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    fn from_wire(raw: RawAuthorizationBasisV2) -> Result<Self, VersionedAuthorizationBasisError> {
+        use crate::canonical_tags::CanonicalMetricSourceTag;
+
+        // Trajectory baseline conversion.
+        let trajectory_baseline = match raw.trajectory_baseline {
+            RawTrajectoryBaselineV2::Available { before } => {
+                let mk_axis =
+                    |a: RawAxisMeasurementV2| -> Result<_, VersionedAuthorizationBasisError> {
+                        let source =
+                            CanonicalMetricSourceTag::try_from(a.source_tag).map_err(|e| {
+                                VersionedAuthorizationBasisError::V2WireConversion {
+                                    detail: format!("axis source_tag: {e}"),
+                                }
+                            })?;
+                        Ok(CanonicalAxisMeasurement {
+                            value: a.value,
+                            source,
+                        })
+                    };
+                CanonicalTrajectoryEvidenceBaseline::Available {
+                    before: ProvenancedMeasuredResult {
+                        coupling: mk_axis(before.coupling)?,
+                        cohesion: mk_axis(before.cohesion)?,
+                        instability: mk_axis(before.instability)?,
+                        entropy: mk_axis(before.entropy)?,
+                        witness_depth: mk_axis(before.witness_depth)?,
+                    },
+                }
+            }
+            RawTrajectoryBaselineV2::Unavailable { reason } => {
+                let raw_reason = match reason {
+                    RawBaselineUnavailableReasonV2::AllMembersIntroducedByDelta { members } => {
+                        crate::measurement::BaselineUnavailableReason::AllMembersIntroducedByDelta {
+                            members,
+                        }
+                    }
+                    RawBaselineUnavailableReasonV2::PartialNewSubject {
+                        existing,
+                        introduced,
+                    } => crate::measurement::BaselineUnavailableReason::PartialNewSubject {
+                        existing,
+                        introduced,
+                    },
+                };
+                let canonical_reason = CanonicalBaselineUnavailableReason::try_from_reason(
+                    &raw_reason,
+                    &raw.measurement_request.subject.clone(),
+                )
+                .map_err(|e| {
+                    VersionedAuthorizationBasisError::V2WireConversion {
+                        detail: e.to_string(),
+                    }
+                })?;
+                CanonicalTrajectoryEvidenceBaseline::Unavailable {
+                    reason: canonical_reason,
+                }
+            }
+        };
+
+        // Trajectory loss conversion + local invariant (P1-5).
+        let trajectory_loss = match raw.trajectory_loss {
+            RawTrajectoryLossV2::Available { target, loss_after } => {
+                // P1-5: loss_after finite + >= 0.0 (Euclidean distance semantics).
+                if !loss_after.is_finite() || loss_after < 0.0 {
+                    return Err(VersionedAuthorizationBasisError::V2WireConversion {
+                        detail: format!("loss_after must be finite and >= 0.0, got {loss_after}"),
+                    });
+                }
+                // P1-5: target all axes finite.
+                for (axis, value) in [
+                    ("x", target.x),
+                    ("y", target.y),
+                    ("z", target.z),
+                    ("w", target.w),
+                    ("v", target.v),
+                ] {
+                    if !value.is_finite() {
+                        return Err(VersionedAuthorizationBasisError::V2WireConversion {
+                            detail: format!("target axis {axis} must be finite, got {value}"),
+                        });
+                    }
+                }
+                CanonicalTrajectoryLossEvidence::Available {
+                    target: CanonicalRawPosition {
+                        x: target.x,
+                        y: target.y,
+                        z: target.z,
+                        w: target.w,
+                        v: target.v,
+                    },
+                    loss_after,
+                }
+            }
+            RawTrajectoryLossV2::Unavailable { reason: _ } => {
+                CanonicalTrajectoryLossEvidence::Unavailable {
+                    reason: CanonicalTrajectoryLossUnavailableReason::NoPreferredVector,
+                }
+            }
+        };
+
+        // Measurement request evidence conversion.
+        let base_revision = SpaceViewRevision {
+            view_id: match raw.measurement_request.base_revision.view_id {
+                RawSpaceViewIdV2::Persisted { id } => {
+                    SpaceViewId::Persisted(PersistedSpaceViewId::from_bytes(id))
+                }
+                RawSpaceViewIdV2::Ephemeral { id } => SpaceViewId::Ephemeral(id),
+            },
+            sequence: raw.measurement_request.base_revision.sequence,
+            content_digest: SpaceDigest::from_bytes(
+                raw.measurement_request
+                    .base_revision
+                    .content_digest
+                    .into_bytes(),
+            ),
+        };
+        let measurement_request = crate::measurement::CanonicalMeasurementRequestEvidence {
+            subject: raw.measurement_request.subject,
+            impact: raw.measurement_request.impact,
+            base_revision,
+            structural_delta_digest: crate::measurement::MeasurementDeltaDigest::from_bytes(
+                raw.measurement_request.structural_delta_digest.into_bytes(),
+            ),
+            measurement_input_digest: MeasurementInputDigest::from_bytes(
+                raw.measurement_request
+                    .measurement_input_digest
+                    .into_bytes(),
+            ),
+        };
+
+        // AuthorizationBasisV2::new — validate_semantics (nested commitment reverify).
+        Self::new(
+            raw.task_id,
+            raw.claim_id,
+            crate::measurement::TaskClaimDigest::from_bytes(raw.task_claim_digest.into_bytes()),
+            crate::measurement::TaskGoalDigest::from_bytes(raw.task_goal_digest.into_bytes()),
+            crate::measurement::MeasurementDigest::from_bytes(raw.measurement_digest.into_bytes()),
+            crate::measurement::EngineMeasurementDigest::from_bytes(
+                raw.engine_measurement_digest.into_bytes(),
+            ),
+            trajectory_baseline,
+            crate::measurement::MeasurementBaselineDigest::from_bytes(
+                raw.measurement_baseline_digest.into_bytes(),
+            ),
+            trajectory_loss,
+            measurement_request,
+            crate::measurement::MeasurementRequestDigest::from_bytes(
+                raw.measurement_request_digest.into_bytes(),
+            ),
+            crate::measurement::MeasurementContextDigest::from_bytes(
+                raw.measurement_context_digest.into_bytes(),
+            ),
+            crate::measurement::MeasurementDeltaDigest::from_bytes(
+                raw.canonical_delta_digest.into_bytes(),
+            ),
+        )
+        .map_err(VersionedAuthorizationBasisError::V2Validation)
     }
 }
 
@@ -12266,6 +13161,305 @@ v = 0.5
             digest.to_hex(),
             FAZ4_CONTEXT_V2_GOLDEN_HEX,
             "AuthorizationContextDigestV2 golden byte contract changed (OSP/AUTHORIZATION-CONTEXT/V2)"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // INV-T9 #70 Commit 4b Faz 4 Commit 1b — VersionedAuthorizationBasis wire dispatch
+    // testleri (plan md:177, reviewer v2 closure)
+    // ═══════════════════════════════════════════════════════════════════════════════
+
+    /// V1 basis fixture — wire dispatch testleri için.
+    fn faz4_v1_basis_fixture() -> AuthorizationBasisV1 {
+        sample_basis()
+    }
+
+    /// Versioned V1 envelope JSON string — `{schema_version:1, basis:{...}}`.
+    fn faz4_versioned_v1_envelope_json() -> String {
+        let basis = faz4_v1_basis_fixture();
+        let envelope = VersionedAuthorizationBasis::V1(basis);
+        serde_json::to_string(&envelope).unwrap()
+    }
+
+    /// Versioned V2 envelope JSON string — `{schema_version:2, basis:{...}}`.
+    fn faz4_versioned_v2_envelope_json() -> String {
+        let basis = faz4_basis_v2_fixture();
+        let envelope = VersionedAuthorizationBasis::V2(basis);
+        serde_json::to_string(&envelope).unwrap()
+    }
+
+    /// Legacy bare V1 JSON string — mevcut V1 serialization shape (schema_version field dahil).
+    fn faz4_legacy_v1_json() -> String {
+        let basis = faz4_v1_basis_fixture();
+        serde_json::to_string(&basis).unwrap()
+    }
+
+    // ── Dispatch matrisi (P0-1, P0-2, P1-4) ──────────────────────────────────────
+
+    #[test]
+    fn commit1b_legacy_v1_dispatches_correctly() {
+        // P0-1: Legacy V1 kendi schema_version=1 ile doğru dispatch. "basis" key yok.
+        let json = faz4_legacy_v1_json();
+        let parsed =
+            VersionedAuthorizationBasis::from_json_slice(json.as_bytes()).expect("legacy V1");
+        assert_eq!(parsed.version(), AUTHORIZATION_BASIS_WIRE_SCHEMA_V1);
+        assert!(parsed.as_v1().is_some());
+        assert!(parsed.as_v2().is_none());
+    }
+
+    #[test]
+    fn commit1b_versioned_v1_produces_explicit_envelope() {
+        // P0-2: Versioned V1 serialize gerçekten {schema_version, basis} üretir.
+        let json = faz4_versioned_v1_envelope_json();
+        let peek: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(peek.get("schema_version"), Some(&serde_json::json!(1)));
+        assert!(
+            peek.get("basis").is_some(),
+            "versioned V1 must have 'basis' key"
+        );
+    }
+
+    #[test]
+    fn commit1b_versioned_v1_round_trip() {
+        let original = faz4_versioned_v1_envelope_json();
+        let parsed = VersionedAuthorizationBasis::from_json_slice(original.as_bytes())
+            .expect("versioned V1 round-trip");
+        let reserialized = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(
+            original, reserialized,
+            "versioned V1 round-trip preserves JSON"
+        );
+    }
+
+    #[test]
+    fn commit1b_versioned_v2_round_trip() {
+        let original = faz4_versioned_v2_envelope_json();
+        let parsed = VersionedAuthorizationBasis::from_json_slice(original.as_bytes())
+            .expect("versioned V2 round-trip");
+        assert_eq!(parsed.version(), AUTHORIZATION_BASIS_WIRE_SCHEMA_V2);
+        let reserialized = serde_json::to_string(&parsed).unwrap();
+        assert_eq!(
+            original, reserialized,
+            "versioned V2 round-trip preserves JSON"
+        );
+    }
+
+    #[test]
+    fn commit1b_schema_version_2_without_basis_rejects() {
+        // P0-1: schema_version=2 ama basis yok → reject, legacy fallback yok.
+        let json = r#"{"schema_version": 2, "task_id": 42}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("schema_version=2 without basis must reject");
+        // "basis" yok → legacy V1 path → V1 deserialize fail veya inner schema mismatch.
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::LegacyV1Decode { .. }
+                | VersionedAuthorizationBasisError::InnerV1SchemaMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn commit1b_basis_without_schema_version_rejects() {
+        // P0-1: basis var ama schema_version yok → reject.
+        let json = r#"{"basis": {"schema_version": 1}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("basis without schema_version must reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::MissingSchemaVersion
+        ));
+    }
+
+    #[test]
+    fn commit1b_legacy_v1_with_extra_basis_key_rejects_ambiguous() {
+        // P1-4: Legacy V1 + extra "basis" key → reject ambiguous (versioned-envelope-shaped).
+        let mut legacy: serde_json::Value = serde_json::from_str(&faz4_legacy_v1_json()).unwrap();
+        legacy["basis"] = serde_json::json!({});
+        let json = serde_json::to_string(&legacy).unwrap();
+        let result = VersionedAuthorizationBasis::from_json_slice(json.as_bytes());
+        // "basis" var → versioned path. Inner basis boş → decode error veya schema mismatch.
+        assert!(
+            result.is_err(),
+            "legacy V1 with extra 'basis' key must reject"
+        );
+    }
+
+    // ── Duplicate-key matrisi (P0-4) ─────────────────────────────────────────────
+
+    #[test]
+    fn commit1b_duplicate_schema_version_rejects() {
+        // P0-4: duplicate top-level schema_version → reject.
+        let json = r#"{"schema_version": 1, "schema_version": 2, "basis": {"schema_version": 1}}"#;
+        let result = VersionedAuthorizationBasis::from_json_slice(json.as_bytes());
+        assert!(result.is_err(), "duplicate schema_version must reject");
+    }
+
+    #[test]
+    fn commit1b_duplicate_basis_field_rejects() {
+        // P0-4: duplicate basis field → reject.
+        let json = r#"{"schema_version": 1, "basis": {}, "basis": {}}"#;
+        let result = VersionedAuthorizationBasis::from_json_slice(json.as_bytes());
+        assert!(result.is_err(), "duplicate basis field must reject");
+    }
+
+    // ── Strict numeric matrisi (P2-3) ────────────────────────────────────────────
+
+    #[test]
+    fn commit1b_schema_version_float_rejects() {
+        // P2-3: schema_version=1.0 (float) → reject.
+        let json = r#"{"schema_version": 1.0, "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("float schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::SchemaVersionNotStrict
+        ));
+    }
+
+    #[test]
+    fn commit1b_schema_version_string_rejects() {
+        // P2-3: schema_version="2" (string) → reject.
+        let json = r#"{"schema_version": "2", "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("string schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::SchemaVersionNotStrict
+        ));
+    }
+
+    #[test]
+    fn commit1b_schema_version_null_rejects() {
+        // P2-3: schema_version=null → reject.
+        let json = r#"{"schema_version": null, "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("null schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::SchemaVersionNotStrict
+        ));
+    }
+
+    #[test]
+    fn commit1b_schema_version_exponent_rejects() {
+        // P2-3: schema_version=1e0 (exponent) → reject.
+        let json = r#"{"schema_version": 1e0, "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("exponent schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::SchemaVersionNotStrict
+        ));
+    }
+
+    #[test]
+    fn commit1b_schema_version_out_of_range_rejects() {
+        // P2-3: schema_version=65536 (u16 dışı) → reject.
+        let json = r#"{"schema_version": 65536, "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("u16 out-of-range schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::SchemaVersionOutOfRange(65536)
+        ));
+    }
+
+    #[test]
+    fn commit1b_unknown_schema_version_rejects() {
+        // Unknown version → reject (V2→V1 fallback YOK).
+        let json = r#"{"schema_version": 3, "basis": {}}"#;
+        let err = VersionedAuthorizationBasis::from_json_slice(json.as_bytes())
+            .expect_err("unknown schema_version reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::UnknownSchemaVersion(3)
+        ));
+    }
+
+    // ── Top-level non-object matrisi (P2-2) ──────────────────────────────────────
+
+    #[test]
+    fn commit1b_top_level_null_rejects() {
+        let err = VersionedAuthorizationBasis::from_json_slice(b"null")
+            .expect_err("null top-level reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::TopLevelNotObject
+        ));
+    }
+
+    #[test]
+    fn commit1b_top_level_array_rejects() {
+        let err = VersionedAuthorizationBasis::from_json_slice(b"[]")
+            .expect_err("array top-level reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::TopLevelNotObject
+        ));
+    }
+
+    #[test]
+    fn commit1b_top_level_number_rejects() {
+        let err = VersionedAuthorizationBasis::from_json_slice(b"42")
+            .expect_err("number top-level reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::TopLevelNotObject
+        ));
+    }
+
+    // ── Wire contract matrisi ────────────────────────────────────────────────────
+
+    #[test]
+    fn commit1b_versioned_v1_basis_payload_preserves_legacy() {
+        // P2: versioned V1 basis payload == legacy V1 JSON payload (Value equality —
+        // field sıralaması serde map'te farklı olabilir ama içerik aynı).
+        let legacy: serde_json::Value = serde_json::from_str(&faz4_legacy_v1_json()).unwrap();
+        let versioned_json = faz4_versioned_v1_envelope_json();
+        let versioned: serde_json::Value = serde_json::from_str(&versioned_json).unwrap();
+        assert_eq!(
+            versioned.get("basis"),
+            Some(&legacy),
+            "versioned V1 basis payload must exactly preserve legacy V1 JSON representation"
+        );
+    }
+
+    #[test]
+    fn commit1b_v2_nested_commitment_inconsistency_rejects() {
+        // P1-5 Model A: V2 nested commitment inconsistency → validate_semantics reject.
+        // Geçerli V2 envelope'ı al, basis içinde bir digest'ı boz → new() reject.
+        let json = faz4_versioned_v2_envelope_json();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        // measurement_baseline_digest'i boz (farklı hex).
+        value["basis"]["measurement_baseline_digest"] =
+            serde_json::json!("0000000000000000000000000000000000000000000000000000000000000000");
+        let tampered = serde_json::to_string(&value).unwrap();
+        let err = VersionedAuthorizationBasis::from_json_slice(tampered.as_bytes())
+            .expect_err("V2 nested inconsistency must reject");
+        assert!(matches!(
+            err,
+            VersionedAuthorizationBasisError::V2Validation(_)
+        ));
+    }
+
+    // ── LowerHex32 strict matrisi (P1-2) ─────────────────────────────────────────
+
+    #[test]
+    fn commit1b_v2_digest_lowercase_hex() {
+        // V2 nested tüm digest alanları lowercase hex string.
+        let json = faz4_versioned_v2_envelope_json();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let digest_str = &value["basis"]["task_goal_digest"];
+        assert!(
+            digest_str.is_string(),
+            "V2 digest must be JSON string (LowerHex32)"
+        );
+        let s = digest_str.as_str().unwrap();
+        assert_eq!(s.len(), 64, "V2 digest must be 64 chars");
+        assert!(
+            s.bytes()
+                .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f')),
+            "V2 digest must be lowercase hex only"
         );
     }
 }

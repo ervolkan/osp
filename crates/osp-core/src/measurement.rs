@@ -264,6 +264,12 @@ impl MeasurementDeltaDigest {
         &self.0
     }
 
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
@@ -490,6 +496,12 @@ impl MeasurementRequestDigest {
         &self.0
     }
 
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn to_hex(&self) -> String {
         hex::encode(self.0)
     }
@@ -562,6 +574,12 @@ impl TaskClaimDigest {
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
@@ -668,6 +686,12 @@ impl MeasurementDigest {
         &self.0
     }
 
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn to_hex(&self) -> String {
         hex::encode(self.0)
@@ -764,6 +788,12 @@ impl EngineMeasurementDigest {
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
@@ -942,6 +972,12 @@ impl MeasurementBaselineDigest {
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
@@ -1143,6 +1179,12 @@ impl MeasurementContextDigest {
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
@@ -1403,6 +1445,12 @@ impl TaskGoalDigest {
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
     pub(crate) fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    /// **Commit 1b (P0-4):** Wire restore constructor — `pub(crate)`, public forge yüzeyi açılmaz.
+    #[allow(dead_code, reason = "Faz 4 wire restore / Commit 1b consumer")]
+    pub(crate) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 
     #[allow(dead_code, reason = "Faz 4 basis builder consumer")]
