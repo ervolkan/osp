@@ -230,6 +230,24 @@ canonical_tag_newtype! {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PredicateSetResultTag — INV-T9 #70 Commit 4b Faz 5 (review v8 P1-4)
+//
+// PredicateSetResult: Completed / SourceInsufficient / NotCompleted (trajectory.rs).
+// PredicateGate değerlendirme sonucu — basis'te canonical predicate evaluation basis
+// field'ı olarak taşınır. Pinned numeric tag (enum ordinal/serde adı DEĞİL).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+canonical_tag_newtype! {
+    /// **INV-T9 #70 Commit 4b Faz 5 (review v8 P1-4):** PredicateSetResult canonical tag.
+    /// Pinned numeric — predicate evaluation sonucu (basis/restore validator'da kullanılır).
+    pub struct PredicateSetResultTag;
+    domain: crate::trajectory::PredicateSetResult;
+    Completed => 0,
+    SourceInsufficient => 1,
+    NotCompleted => 2,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // WitnessIndependencePolicy — yeni enum (omega'dan türetilmez, Strict varsayılan).
 //
 // reviewer: witness independence policy canonical basis'e bağlı olmalı. Omega
